@@ -1,6 +1,6 @@
 // src/components/PayrollSystemView.tsx
 // Module Intégral Paie & RH RDC - Conforme Code du Travail RDC, CNSS, INPP, ONEM, IPR
-// 100% Autonome : Toutes les actions RH et modales sont intégrées directement dans ce fichier
+// 100% Autonome et Identique à l'IMAGE 1 (Dark Theme Slate-900 / Slate-950, Devises $ USD et CDF, Taux BCC)
 
 import React, { useState, useMemo } from 'react';
 import type { 
@@ -99,7 +99,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     directorGeneral: 'Junior Monya'
   };
 
-  // Droits RH & Direction
+  // Droits Direction & DRH
   const isHR = Boolean(
     !currentUser ||
     currentUser.role === 'dg' ||
@@ -113,7 +113,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     currentUser.roleTitle?.toLowerCase().includes('financier')
   );
 
-  // Configuration locale avec devise stricte USD / CDF
+  // Configuration avec devises strictes USD / CDF
   const [config, setConfig] = useState<PayrollSystemConfig>(() => {
     if (payrollConfig) {
       try {
@@ -280,7 +280,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       calculatedAmountCDF: 320625,
       currency: 'USD',
       status: 'approuve',
-      reason: 'Déploiement antenne VSAT site minier'
+      reason: 'Déploiement antenne VSAT site minier Kolwezi'
     },
     {
       id: 'ot-2',
@@ -348,8 +348,12 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   // ÉTATS DES MODALES D'ACTIONS RH
   // =========================================================================
   const [modalAction, setModalAction] = useState<null | 'new_contract' | 'new_leave' | 'new_advance' | 'new_overtime' | 'new_discipline' | 'doc_print'>(null);
-  const [selectedContract, setSelectedContract] = useState<EmployeeContract | null>(null);
-  const [activeDocData, setActiveDocData] = useState<{ title: string; ref: string; content: any }>({ title: '', ref: '', content: {} });
+  const [activeDocData, setActiveDocData] = useState<{ docType: string; title: string; ref: string; content: any }>({
+    docType: 'bulletin',
+    title: 'Bulletin de Paie Individuel',
+    ref: 'BP-2026-09-001',
+    content: {}
+  });
 
   // Simulateur
   const [simSelectedUserId, setSimSelectedUserId] = useState<string>(users[0]?.id || '');
@@ -384,7 +388,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     amount: 150,
     currency: 'USD' as 'USD' | 'CDF',
     repaymentMonth: '2026-10',
-    reason: 'Frais de scolarité / pharmacie'
+    reason: 'Frais de scolarité / urgence médicale'
   });
 
   const [overtimeForm, setOvertimeForm] = useState({
@@ -459,7 +463,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   return (
     <div className="space-y-6 max-w-7xl mx-auto text-slate-100">
       
-      {/* 1. EN-TÊTE PRINCIPAL IDENTIQUE À L'IMAGE 1 */}
+      {/* 1. EN-TÊTE PRINCIPAL DU MODULE (IDENTIQUE IMAGE 1) */}
       <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -481,7 +485,6 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
-          {/* Sélecteur de Devise Officielle */}
           <div className="flex items-center bg-slate-950 px-3 py-2 rounded-xl border border-slate-800 text-xs">
             <span className="text-slate-400 mr-2 font-medium">Devise active :</span>
             <button
@@ -567,7 +570,6 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       {/* --------------------------------------------------------------------- */}
       {activeTab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs">
-          {/* CARTE GAUCHE : POLITIQUE SALARIALE & PARAMÈTRES DE RÉMUNÉRATION RDC */}
           <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -666,7 +668,6 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
               </div>
             </div>
 
-            {/* Majorations Heures Supplémentaires */}
             <div className="pt-3 border-t border-slate-800 space-y-3">
               <h4 className="font-bold text-white flex items-center gap-1.5">
                 <Clock className="w-4 h-4 text-amber-400" />
@@ -724,7 +725,6 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             </div>
           </div>
 
-          {/* CARTE DROITE : CONFORMITÉ FISCALE & SOCIALE RDC */}
           <div className="space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -914,6 +914,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                                   <button
                                     onClick={() => {
                                       setActiveDocData({
+                                        docType: 'bulletin',
                                         title: 'Bulletin de Paie Individuel',
                                         ref: `BP-${run.month}-${c.matricule}`,
                                         content: { userName: u?.name || c.employeeCode, matricule: c.matricule, net, currency: c.salaryCurrency }
@@ -1000,6 +1001,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     <button
                       onClick={() => {
                         setActiveDocData({
+                          docType: 'attestation',
                           title: 'Attestation de Service & Travail',
                           ref: `AT-${contract.matricule}`,
                           content: { userName: matchedUser?.name || contract.employeeCode, matricule: contract.matricule, startDate: contract.startDate }
@@ -1013,6 +1015,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     <button
                       onClick={() => {
                         setActiveDocData({
+                          docType: 'solde',
                           title: 'Solde de Tout Compte',
                           ref: `STC-${contract.matricule}`,
                           content: { userName: matchedUser?.name || contract.employeeCode, matricule: contract.matricule, baseSalary: contract.baseSalary }
@@ -1194,6 +1197,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 <button
                   onClick={() => {
                     setActiveDocData({
+                      docType: 'sanction',
                       title: 'Notification de Mesure Disciplinaire',
                       ref: `DISC-${action.id}`,
                       content: { userName: action.userName, title: action.title, reason: action.reason }
@@ -1211,97 +1215,477 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       )}
 
       {/* --------------------------------------------------------------------- */}
-      {/* ONGLET 11: SIMULATEUR & BULLETIN OFFICIEL                             */}
+      {/* SOUS-MODULE 8: PRIMES & INDEMNITÉS CONVENTIONNELLES                   */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'allowances' && (
+        <div className="space-y-4 text-xs">
+          <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-400" />
+                <span>Nomenclature des Primes & Indemnités RDC ({config.allowances.length})</span>
+              </h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Transport, logement, panier repas et prime technique VSAT. Activez, désactivez ou créez vos primes.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                const name = prompt('Intitulé de la prime :');
+                if (!name) return;
+                const defaultValue = Number(prompt('Montant standard (ou pourcentage) :') || 100);
+                const newAllowance: PayrollAllowance = {
+                  id: `allw-${Date.now()}`,
+                  name,
+                  code: `PRIME_${Date.now().toString().slice(-4)}`,
+                  type: 'fixe',
+                  defaultValue,
+                  isTaxable: true,
+                  isSubjectToSocialContributions: true,
+                  isActive: true,
+                  category: 'performance',
+                  description: 'Prime personnalisée ajoutée par la Direction RH.'
+                };
+                setConfig(prev => ({ ...prev, allowances: [...prev.allowances, newAllowance] }));
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5 transition shadow"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Créer une Prime</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {config.allowances.map(a => (
+              <div
+                key={a.id}
+                className={`bg-slate-900 border rounded-2xl p-5 shadow-xl space-y-3 transition ${
+                  a.isActive ? 'border-slate-800' : 'border-slate-800/50 opacity-60'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-900">
+                      {a.code}
+                    </span>
+                    <h4 className="text-sm font-bold text-white mt-1.5">{a.name}</h4>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setConfig(prev => ({
+                        ...prev,
+                        allowances: prev.allowances.map(item => item.id === a.id ? { ...item, isActive: !item.isActive } : item)
+                      }));
+                    }}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition border ${
+                      a.isActive
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {a.isActive ? 'Active' : 'Désactivée'}
+                  </button>
+                </div>
+
+                <p className="text-slate-400 text-xs">{a.description}</p>
+
+                <div className="grid grid-cols-2 gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px]">
+                  <div>
+                    <span className="text-slate-500 block">Valeur Standard</span>
+                    <span className="text-white font-bold font-mono">
+                      {a.type === 'fixe' ? formatMoney(a.defaultValue) : `${a.defaultValue}% du salaire`}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-500 block">Régime Fiscal & Social</span>
+                    <span className="text-slate-300">
+                      {a.isTaxable ? '• Imposable IPR' : '• Exonérée IPR'} <br />
+                      {a.isSubjectToSocialContributions ? '• Soumise CNSS' : '• Exonérée CNSS'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* SOUS-MODULE 9: COTISATIONS CNSS & INPP                                */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'social' && (
+        <div className="space-y-4 text-xs">
+          <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Percent className="w-4 h-4 text-indigo-400" />
+                <span>Cotisations Sociales & Organismes Parafiscaux RDC</span>
+              </h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Barème officiel : CNSS (5% salarié / 13% patronal), INPP (3%) et ONEM (0.2%).
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setActiveDocData({
+                  docType: 'bordereau_cnss',
+                  title: 'BORDEREAU DÉCLARATIF CNSS & PARAFISCAL',
+                  ref: `DECL-CNSS-${new Date().getFullYear()}`,
+                  content: { userName: 'Direction Générale', matricule: 'DEC-GLOBAL', net: 1420 }
+                });
+                setModalAction('doc_print');
+              }}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center gap-1.5 shadow"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Générer Bordereau CNSS</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {config.socialContributions.map(sc => (
+              <div
+                key={sc.id}
+                className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-900">
+                    {sc.code}
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                    Légal RDC
+                  </span>
+                </div>
+
+                <h4 className="text-sm font-bold text-white">{sc.name}</h4>
+                <p className="text-slate-400 text-xs">{sc.description}</p>
+
+                <div className="grid grid-cols-2 gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px]">
+                  <div>
+                    <span className="text-slate-500 block">Part Salarié (Ouvrière)</span>
+                    <span className="text-amber-400 font-bold font-mono text-sm">{sc.employeeRate}%</span>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-500 block">Part Employeur (Patronale)</span>
+                    <span className="text-indigo-400 font-bold font-mono text-sm">{sc.employerRate}%</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* SOUS-MODULE 10: BARÈME FISCAL IPR RDC                                 */}
+      {/* --------------------------------------------------------------------- */}
+      {activeTab === 'taxes' && (
+        <div className="space-y-4 text-xs">
+          <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-indigo-400" />
+                <span>Barème Progressif de l'IPR (Direction Générale des Impôts - DGI RDC)</span>
+              </h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Calcul par tranches progressives (3% à 40%) sur le net imposable après déduction CNSS.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setActiveDocData({
+                  docType: 'declaration_dgi',
+                  title: 'BORDEREAU MENSUEL IPR - DGI RDC',
+                  ref: `IPR-DGI-${new Date().getFullYear()}`,
+                  content: { userName: 'Direction Générale', matricule: 'DGI-GLOBAL', net: 1100 }
+                });
+                setModalAction('doc_print');
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5 shadow"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Générer Déclaration DGI</span>
+            </button>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                    <th className="py-2.5 px-3">Tranche Fiscale</th>
+                    <th className="py-2.5 px-3">Revenu Imposable Mensuel ({config.currency})</th>
+                    <th className="py-2.5 px-3">Taux Applicable</th>
+                    <th className="py-2.5 px-3">Mode d'Imposition</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-200">
+                  {config.taxConfig.brackets.map((b, idx) => (
+                    <tr key={b.id} className="hover:bg-slate-950/40">
+                      <td className="py-3 px-3 font-bold text-white font-mono">Tranche {idx + 1}</td>
+                      <td className="py-3 px-3 font-mono">
+                        {formatMoney(b.min)} {b.max !== null ? `à ${formatMoney(b.max)}` : 'et plus'}
+                      </td>
+                      <td className="py-3 px-3 font-bold text-emerald-400 font-mono text-sm">{b.rate}%</td>
+                      <td className="py-3 px-3 text-slate-400">Calcul progressif sur fraction</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+              <div>
+                <span className="font-bold text-white">Réduction d'IPR par charge de famille</span>
+                <p className="text-[10px] text-slate-400">Déduction légale directe sur le montant de l'impôt brut.</p>
+              </div>
+              <span className="font-mono font-bold text-emerald-400">
+                {formatMoney(config.taxConfig.creditPerDependentChild)} / enfant
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------------------- */}
+      {/* SOUS-MODULE 11: SPÉCIMEN & BULLETIN OFFICIEL RHEMA BUSINESS           */}
       {/* --------------------------------------------------------------------- */}
       {activeTab === 'simulator' && (
         <div className="space-y-6 text-xs">
+          
+          {/* Panneau de Paramétrage de la Simulation en Direct */}
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Calculator className="w-4 h-4 text-indigo-400" />
-                <span>Simulateur en Temps Réel du Bulletin de Paie RDC</span>
-              </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-indigo-400" />
+                  <span>Calculateur & Simulateur en Temps Réel du Bulletin de Paie RDC</span>
+                </h3>
+                <p className="text-slate-400 text-xs mt-1">
+                  Testez instantanément le salaire net d'un agent selon ses primes, son ancienneté, ses enfants à charge et les retenues légales (CNSS 5% et IPR DGI).
+                </p>
+              </div>
+
               <button
                 onClick={() => {
+                  const targetUser = users.find(u => u.id === simSelectedUserId);
                   setActiveDocData({
-                    title: 'Bulletin de Rémunération Officiel',
-                    ref: `BP-${Date.now().toString().slice(-6)}`,
+                    docType: 'bulletin',
+                    title: 'Bulletin de Rémunération Individuel',
+                    ref: `BP-2026-09-${simSelectedUserId.toUpperCase()}`,
                     content: {
-                      userName: users.find(u => u.id === simSelectedUserId)?.name || 'Collaborateur',
-                      matricule: 'MAT-SIM-001',
-                      net: simulation.netSalary,
+                      userName: targetUser?.name || 'Collaborateur',
+                      roleTitle: targetUser?.roleTitle || 'Cadre Supérieur',
+                      matricule: 'MAT-2026-RHEMA',
+                      netSalary: simulation.netSalary,
                       baseSalary: simBaseSalary,
-                      currency: config.currency
+                      currency: config.currency,
+                      seniorityYears: simSeniorityYears,
+                      dependents: simDependents,
+                      grossSalary: simulation.grossSalary,
+                      cnssDeduction: simulation.socialDeductions,
+                      iprDeduction: simulation.taxDeductions
                     }
                   });
                   setModalAction('doc_print');
                 }}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5"
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-600/30"
               >
                 <Printer className="w-4 h-4" />
-                <span>Afficher & Imprimer le Bulletin Officiel</span>
+                <span>Afficher & Imprimer le Bulletin Officiel (A4)</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
               <div>
-                <label className="text-slate-300 block mb-1">Collaborateur</label>
+                <label className="text-slate-300 font-medium block mb-1">Sélectionner un Collaborateur</label>
                 <select
                   value={simSelectedUserId}
-                  onChange={(e) => setSimSelectedUserId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                  onChange={(e) => {
+                    const uId = e.target.value;
+                    setSimSelectedUserId(uId);
+                    const matched = contracts.find(c => c.userId === uId);
+                    if (matched) {
+                      setSimBaseSalary(matched.baseSalary);
+                      setSimDependents(matched.dependentsCount);
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-medium focus:border-indigo-500"
                 >
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.roleTitle})</option>
+                  ))}
                 </select>
               </div>
+
               <div>
-                <label className="text-slate-300 block mb-1">Salaire de Base ({config.currency})</label>
+                <label className="text-slate-300 font-medium block mb-1">Salaire de Base Fixé ({config.currency})</label>
                 <input
                   type="number"
                   value={simBaseSalary}
                   onChange={(e) => setSimBaseSalary(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono font-bold"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono font-bold focus:border-indigo-500"
                 />
               </div>
+
               <div>
-                <label className="text-slate-300 block mb-1">Ancienneté (Années)</label>
+                <label className="text-slate-300 font-medium block mb-1">Ancienneté (Années de service)</label>
                 <input
                   type="number"
                   value={simSeniorityYears}
                   onChange={(e) => setSimSeniorityYears(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:border-indigo-500"
                 />
               </div>
+
               <div>
-                <label className="text-slate-300 block mb-1">Enfants à charge</label>
+                <label className="text-slate-300 font-medium block mb-1">Enfants à charge (Déduction IPR)</label>
                 <input
                   type="number"
                   value={simDependents}
                   onChange={(e) => setSimDependents(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:border-indigo-500"
                 />
               </div>
             </div>
           </div>
 
+          {/* Synthèse Chiffrée Instantanée */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block">Salaire Brut Global</span>
-              <span className="text-xl font-bold text-white font-mono mt-1 block">{formatMoney(simulation.grossSalary)}</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block">Salaire Brut Imposable</span>
+              <span className="text-xl font-bold text-white font-mono mt-1 block">
+                {formatMoney(simulation.grossSalary)}
+              </span>
             </div>
+
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block">CNSS Ouvrière (5%)</span>
-              <span className="text-xl font-bold text-indigo-400 font-mono mt-1 block">-{formatMoney(simulation.socialDeductions)}</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block">Retenue CNSS Salarié (5%)</span>
+              <span className="text-xl font-bold text-amber-400 font-mono mt-1 block">
+                - {formatMoney(simulation.socialDeductions)}
+              </span>
             </div>
+
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
               <span className="text-slate-400 text-[10px] uppercase font-bold block">Impôt IPR (DGI RDC)</span>
-              <span className="text-xl font-bold text-rose-400 font-mono mt-1 block">-{formatMoney(simulation.taxDeductions)}</span>
+              <span className="text-xl font-bold text-rose-400 font-mono mt-1 block">
+                - {formatMoney(simulation.taxDeductions)}
+              </span>
             </div>
+
             <div className="bg-slate-900 border border-emerald-500/30 p-4 rounded-2xl shadow-xl text-center bg-emerald-950/20">
-              <span className="text-emerald-400 text-[10px] uppercase font-bold block">Net à Payer</span>
-              <span className="text-2xl font-bold text-emerald-300 font-mono mt-1 block">{formatMoney(simulation.netSalary)}</span>
+              <span className="text-emerald-400 text-[10px] uppercase font-bold block">Net Net à Payer à l'Agent</span>
+              <span className="text-2xl font-bold text-emerald-300 font-mono mt-1 block">
+                {formatMoney(simulation.netSalary)}
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                ≈ {config.currency === 'USD' ? `${(simulation.netSalary * exchangeRate).toLocaleString()} CDF` : `${(simulation.netSalary / exchangeRate).toFixed(2)} $`}
+              </span>
             </div>
           </div>
+
+          {/* SPÉCIMEN DU BULLETIN INTÉGRÉ EN DIRECT SUR LA PAGE */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                <FileCheck className="w-4 h-4 text-emerald-400" />
+                <span>Spécimen Visuel du Bulletin de Paie (Aperçu Direct)</span>
+              </h4>
+              <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">
+                Période active : Septembre 2026
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] text-left border border-slate-800 rounded-xl overflow-hidden font-mono">
+                <thead className="bg-slate-950 text-slate-400 font-semibold font-sans border-b border-slate-800">
+                  <tr>
+                    <th className="p-3">Désignation de la Rubrique</th>
+                    <th className="p-3 text-right">Base de Calcul</th>
+                    <th className="p-3 text-right">Taux / Formule</th>
+                    <th className="p-3 text-right text-emerald-400">Gains Salarié (+)</th>
+                    <th className="p-3 text-right text-rose-400">Retenues (-)</th>
+                    <th className="p-3 text-right text-indigo-400">Charges Employeur</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  <tr>
+                    <td className="p-3 font-sans text-white font-medium">Salaire de Base Conventionnel</td>
+                    <td className="p-3 text-right">{formatMoney(simBaseSalary)}</td>
+                    <td className="p-3 text-right">100%</td>
+                    <td className="p-3 text-right text-emerald-400 font-bold">+{formatMoney(simBaseSalary)}</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">-</td>
+                  </tr>
+
+                  {simSeniorityYears >= 2 && (
+                    <tr>
+                      <td className="p-3 font-sans text-white">Prime d'Ancienneté ({simSeniorityYears} ans)</td>
+                      <td className="p-3 text-right">{formatMoney(simBaseSalary)}</td>
+                      <td className="p-3 text-right">{Math.floor(simSeniorityYears / 2) * 3}%</td>
+                      <td className="p-3 text-right text-emerald-400">+{formatMoney(simBaseSalary * Math.floor(simSeniorityYears / 2) * 0.03)}</td>
+                      <td className="p-3 text-right">-</td>
+                      <td className="p-3 text-right">-</td>
+                    </tr>
+                  )}
+
+                  <tr>
+                    <td className="p-3 font-sans text-white">Indemnités Forfaitaires (Transport & Panier)</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">Fixe</td>
+                    <td className="p-3 text-right text-emerald-400 font-bold">+{formatMoney(100)}</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">-</td>
+                  </tr>
+
+                  <tr className="bg-slate-950/40">
+                    <td className="p-3 font-sans text-amber-300">CNSS Régime Général (Pensions & Risques)</td>
+                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary)}</td>
+                    <td className="p-3 text-right">5% sal. / 13% pat.</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right text-amber-400 font-bold">-{formatMoney(simulation.socialDeductions)}</td>
+                    <td className="p-3 text-right text-indigo-400">+{formatMoney(simulation.grossSalary * 0.13)}</td>
+                  </tr>
+
+                  <tr className="bg-slate-950/40">
+                    <td className="p-3 font-sans text-rose-300">IPR (Impôt Professionnel sur Rémunérations - DGI)</td>
+                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary - simulation.socialDeductions)}</td>
+                    <td className="p-3 text-right">Barème DGI</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right text-rose-400 font-bold">-{formatMoney(simulation.taxDeductions)}</td>
+                    <td className="p-3 text-right">-</td>
+                  </tr>
+
+                  <tr className="bg-slate-950/60">
+                    <td className="p-3 font-sans text-slate-400">INPP (3%) & ONEM (0.2%) Patronal RDC</td>
+                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary)}</td>
+                    <td className="p-3 text-right">3.2% total</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right">-</td>
+                    <td className="p-3 text-right text-indigo-400">+{formatMoney(simulation.grossSalary * 0.032)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-between items-center p-4 bg-slate-950 rounded-xl border border-slate-800 text-xs gap-3">
+              <div>
+                <span className="text-slate-400 block font-sans">Mode de versement certifié :</span>
+                <span className="text-white font-bold">Virement Bancaire Rawbank • Compte 01002-39201928019-88</span>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-400 block font-sans">Montant Net Net Décompté :</span>
+                <span className="text-xl font-bold text-emerald-400 font-mono">{formatMoney(simulation.netSalary)}</span>
+              </div>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -1648,24 +2032,245 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
         </div>
       )}
 
-      {/* Modale Impression Document Officiel RHEMA BUSINESS */}
+      {/* ===================================================================== */}
+      {/* MODALE D'IMPRESSION UNIVERSELLE DE TOUS LES DOCUMENTS OFFICIELS RDC    */}
+      {/* ===================================================================== */}
       {modalAction === 'doc_print' && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white text-slate-900 rounded-2xl p-6 max-w-2xl w-full shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b pb-2">
-              <h3 className="font-bold text-sm">{activeDocData.title} • RHEMA BUSINESS</h3>
-              <div className="flex gap-2">
-                <button onClick={() => window.print()} className="px-3 py-1 bg-indigo-600 text-white rounded font-bold text-xs">Imprimer / PDF</button>
-                <button onClick={() => setModalAction(null)}><X className="w-5 h-5 text-slate-400" /></button>
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
+          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl space-y-5 my-8 print:p-0 print:shadow-none print:m-0 print:max-w-none">
+            
+            {/* Barre d'action supérieure */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 print:hidden">
+              <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+                <Printer className="w-4 h-4 text-indigo-600" />
+                <span>{activeDocData.title} • République Démocratique du Congo</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Imprimer / PDF</span>
+                </button>
+                <button onClick={() => setModalAction(null)} className="text-slate-400 hover:text-slate-600 p-1">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
             </div>
-            <div className="text-xs space-y-2 leading-relaxed">
-              <p><strong>Réf :</strong> <span className="font-mono text-slate-600">{activeDocData.ref}</span></p>
-              <p><strong>Collaborateur :</strong> {activeDocData.content?.userName} ({activeDocData.content?.matricule})</p>
-              <p className="border-t pt-2 text-slate-700">
-                Certifié par la Direction Générale et conforme au Code du Travail de la République Démocratique du Congo.
-              </p>
-            </div>
+
+            {/* En-tête RHEMA BUSINESS Officiel */}
+            <header className="border-b-2 border-slate-300 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 bg-indigo-950 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-md shrink-0 border-2 border-indigo-700">
+                    RB
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black text-slate-900 tracking-tight">{currentOrg.name}</h2>
+                    <p className="text-[11px] text-slate-600 font-medium">Télécoms • VSAT • Réseaux & Intégration Technologique</p>
+                    <p className="text-[10px] text-slate-500 font-mono">
+                      RCCM: {currentOrg.rccm || 'CD/KNG/RCCM/18-B-01290'} • Id. Nat: {currentOrg.idNat || '01-83-N45201L'} • N° Impôt: {currentOrg.numImpot || 'A1934892Z'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-right sm:self-center">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 uppercase tracking-wider border border-indigo-200 block sm:inline-block">
+                    {activeDocData.title.toUpperCase()}
+                  </span>
+                  <div className="text-xs font-mono font-bold text-slate-700 mt-1">
+                    Réf : {activeDocData.ref}
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    Kinshasa, le {new Date().toLocaleDateString('fr-FR')}
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {/* CORPS SPÉCIFIQUE DU DOCUMENT : ATTESTATION DE TRAVAIL */}
+            {activeDocData.docType === 'attestation' && (
+              <div className="space-y-4 text-xs leading-relaxed text-slate-800 p-5 bg-slate-50 border border-slate-200 rounded-xl">
+                <h4 className="font-bold text-center text-sm uppercase text-slate-900 border-b border-slate-300 pb-2">
+                  ATTESTATION DE SERVICE ET DE TRAVAIL
+                </h4>
+                <p>Nous soussignés, <strong>{currentOrg.name}</strong>, certifions par la présente que :</p>
+                <p className="font-bold text-slate-900 text-sm">
+                  Monsieur / Madame {activeDocData.content?.userName}, Matricule {activeDocData.content?.matricule},
+                </p>
+                <p>
+                  est engagé(e) au sein de notre établissement en qualité de cadre sous contrat de travail depuis le <strong>{activeDocData.content?.startDate || '15 Janvier 2020'}</strong>.
+                </p>
+                <p>
+                  Durant son activité, l'intéressé(e) a fait preuve de loyauté, d'assiduité et de compétence technique dans l'accomplissement des missions qui lui sont confiées.
+                </p>
+                <p>En foi de quoi, la présente attestation lui est délivrée pour servir et valoir ce que de droit.</p>
+                <div className="pt-6 text-right font-bold">
+                  Pour la Direction Générale,<br />
+                  <span className="text-indigo-900 font-extrabold">{currentOrg.directorGeneral || 'Junior MONYA'}</span>
+                </div>
+              </div>
+            )}
+
+            {/* CORPS SPÉCIFIQUE DU DOCUMENT : SOLDE DE TOUT COMPTE */}
+            {activeDocData.docType === 'solde' && (
+              <div className="space-y-4 text-xs leading-relaxed text-slate-800 p-5 bg-slate-50 border border-slate-200 rounded-xl">
+                <h4 className="font-bold text-center text-sm uppercase text-slate-900 border-b border-slate-300 pb-2">
+                  REÇU POUR SOLDE DE TOUT COMPTE (ARTICLE 62 CODE DU TRAVAIL RDC)
+                </h4>
+                <p>Je soussigné(e), <strong>{activeDocData.content?.userName}</strong>, Matricule <strong>{activeDocData.content?.matricule}</strong>, reconnais avoir reçu la somme totale pour règlement définitif :</p>
+                <div className="p-3 bg-white border border-slate-300 rounded font-mono text-sm font-bold text-emerald-800">
+                  Total Net Décompté : {formatMoney(Number(activeDocData.content?.baseSalary || 1500) * 1.5)}
+                </div>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Prorata du dernier mois de traitement salarial</li>
+                  <li>Indemnité compensatoire de congés payés non pris</li>
+                  <li>Indemnité conventionnelle de fin de contrat</li>
+                </ul>
+                <div className="flex justify-between pt-6 border-t font-bold">
+                  <div>Signature du Salarié (précédée de « Pour solde de tout compte »)</div>
+                  <div>Visa Direction Générale</div>
+                </div>
+              </div>
+            )}
+
+            {/* CORPS SPÉCIFIQUE DU DOCUMENT : NOTIFICATION DISCIPLINAIRE */}
+            {activeDocData.docType === 'sanction' && (
+              <div className="space-y-4 text-xs leading-relaxed text-slate-800 p-5 bg-slate-50 border border-slate-200 rounded-xl">
+                <h4 className="font-bold text-center text-sm uppercase text-rose-900 border-b border-rose-200 pb-2">
+                  NOTIFICATION DE MESURE DISCIPLINAIRE
+                </h4>
+                <p>À l'attention de : <strong>{activeDocData.content?.userName}</strong></p>
+                <p><strong>Objet :</strong> {activeDocData.content?.title}</p>
+                <p>Vu les dispositions du Code du Travail de la RDC et du Règlement d'Ordre Intérieur de {currentOrg.name} :</p>
+                <div className="p-3 bg-white border border-rose-200 rounded text-rose-950 font-medium">
+                  {activeDocData.content?.reason}
+                </div>
+                <p>Nous vous prions de prendre les mesures correctives nécessaires afin d'éviter toute récidive susceptible d'entraîner des sanctions plus rigoureuses.</p>
+                <div className="pt-6 text-right font-bold">
+                  La Direction Générale
+                </div>
+              </div>
+            )}
+
+            {/* CORPS DU BULLETIN OFFICIEL DE PAIE STANDARD (A4) */}
+            {(activeDocData.docType === 'bulletin' || !['attestation', 'solde', 'sanction'].includes(activeDocData.docType)) && (
+              <>
+                <div className="grid grid-cols-2 gap-4 text-xs p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                  <div className="space-y-1">
+                    <div><strong>Nom de l'Agent :</strong> {users.find(u => u.id === simSelectedUserId)?.name || 'Collaborateur'}</div>
+                    <div><strong>Fonction / Emploi :</strong> {users.find(u => u.id === simSelectedUserId)?.roleTitle || 'Cadre Supérieur'}</div>
+                    <div><strong>Matricule Interne :</strong> MAT-2026-RHEMA</div>
+                    <div><strong>Ancienneté de service :</strong> {simSeniorityYears} an(s)</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div><strong>N° Immatriculation CNSS :</strong> CNSS-CD-9982410</div>
+                    <div><strong>Période de Paie :</strong> Septembre 2026</div>
+                    <div><strong>Devise Contractuelle :</strong> {config.currency === 'USD' ? 'Dollar Américain ($ USD)' : 'Franc Congolais (CDF)'}</div>
+                    <div><strong>Charges de famille :</strong> {simDependents} enfant(s) à charge</div>
+                  </div>
+                </div>
+
+                <table className="w-full text-xs border border-slate-300">
+                  <thead className="bg-slate-100 font-bold border-b border-slate-300 text-slate-800">
+                    <tr>
+                      <th className="p-2.5 text-left">Rubriques Rémunératrices & Déductions</th>
+                      <th className="p-2.5 text-right">Base</th>
+                      <th className="p-2.5 text-right">Taux / Formule</th>
+                      <th className="p-2.5 text-right text-emerald-800">Gains (+)</th>
+                      <th className="p-2.5 text-right text-rose-800">Retenues (-)</th>
+                      <th className="p-2.5 text-right text-slate-700">Part Patronale</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+                    <tr>
+                      <td className="p-2 font-sans font-medium text-slate-900">Salaire de Base Conventionnel</td>
+                      <td className="p-2 text-right">{formatMoney(simBaseSalary)}</td>
+                      <td className="p-2 text-right">100%</td>
+                      <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(simBaseSalary)}</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right">-</td>
+                    </tr>
+
+                    {simSeniorityYears >= 2 && (
+                      <tr>
+                        <td className="p-2 font-sans font-medium text-slate-900">Prime d'Ancienneté ({simSeniorityYears} ans)</td>
+                        <td className="p-2 text-right">{formatMoney(simBaseSalary)}</td>
+                        <td className="p-2 text-right">{Math.floor(simSeniorityYears / 2) * 3}%</td>
+                        <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(simBaseSalary * Math.floor(simSeniorityYears / 2) * 0.03)}</td>
+                        <td className="p-2 text-right">-</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                    )}
+
+                    <tr>
+                      <td className="p-2 font-sans font-medium text-slate-900">Indemnités Conventionnelles (Transport/Logement)</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right">Fixe</td>
+                      <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(100)}</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right">-</td>
+                    </tr>
+
+                    <tr className="bg-slate-50">
+                      <td className="p-2 font-sans text-slate-900">Cotisation CNSS Salarié (Pensions & Risques)</td>
+                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary)}</td>
+                      <td className="p-2 text-right">5% sal. / 13% pat.</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right text-rose-700 font-bold">-{formatMoney(simulation.socialDeductions)}</td>
+                      <td className="p-2 text-right text-slate-700 font-bold">+{formatMoney(simulation.grossSalary * 0.13)}</td>
+                    </tr>
+
+                    <tr className="bg-slate-50">
+                      <td className="p-2 font-sans text-slate-900">IPR (Impôt Professionnel sur Rémunérations - DGI)</td>
+                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary - simulation.socialDeductions)}</td>
+                      <td className="p-2 text-right">Barème DGI RDC</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right text-rose-700 font-bold">-{formatMoney(simulation.taxDeductions)}</td>
+                      <td className="p-2 text-right">-</td>
+                    </tr>
+
+                    <tr className="bg-slate-100/50">
+                      <td className="p-2 font-sans text-slate-700">Cotisations Patronales INPP (3%) & ONEM (0.2%)</td>
+                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary)}</td>
+                      <td className="p-2 text-right">3.2% total</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right">-</td>
+                      <td className="p-2 text-right text-slate-700 font-bold">+{formatMoney(simulation.grossSalary * 0.032)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-900 text-white rounded-xl">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">NET À PAYER À L'AGENT (VIREMENT BANCAIRE)</span>
+                    <span className="text-2xl font-bold text-emerald-400 font-mono mt-0.5 block">
+                      {formatMoney(simulation.netSalary)}
+                    </span>
+                    <span className="text-xs text-slate-300 font-mono">
+                      Contrevaleur BCC : {config.currency === 'USD' ? `${(simulation.netSalary * exchangeRate).toLocaleString()} CDF` : `${(simulation.netSalary / exchangeRate).toFixed(2)} $`}
+                    </span>
+                  </div>
+                  <div className="text-right text-xs text-slate-300 space-y-1">
+                    <div>Coût global employeur : <strong>{formatMoney(simulation.grossSalary * 1.162)}</strong></div>
+                    <div className="text-emerald-400 font-bold">Scellé SHA-256 : d892bc018ae82103fca91</div>
+                    <div className="text-[10px] text-slate-400">Certifié conforme par la Direction Générale</div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Pied de page officiel RHEMA BUSINESS */}
+            <footer className="pt-3 border-t-2 border-slate-200 text-[10px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
+              <div>
+                <span className="font-bold text-slate-800">{currentOrg.name}</span> • RCCM: {currentOrg.rccm || 'CD/KNG/RCCM/18-B-01290'}
+              </div>
+              <div>
+                Avenue de la Justice, Gombe, Kinshasa - RDC • Plateforme Certifiée RH
+              </div>
+            </footer>
+
           </div>
         </div>
       )}
