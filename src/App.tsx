@@ -17,7 +17,8 @@ import {
   initialDocuments, 
   initialTasks,
   initialSecurityAlerts,
-  initialAuditLogs
+  initialAuditLogs,
+  initialContracts
 } from './data/initialData';
 import { 
   createStandardPayrollSystem, 
@@ -436,6 +437,7 @@ export default function App() {
               users={users}
               tasks={tasks}
               documents={documents}
+              contracts={initialContracts}
               onSelectUser={setCurrentUser}
             />
           )}

@@ -1,6 +1,6 @@
 // src/components/EmployeeWorkspaceView.tsx
 import React, { useState, useEffect } from 'react';
-import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem } from '../types';
+import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract } from '../types';
 import { 
   CheckCircle2, 
   Clock, 
@@ -21,8 +21,11 @@ import {
   ShieldCheck,
   Eye,
   Check,
-  X
+  X,
+  BarChart3
 } from 'lucide-react';
+import { WorkspaceDashboard } from './WorkspaceDashboard';
+import { initialContracts } from '../data/initialData';
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -31,6 +34,7 @@ interface EmployeeWorkspaceViewProps {
   users?: User[];
   tasks?: TaskItem[];
   documents?: DocumentItem[];
+  contracts?: EmployeeContract[];
   onSelectUser?: (user: User) => void;
 }
 
@@ -41,13 +45,14 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   users = [],
   tasks = [],
   documents = [],
+  contracts = initialContracts,
   onSelectUser = () => {},
 }) => {
   // Chronomètre de travail en direct (démarre à 01:20:10)
   const [seconds, setSeconds] = useState<number>(4810);
   const [workStatus, setWorkStatus] = useState<'working' | 'coffee_break'>('working');
   const [breakSeconds, setBreakSeconds] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('tasks');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('dashboard');
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [showNotification, setShowNotification] = useState<boolean>(true);
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
@@ -343,9 +348,10 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           </div>
         </div>
 
-        {/* Navigation des 5 sous-modules */}
+        {/* Navigation des sous-modules du Workspace */}
         <div className="flex items-center gap-2 mt-6 pt-4 border-t border-sky-100 overflow-x-auto">
           {[
+            { id: 'dashboard', label: 'Tableau de Bord & Ratios RH', icon: <BarChart3 className="w-4 h-4" /> },
             { id: 'tasks', label: `Mes Tâches Opérationnelles (${taskList.length})`, icon: <CheckCircle2 className="w-4 h-4" /> },
             { id: 'attendance', label: 'Pointage & Présences (2)', icon: <Clock className="w-4 h-4" /> },
             { id: 'documents', label: 'Mes Documents & Fiches (8)', icon: <FileText className="w-4 h-4" /> },
@@ -357,7 +363,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
               onClick={() => setActiveTab(tab.id as any)}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${
                 activeTab === tab.id
-                  ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30'
+                  ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30 font-bold'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-sky-50'
               }`}
             >
@@ -367,6 +373,16 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           ))}
         </div>
       </div>
+
+      {/* SOUS-MODULE 0 : TABLEAU DE BORD RECHARTS (EFFECTIFS & RATIOS SALARIAUX) */}
+      {activeTab === 'dashboard' && (
+        <WorkspaceDashboard
+          entities={entities}
+          users={users}
+          contracts={contracts}
+          organization={currentOrg}
+        />
+      )}
 
       {/* SOUS-MODULE 1 : MES TÂCHES OPÉRATIONNELLES */}
       {activeTab === 'tasks' && (
