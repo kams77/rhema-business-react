@@ -9,8 +9,10 @@ import {
   CheckCircle2, 
   Globe2, 
   ShieldCheck, 
-  FileText 
+  FileText,
+  Download 
 } from 'lucide-react';
+import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
 
 interface RhemaOfficialDocumentProps {
   document: DocumentItem;
@@ -58,21 +60,39 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => exportOfficialDocumentToCSV(document, organization.name)}
+              title="Exporter les métadonnées et contenu au format CSV pour archivage légal"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition active:scale-95"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Export CSV</span>
+            </button>
+
+            <button
+              onClick={() => exportOfficialDocumentToPDF(document, organization)}
+              title="Générer un PDF officiel avec certificat de scellement électronique"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow transition active:scale-95"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Télécharger PDF</span>
+            </button>
+
             <button
               onClick={handleShare}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold border border-slate-700 transition"
             >
               <Share2 className="w-3.5 h-3.5 text-sky-400" />
-              <span>{shareSuccess ? 'Lien Copié !' : 'Partager à l\'Entreprise'}</span>
+              <span>{shareSuccess ? 'Lien Copié !' : 'Partager'}</span>
             </button>
 
             <button
               onClick={() => window.print()}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Imprimer / PDF</span>
+              <span>Imprimer</span>
             </button>
 
             <button

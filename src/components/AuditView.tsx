@@ -1,7 +1,8 @@
 // src/components/AuditView.tsx
 import React, { useState } from 'react';
 import type { AuditLog } from '../types';
-import { History, Shield, Hash, Search, Clock, Download, Filter, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { History, Shield, Hash, Search, Clock, Download, Filter, CheckCircle2, ShieldAlert, FileText } from 'lucide-react';
+import { exportAuditLogsToCSV, exportAuditLogsToPDF } from '../utils/exportUtils';
 
 interface AuditViewProps {
   logs: AuditLog[];
@@ -10,6 +11,7 @@ interface AuditViewProps {
 export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const filteredLogs = logs.filter(l => {
     const matchesCategory = selectedCategory === 'all' || l.category === selectedCategory;
@@ -23,27 +25,16 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
   });
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'Horodatage', 'Opérateur', 'Rôle', 'Action', 'Catégorie', 'Détails', 'IP', 'Empreinte SHA-256'];
-    const rows = filteredLogs.map(l => [
-      l.id,
-      `"${l.timestamp}"`,
-      `"${l.userName}"`,
-      `"${l.userRole}"`,
-      `"${l.action}"`,
-      `"${l.category}"`,
-      `"${l.details.replace(/"/g, '""')}"`,
-      `"${l.ip}"`,
-      `"${l.hash}"`
-    ]);
+    exportAuditLogsToCSV(filteredLogs);
+  };
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `journal_audit_rhema_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleExportPDF = () => {
+    setIsExporting(true);
+    try {
+      exportAuditLogsToPDF(filteredLogs, 'RHEMA BUSINESS RDC');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const getCategoryBadge = (category: string) => {
@@ -82,13 +73,25 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
             <Hash className="w-4 h-4" />
             Chaîne Cryptographique Intègre
           </div>
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3.5 py-1.5 rounded-xl border border-slate-700 text-xs font-semibold transition shadow-sm"
-          >
-            <Download className="w-4 h-4 text-cyan-400" />
-            <span>Exporter CSV</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCSV}
+              title="Exporter les journaux d'audit au format CSV (tableur Excel / LibreOffice)"
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3.5 py-1.5 rounded-xl border border-slate-700 text-xs font-semibold transition shadow-sm active:scale-95"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Exporter CSV</span>
+            </button>
+            <button
+              onClick={handleExportPDF}
+              disabled={isExporting}
+              title="Générer le rapport PDF officiel avec mise en page juridique pour archivage légal"
+              className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md shadow-cyan-900/30 active:scale-95 disabled:opacity-50"
+            >
+              <FileText className="w-3.5 h-3.5 text-white" />
+              <span>{isExporting ? 'Génération...' : 'Exporter PDF Légal'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

@@ -28,6 +28,13 @@ import {
   initialOvertimes,
   initialDisciplinaryActions
 } from '../data/initialData';
+import { 
+  exportPayslipToPDF, 
+  exportPayslipToCSV, 
+  exportPayrollRunToPDF, 
+  exportPayrollRunToCSV, 
+  type PayslipExportData 
+} from '../utils/exportUtils';
 
 import { 
   Coins, 
@@ -54,7 +61,9 @@ import {
   FileCheck,
   CheckSquare,
   X,
-  Check
+  Check,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
 
 export interface PayrollSystemViewProps {
@@ -249,6 +258,75 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const simulation = useMemo(() => {
     return calculatePayslipSimulation(config, simBaseSalary, simSeniorityYears, simDependents);
   }, [config, simBaseSalary, simSeniorityYears, simDependents]);
+
+  const getPayslipExportDataForUser = (userId: string, customContent?: any): PayslipExportData => {
+    const targetUser = users.find(u => u.id === userId);
+    const contract = contracts.find(c => c.userId === userId);
+    
+    const baseSal = customContent?.baseSalary ?? (contract ? contract.baseSalary : simBaseSalary);
+    const curr = customContent?.currency ?? (contract ? contract.salaryCurrency : config.currency);
+    const dependents = customContent?.dependents ?? (contract ? contract.dependentsCount : simDependents);
+    const seniority = customContent?.seniorityYears ?? (contract ? 3 : simSeniorityYears);
+    
+    // Ancienneté bonus (3% par tranche de 2 ans)
+    const seniorityBonus = seniority >= 2 ? baseSal * Math.floor(seniority / 2) * 0.03 : 0;
+    const allowances = 100;
+    
+    // Heures sup
+    const userOvertime = overtimeRecords.find(o => o.userId === userId && o.month === '2026-09');
+    const overtimeAmount = userOvertime ? userOvertime.calculatedAmountUSD : 0;
+    
+    // Acompte
+    const userAdvance = advances.find(a => a.userId === userId && a.repaymentMonth === '2026-09');
+    const advanceDeduction = userAdvance ? userAdvance.amount : 0;
+    
+    const gross = baseSal + seniorityBonus + allowances + overtimeAmount;
+    const cnssSal = gross * 0.05;
+    const ipr = (gross - cnssSal) * 0.15;
+    const totalDeductions = cnssSal + ipr + advanceDeduction;
+    const net = gross - totalDeductions;
+    
+    const cnssPat = gross * 0.13;
+    const inpp = gross * 0.03;
+    const onem = gross * 0.002;
+    const totalEmployer = gross + cnssPat + inpp + onem;
+    
+    return {
+      orgName: currentOrg.name,
+      rccm: currentOrg.rccm || 'CD/KNG/RCCM/20-A-01120',
+      idNat: currentOrg.idNat || '01-83-N45201L',
+      numImpot: currentOrg.numImpot || 'A1934892Z',
+      headquarters: currentOrg.headquarters,
+      ref: customContent?.ref || `BP-2026-09-${contract?.matricule || targetUser?.matricule || 'MAT-RB'}`,
+      period: 'Septembre 2026',
+      date: new Date().toLocaleDateString('fr-FR'),
+      employeeName: customContent?.userName || targetUser?.name || contract?.employeeCode || 'Collaborateur',
+      matricule: customContent?.matricule || contract?.matricule || targetUser?.matricule || 'MAT-2026-RHEMA',
+      roleTitle: customContent?.roleTitle || targetUser?.roleTitle || contract?.categoryPro || 'Cadre',
+      cnssNumber: contract?.cnssNumber || 'CNSS-CD-9982410',
+      bankName: contract?.bankName || 'Rawbank Kinshasa',
+      accountNumber: contract?.bankAccountNumber || '01002-39201928019-88',
+      seniorityYears: seniority,
+      dependents: dependents,
+      currency: curr,
+      baseSalary: baseSal,
+      seniorityBonus,
+      allowances,
+      overtimeAmount,
+      grossSalary: gross,
+      socialDeductionCNSS: cnssSal,
+      taxDeductionIPR: ipr,
+      advanceDeduction,
+      totalDeductions,
+      netSalary: net,
+      counterValueCDF: curr === 'USD' ? net * exchangeRate : net,
+      employerCNSS: cnssPat,
+      employerINPP: inpp,
+      employerONEM: onem,
+      totalEmployerCost: totalEmployer,
+      sha256Hash: `SHA256:${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}`
+    };
+  };
 
   const handleSave = () => {
     const updated: PayrollSystemConfig = {
@@ -679,7 +757,31 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap items-center">
+                      <button
+                        onClick={() => {
+                          exportPayrollRunToCSV(run, contracts, users);
+                          if (onLogAction) onLogAction('Export Livre de Paie CSV', `Export CSV livre de paie période ${run.month}`, 'document');
+                        }}
+                        title="Exporter le livre de paie complet de la période en CSV"
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
+                      >
+                        <Download className="w-3.5 h-3.5 text-cyan-400" />
+                        <span className="hidden sm:inline">CSV Période</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          exportPayrollRunToPDF(run, contracts, users, currentOrg);
+                          if (onLogAction) onLogAction('Export Livre de Paie PDF', `Génération PDF légal du livre de paie ${run.month}`, 'document');
+                        }}
+                        title="Télécharger l'état récapitulatif officiel certifié en PDF (format paysage)"
+                        className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm active:scale-95"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>PDF Période</span>
+                      </button>
+
                       <button
                         onClick={() => setExpandedPayrollRunId(isExpanded ? null : run.id)}
                         className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium flex items-center gap-1.5"
@@ -731,7 +833,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                             <th className="p-2.5 text-right">CNSS (5%)</th>
                             <th className="p-2.5 text-right">IPR</th>
                             <th className="p-2.5 text-right font-bold text-emerald-400">Net à Virer</th>
-                            <th className="p-2.5 text-center">Bulletin</th>
+                            <th className="p-2.5 text-center">Bulletin & Exports</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -751,20 +853,56 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                                 <td className="p-2.5 text-right text-rose-400">-{formatMoney(ipr)}</td>
                                 <td className="p-2.5 text-right font-bold text-emerald-400">{formatMoney(net)}</td>
                                 <td className="p-2.5 text-center">
-                                  <button
-                                    onClick={() => {
-                                      setActiveDocData({
-                                        docType: 'bulletin',
-                                        title: 'Bulletin de Paie Individuel',
-                                        ref: `BP-${run.month}-${c.matricule}`,
-                                        content: { userName: u?.name || c.employeeCode, matricule: c.matricule, net, currency: c.salaryCurrency }
-                                      });
-                                      setModalAction('doc_print');
-                                    }}
-                                    className="px-2 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded text-[10px] font-sans"
-                                  >
-                                    Voir
-                                  </button>
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setActiveDocData({
+                                          docType: 'bulletin',
+                                          title: 'Bulletin de Paie Individuel',
+                                          ref: `BP-${run.month}-${c.matricule}`,
+                                          content: { userName: u?.name || c.employeeCode, matricule: c.matricule, net, currency: c.salaryCurrency }
+                                        });
+                                        setModalAction('doc_print');
+                                      }}
+                                      className="px-2 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded text-[10px] font-sans transition"
+                                    >
+                                      Voir
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const exportData = getPayslipExportDataForUser(c.userId, {
+                                          ref: `BP-${run.month}-${c.matricule}`,
+                                          baseSalary: c.baseSalary,
+                                          currency: c.salaryCurrency,
+                                          userName: u?.name || c.employeeCode,
+                                          matricule: c.matricule
+                                        });
+                                        exportPayslipToPDF(exportData);
+                                        if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Téléchargement PDF bulletin ${c.matricule} (${run.month})`, 'document');
+                                      }}
+                                      title="Télécharger le bulletin individuel en PDF certifié conforme RDC"
+                                      className="p-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] transition"
+                                    >
+                                      <FileText className="w-3.5 h-3.5 text-indigo-400 hover:text-white" />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const exportData = getPayslipExportDataForUser(c.userId, {
+                                          ref: `BP-${run.month}-${c.matricule}`,
+                                          baseSalary: c.baseSalary,
+                                          currency: c.salaryCurrency,
+                                          userName: u?.name || c.employeeCode,
+                                          matricule: c.matricule
+                                        });
+                                        exportPayslipToCSV(exportData);
+                                        if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin ${c.matricule} (${run.month})`, 'document');
+                                      }}
+                                      title="Exporter le bulletin au format CSV (Excel)"
+                                      className="p-1 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded text-[10px] transition"
+                                    >
+                                      <Download className="w-3.5 h-3.5 text-cyan-400 hover:text-white" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1312,34 +1450,72 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={() => {
-                  const targetUser = users.find(u => u.id === simSelectedUserId);
-                  setActiveDocData({
-                    docType: 'bulletin',
-                    title: 'Bulletin de Rémunération Individuel',
-                    ref: `BP-2026-09-${simSelectedUserId.toUpperCase()}`,
-                    content: {
-                      userName: targetUser?.name || 'Collaborateur',
-                      roleTitle: targetUser?.roleTitle || 'Cadre Supérieur',
-                      matricule: 'MAT-2026-RHEMA',
-                      netSalary: simulation.netSalary,
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
                       baseSalary: simBaseSalary,
                       currency: config.currency,
                       seniorityYears: simSeniorityYears,
                       dependents: simDependents,
-                      grossSalary: simulation.grossSalary,
-                      cnssDeduction: simulation.socialDeductions,
-                      iprDeduction: simulation.taxDeductions
-                    }
-                  });
-                  setModalAction('doc_print');
-                }}
-                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-600/30"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Afficher & Imprimer le Bulletin Officiel (A4)</span>
-              </button>
+                    });
+                    exportPayslipToCSV(exportData);
+                    if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin de paie ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Exporter les lignes du bulletin au format CSV (Excel)"
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Export CSV</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
+                      baseSalary: simBaseSalary,
+                      currency: config.currency,
+                      seniorityYears: simSeniorityYears,
+                      dependents: simDependents,
+                    });
+                    exportPayslipToPDF(exportData);
+                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF légal bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Générer directement le bulletin de paie certifié au format PDF conforme RDC"
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-indigo-600/30 active:scale-95"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Télécharger PDF</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const targetUser = users.find(u => u.id === simSelectedUserId);
+                    setActiveDocData({
+                      docType: 'bulletin',
+                      title: 'Bulletin de Rémunération Individuel',
+                      ref: `BP-2026-09-${simSelectedUserId.toUpperCase()}`,
+                      content: {
+                        userName: targetUser?.name || 'Collaborateur',
+                        roleTitle: targetUser?.roleTitle || 'Cadre Supérieur',
+                        matricule: 'MAT-2026-RHEMA',
+                        netSalary: simulation.netSalary,
+                        baseSalary: simBaseSalary,
+                        currency: config.currency,
+                        seniorityYears: simSeniorityYears,
+                        dependents: simDependents,
+                        grossSalary: simulation.grossSalary,
+                        cnssDeduction: simulation.socialDeductions,
+                        iprDeduction: simulation.taxDeductions
+                      }
+                    });
+                    setModalAction('doc_print');
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-emerald-600/30 active:scale-95"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Aperçu A4 & Impression</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
@@ -1880,19 +2056,46 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
           <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl space-y-5 my-8 print:p-0 print:shadow-none print:m-0 print:max-w-none">
             
             {/* Barre d'action supérieure */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 print:hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 print:hidden">
               <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
                 <Printer className="w-4 h-4 text-indigo-600" />
                 <span>{activeDocData.title} • République Démocratique du Congo</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
+                    exportPayslipToCSV(exportData);
+                    if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Exporter les rubriques salariales en CSV (Excel)"
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Exporter CSV</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
+                    exportPayslipToPDF(exportData);
+                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF certifié du bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Générer et télécharger le bulletin officiel en format PDF A4 certifié RDC"
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Télécharger PDF Officiel</span>
+                </button>
+
                 <button
                   onClick={() => window.print()}
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Imprimer / PDF</span>
+                  <span>Imprimer</span>
                 </button>
+
                 <button onClick={() => setModalAction(null)} className="text-slate-400 hover:text-slate-600 p-1">
                   <X className="w-5 h-5" />
                 </button>

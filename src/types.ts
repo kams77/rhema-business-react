@@ -308,6 +308,7 @@ export interface PayrollRunPeriod {
   validatedByDG?: string;
   validatedAt?: string;
   closureHash?: string;
+  hash?: string;
 }
 
 export interface PayrollAllowance {
