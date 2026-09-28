@@ -15,7 +15,9 @@ import {
   initialEntities, 
   initialUsers, 
   initialDocuments, 
-  initialTasks 
+  initialTasks,
+  initialSecurityAlerts,
+  initialAuditLogs
 } from './data/initialData';
 import { 
   createStandardPayrollSystem, 
@@ -23,6 +25,7 @@ import {
 } from './data/standardPayroll';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
+import { LoginView } from './components/LoginView';
 import { EmployeeWorkspaceView } from './components/EmployeeWorkspaceView';
 import { HierarchyView } from './components/HierarchyView';
 import { DocumentsView } from './components/DocumentsView';
@@ -66,63 +69,51 @@ export default function App() {
   const [documents, setDocuments] = useState<DocumentItem[]>(initialDocuments);
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks);
   
-  const [alerts, setAlerts] = useState<SecurityAlert[]>([
-    {
-      id: 'sec-1',
-      timestamp: '08:42:15',
-      userId: 'usr-agent-tech',
-      userName: 'M. Fabrice Mukendi',
-      userRole: 'chef_service',
-      userEntityName: 'Service Déploiement VSAT',
-      targetEntityId: 'dept-daf',
-      targetEntityName: 'Département Administration & Finances (DAF)',
-      attemptCount: 2,
-      status: 'alerte_emise',
-      severity: 'haute',
-      ipAddress: '192.168.1.108',
-      reason: 'Tentative d\'accès direct aux dossiers comptables confidentiels.',
-    },
-    {
-      id: 'sec-2',
-      timestamp: '07:15:30',
-      userId: 'usr-guest',
-      userName: 'Agent Exécutant Kolwezi',
-      userRole: 'agent',
-      userEntityName: 'Service Réseau',
-      targetEntityId: 'dir-rh',
-      targetEntityName: 'Direction des Ressources Humaines',
-      attemptCount: 1,
-      status: 'alerte_emise',
-      severity: 'moyenne',
-      ipAddress: '192.168.1.115',
-      reason: 'Recherche de fiches de paie hors périmètre habilité.',
-    }
-  ]);
+  const [alerts, setAlerts] = useState<SecurityAlert[]>(initialSecurityAlerts);
+  const [logs, setLogs] = useState<AuditLog[]>(initialAuditLogs);
 
-  const [logs, setLogs] = useState<AuditLog[]>([
-    {
-      id: 'log-1',
-      timestamp: '08:00:00',
-      userName: 'Dr. Amadou Diallo',
-      userRole: 'Président Directeur Général (PDG / DG)',
-      action: 'Connexion certifiée',
-      category: 'auth',
-      details: 'Session active sur terminal local RHEMA BUSINESS.',
-      ip: '127.0.0.1',
-      hash: 'sha256-rb-init-89210e34c9'
-    },
-    {
-      id: 'log-2',
-      timestamp: '08:42:15',
-      userName: 'M. Fabrice Mukendi',
-      userRole: 'Chef de Service Déploiement VSAT',
-      action: 'Tentative d\'accès non autorisée',
-      category: 'security',
-      details: 'Blocage automatique: tentative de lecture des comptes DAF hors périmètre.',
-      ip: '192.168.1.108',
-      hash: 'sha256-sec-alert-44021a88'
-    }
-  ]);
+  // État d'authentification utilisateur
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+
+  const handleLogin = (user: User, method: 'credentials' | 'demo') => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+
+    const ip = `192.168.1.${Math.floor(Math.random() * 150) + 100}`;
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: user.name,
+        userRole: user.roleTitle,
+        action: method === 'demo' ? 'Connexion Démo Rapide (1 clic)' : 'Connexion Certifiée (Identifiants)',
+        category: 'auth',
+        details: `Authentification réussie pour ${user.name} (${user.role.toUpperCase()}) - Session SHA-256 scellée sous protocole RBAC.`,
+        ip,
+        hash: `sha256-auth-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleLogout = () => {
+    const departingUser = currentUser;
+    setIsAuthenticated(false);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: departingUser.name,
+        userRole: departingUser.roleTitle,
+        action: 'Clôture de Session (Déconnexion)',
+        category: 'auth',
+        details: `Session de ${departingUser.name} fermée avec succès. Retour à l'écran d'authentification.`,
+        ip: '127.0.0.1',
+        hash: `sha256-logout-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
 
   // État des configurations de Paie & RH RDC par organisation
   const [payrollConfigs, setPayrollConfigs] = useState<Record<string, PayrollSystemConfig>>(
@@ -371,6 +362,17 @@ export default function App() {
     setTimeout(() => setCopiedCodeSnippet(null), 2500);
   };
 
+  // Affichage du système de Login sécurisé
+  if (!isAuthenticated) {
+    return (
+      <LoginView
+        organization={currentOrg}
+        users={users}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       <Navbar
@@ -397,6 +399,7 @@ export default function App() {
         securityAlerts={alerts}
         onOpenSecurity={() => setCurrentTab('security')}
         onOpenWorkspace={() => setCurrentTab('workspace')}
+        onLogout={handleLogout}
         onOpenOrgIdentity={() => {
           setOrgEditForm({
             name: currentOrg.name,

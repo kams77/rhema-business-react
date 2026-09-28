@@ -21,6 +21,13 @@ import {
   createStandardPayrollSystem,
   DEFAULT_EXCHANGE_RATE_USD_CDF
 } from '../data/standardPayroll';
+import { 
+  initialContracts,
+  initialLeaves,
+  initialAdvances,
+  initialOvertimes,
+  initialDisciplinaryActions
+} from '../data/initialData';
 
 import { 
   Coins, 
@@ -141,185 +148,11 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   // =========================================================================
   // DONNÉES DU PERSONNEL & HISTORIQUE DES ACTIONS RH
   // =========================================================================
-  const [contracts, setContracts] = useState<EmployeeContract[]>([
-    {
-      id: 'ctr-1',
-      userId: users[0]?.id || 'u-1',
-      employeeCode: 'RH-2026-001',
-      matricule: 'MAT-001-DG',
-      contractType: 'CDI',
-      startDate: '2020-01-15',
-      baseSalary: 2800,
-      salaryCurrency: 'USD',
-      categoryPro: 'Cadre Dirigeant (HC)',
-      echelon: 'Hors Classe E4',
-      cnssNumber: 'CNSS-CD-9982410',
-      inppRegistered: true,
-      onemRegistered: true,
-      bankName: 'Rawbank Kinshasa',
-      bankAccountNumber: '01002-39201928019-88',
-      mobileMoneyNumber: '+243812791228',
-      paymentMode: 'virement',
-      dependentsCount: 3,
-      maritalStatus: 'marie',
-      active: true
-    },
-    {
-      id: 'ctr-2',
-      userId: users[1]?.id || 'u-2',
-      employeeCode: 'RH-2026-002',
-      matricule: 'MAT-002-DIR',
-      contractType: 'CDI',
-      startDate: '2021-03-01',
-      baseSalary: 1950,
-      salaryCurrency: 'USD',
-      categoryPro: 'Cadre Supérieur',
-      echelon: 'Catégorie 7 / Echelon 2',
-      cnssNumber: 'CNSS-CD-8817290',
-      inppRegistered: true,
-      onemRegistered: true,
-      bankName: 'Equity BCDC Gombe',
-      bankAccountNumber: '00015-88291039821-42',
-      mobileMoneyNumber: '+243820000002',
-      paymentMode: 'virement',
-      dependentsCount: 2,
-      maritalStatus: 'marie',
-      active: true
-    },
-    {
-      id: 'ctr-3',
-      userId: users[2]?.id || 'u-3',
-      employeeCode: 'RH-2026-003',
-      matricule: 'MAT-003-TECH',
-      contractType: 'CDI',
-      startDate: '2022-06-15',
-      baseSalary: 1100,
-      salaryCurrency: 'USD',
-      categoryPro: 'Agent de Maîtrise / Télécoms',
-      echelon: 'Catégorie 5 / Echelon 1',
-      cnssNumber: 'CNSS-CD-7729102',
-      inppRegistered: true,
-      onemRegistered: true,
-      bankName: 'TMB Kinshasa',
-      bankAccountNumber: '00004-12903829102-12',
-      mobileMoneyNumber: '+243819999003',
-      paymentMode: 'virement',
-      dependentsCount: 1,
-      maritalStatus: 'celibataire',
-      active: true
-    },
-    {
-      id: 'ctr-4',
-      userId: users[3]?.id || 'u-4',
-      employeeCode: 'RH-2026-004',
-      matricule: 'MAT-004-LOG',
-      contractType: 'CDD',
-      startDate: '2023-09-01',
-      endDate: '2026-12-31',
-      baseSalary: 2280000,
-      salaryCurrency: 'CDF',
-      categoryPro: 'Exécution Spécialisée',
-      echelon: 'Catégorie 4 / Echelon 2',
-      cnssNumber: 'CNSS-CD-6638190',
-      inppRegistered: true,
-      onemRegistered: true,
-      bankName: 'Airtel Money RDC',
-      bankAccountNumber: '+243998877665',
-      mobileMoneyNumber: '+243998877665',
-      paymentMode: 'mobile_money',
-      dependentsCount: 4,
-      maritalStatus: 'marie',
-      active: true
-    }
-  ]);
-
-  const [leaves, setLeaves] = useState<LeaveRequest[]>([
-    {
-      id: 'lv-1',
-      userId: users[1]?.id || 'u-2',
-      userName: users[1]?.name || 'Collaborateur DGA',
-      type: 'conge_annuel',
-      startDate: '2026-10-01',
-      endDate: '2026-10-15',
-      durationDays: 14,
-      reason: 'Congé annuel payé au titre de l\'exercice 2026',
-      status: 'approuve'
-    },
-    {
-      id: 'lv-2',
-      userId: users[2]?.id || 'u-3',
-      userName: users[2]?.name || 'Ingénieur VSAT',
-      type: 'circonstance',
-      startDate: '2026-09-28',
-      endDate: '2026-09-30',
-      durationDays: 3,
-      reason: 'Mariage civil familial',
-      status: 'en_attente'
-    }
-  ]);
-
-  const [advances, setAdvances] = useState<SalaryAdvanceRequest[]>([
-    {
-      id: 'adv-1',
-      userId: users[2]?.id || 'u-3',
-      userName: users[2]?.name || 'Ingénieur VSAT',
-      amount: 200,
-      currency: 'USD',
-      requestDate: '2026-09-12',
-      repaymentMonth: '2026-09',
-      reason: 'Dépannage urgence médicale pharmacie',
-      status: 'valide_rh',
-      deductedFromPayroll: true
-    }
-  ]);
-
-  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>([
-    {
-      id: 'ot-1',
-      userId: users[2]?.id || 'u-3',
-      userName: users[2]?.name || 'Ingénieur VSAT',
-      month: '2026-09',
-      dayHours: 6,
-      nightHours: 4,
-      holidayHours: 2,
-      hourlyRate: 6.32,
-      calculatedAmountUSD: 112.50,
-      calculatedAmountCDF: 320625,
-      currency: 'USD',
-      status: 'approuve',
-      reason: 'Déploiement antenne VSAT site minier Kolwezi'
-    },
-    {
-      id: 'ot-2',
-      userId: users[3]?.id || 'u-4',
-      userName: users[3]?.name || 'Agent Exécutant',
-      month: '2026-09',
-      dayHours: 8,
-      nightHours: 0,
-      holidayHours: 0,
-      hourlyRate: 4.80,
-      calculatedAmountUSD: 49.92,
-      calculatedAmountCDF: 142272,
-      currency: 'USD',
-      status: 'approuve',
-      reason: 'Permanence technique'
-    }
-  ]);
-
-  const [disciplinaryActions, setDisciplinaryActions] = useState<DisciplinaryAction[]>([
-    {
-      id: 'disc-1',
-      userId: users[3]?.id || 'u-4',
-      userName: users[3]?.name || 'Agent Exécutant',
-      type: 'avertissement',
-      title: 'Avertissement Formel - Retard de transmission des fiches',
-      date: '2026-09-15',
-      reason: 'Manquement répété aux délais de remise des bordereaux.',
-      status: 'notifie',
-      issuedBy: 'Direction Générale (Junior Monya)',
-      legalArticleRef: 'Article 56 du Code du Travail RDC'
-    }
-  ]);
+  const [contracts, setContracts] = useState<EmployeeContract[]>(initialContracts);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>(initialLeaves);
+  const [advances, setAdvances] = useState<SalaryAdvanceRequest[]>(initialAdvances);
+  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>(initialOvertimes);
+  const [disciplinaryActions, setDisciplinaryActions] = useState<DisciplinaryAction[]>(initialDisciplinaryActions);
 
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunPeriod[]>([
     {

@@ -43,6 +43,9 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  password?: string;
+  matricule?: string;
+  employeeCode?: string;
   role: UserRole;
   roleTitle: string;
   organizationId: string;
@@ -50,6 +53,7 @@ export interface User {
   directionId?: string;
   divisionId?: string;
   serviceId?: string;
+  departmentName?: string;
   avatar?: string;
   status: 'actif' | 'verrouille' | 'suspendu' | 'convoque';
   failedAccessAttempts: number;
@@ -111,6 +115,7 @@ export interface DocumentItem {
   targetEntityId?: string;
   targetEntityName?: string;
   targetUserId?: string;
+  targetUserName?: string;
   isConfidentialPayslip?: boolean;
   amount?: number;
   currency?: string;
@@ -131,7 +136,7 @@ export interface DocumentItem {
   description?: string;
 }
 
-export type TaskType = 'approbation' | 'production' | 'suivi_client' | 'projet';
+export type TaskType = 'approbation' | 'production' | 'suivi_client' | 'projet' | 'jalons' | 'suivi' | 'deploiement' | 'audit';
 
 export interface TaskIntervenant {
   userId: string;
@@ -157,7 +162,7 @@ export interface TaskItem {
   assignedAgentName?: string;
   assignedIntervenants: TaskIntervenant[];
   priority: 'basse' | 'normale' | 'haute' | 'critique';
-  status: 'a_faire' | 'en_cours' | 'en_attente_approbation' | 'validee_terminee' | 'bloquee';
+  status: 'a_faire' | 'en_cours' | 'en_attente_approbation' | 'validee_terminee' | 'bloquee' | 'termine';
   dueDate: string;
   createdAt: string;
   steps: {

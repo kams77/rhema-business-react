@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   HelpCircle,
   Sparkles,
-  Briefcase
+  Briefcase,
+  LogOut
 } from 'lucide-react';
 import { getRoleBadgeClass } from '../utils/rbac';
 
@@ -28,6 +29,7 @@ interface NavbarProps {
   onOpenHelp?: () => void;
   onOpenOrgIdentity?: () => void;
   onOpenWorkspace?: () => void;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,6 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenHelp = () => {},
   onOpenOrgIdentity = () => {},
   onOpenWorkspace = () => {},
+  onLogout,
 }) => {
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -252,6 +255,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   ))}
                 </div>
+
+                {onLogout && (
+                  <div className="pt-2 mt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        onLogout();
+                      }}
+                      className="w-full p-2 rounded-lg text-xs flex items-center gap-2 text-rose-300 hover:bg-rose-500/15 transition font-semibold"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Fermer la session (Déconnexion)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -264,6 +282,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <HelpCircle className="w-4 h-4" />
           </button>
+
+          {/* Bouton Déconnexion Direct */}
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              title="Fermer la session de travail"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden xl:inline">Déconnexion</span>
+            </button>
+          )}
         </div>
 
       </div>
