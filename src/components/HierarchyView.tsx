@@ -22,6 +22,7 @@ interface HierarchyViewProps {
   users?: User[];
   onAddEntity?: (entity: Omit<HierarchicalEntity, 'id'>) => void;
   onDeleteEntity?: (id: string) => void;
+  onOpenOrgIdentity?: () => void;
 }
 
 export const HierarchyView: React.FC<HierarchyViewProps> = ({
@@ -29,6 +30,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
   entities = [],
   currentUser,
   onAddEntity = () => {},
+  onOpenOrgIdentity = () => {},
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -109,7 +111,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
         {/* Boutons d'Action Droite */}
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
-            onClick={() => {}}
+            onClick={onOpenOrgIdentity}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600/20 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/30 transition"
           >
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />

@@ -89,14 +89,21 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     id: 'org-rb-01',
     name: 'RHEMA BUSINESS RDC',
     code: 'RB-RDC',
-    logoUrl: '',
+    type: 'entreprise',
+    registrationNumber: 'CD/KNG/RCCM/18-B-01290',
     rccm: 'CD/KNG/RCCM/18-B-01290',
     idNat: '01-83-N45201L',
     numImpot: 'A1934892Z',
-    address: 'Avenue de la Justice, Gombe, Kinshasa - RDC',
+    headquarters: 'Avenue de la Justice, Gombe, Kinshasa - RDC',
     phone: '+243 81 000 0000',
     email: 'direction@rhemabusiness.cd',
-    directorGeneral: 'Junior Monya'
+    directorGeneral: 'Junior Monya',
+    hasDepartements: true,
+    hasDirections: true,
+    hasDivisions: true,
+    hasServices: true,
+    description: 'RHEMA BUSINESS RDC',
+    createdAt: '2020-01-01'
   };
 
   // Droits Direction & DRH
@@ -1067,7 +1074,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   </div>
                 </div>
                 <div className="text-right font-mono font-bold text-emerald-400 text-sm">
-                  +{formatMoney(ot.calculatedAmountUSD, 'USD')}
+                  +{formatMoney(ot.calculatedAmountUSD || 0, 'USD')}
                 </div>
               </div>
             ))}

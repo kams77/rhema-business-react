@@ -181,8 +181,47 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
     setCustomSteps(prev => prev.filter((_, i) => i !== index));
   };
 
+  interface WorkflowStep {
+    id: string;
+    label: string;
+    completed: boolean;
+    validatedBy?: string;
+  }
+
+  interface WorkflowIntervenant {
+    initials: string;
+    name: string;
+    roleTitle: string;
+    roleBadge: string;
+    badgeColor?: string;
+  }
+
+  interface WorkflowTask {
+    id: string;
+    category: 'approbations' | 'production' | 'suivi' | 'jalons' | string;
+    badgeCategory: string;
+    badgeCategoryColor: string;
+    priority: string;
+    priorityColor: string;
+    dueDate: string;
+    statusText: string;
+    isSigned: boolean;
+    title: string;
+    description: string;
+    initiator: string;
+    assignedEntity: string;
+    attachedDocId?: string;
+    intervenants: WorkflowIntervenant[];
+    steps: WorkflowStep[];
+    electronicSignature?: {
+      signedBy: string;
+      signedAt: string;
+      hash: string;
+    } | null;
+  }
+
   // Liste des tâches de démonstration avec documents rattachés
-  const [localTasks, setLocalTasks] = useState([
+  const [localTasks, setLocalTasks] = useState<WorkflowTask[]>([
     {
       id: 'task-1',
       category: 'jalons',

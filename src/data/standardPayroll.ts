@@ -227,6 +227,9 @@ export interface PayslipSimulationResult {
   localTax: number;
   totalTaxes: number;
   netPay: number;
+  netSalary: number;
+  socialDeductions: number;
+  taxDeductions: number;
   totalEmployerCost: number;
 }
 
@@ -355,6 +358,9 @@ export function calculatePayslipSimulation(
     localTax,
     totalTaxes,
     netPay,
+    netSalary: netPay,
+    socialDeductions: totalEmployeeContributions,
+    taxDeductions: totalTaxes,
     totalEmployerCost,
   };
 }

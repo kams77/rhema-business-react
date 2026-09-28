@@ -61,8 +61,13 @@ export interface User {
 export interface Organization {
   id: string;
   name: string;
+  code?: string;
   type: OrganizationType;
   registrationNumber: string;
+  rccm?: string;
+  idNat?: string;
+  numImpot?: string;
+  directorGeneral?: string;
   headquarters: string;
   email: string;
   phone: string;
@@ -219,7 +224,7 @@ export interface EmployeeContract {
   inppRegistered: boolean;
   onemRegistered: boolean;
   bankName: string;
-  bankAccountNumber: string;
+  bankAccountNumber?: string;
   mobileMoneyNumber?: string;
   paymentMode: 'virement' | 'mobile_money' | 'cheque' | 'especes';
   dependentsCount: number;
@@ -255,6 +260,35 @@ export interface SalaryAdvanceRequest {
   deductedFromPayroll: boolean;
 }
 
+export interface OvertimeRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  month: string;
+  dayHours: number;
+  nightHours: number;
+  holidayHours: number;
+  hourlyRate?: number;
+  calculatedAmountUSD?: number;
+  calculatedAmountCDF?: number;
+  currency?: 'USD' | 'CDF';
+  status: 'en_attente' | 'approuve' | 'rejete';
+  reason?: string;
+}
+
+export interface DisciplinaryAction {
+  id: string;
+  userId: string;
+  userName: string;
+  type: 'avertissement' | 'blame' | 'mise_a_pied' | 'licenciement';
+  title: string;
+  date: string;
+  reason: string;
+  status: 'en_cours' | 'notifie' | 'clos';
+  issuedBy?: string;
+  legalArticleRef?: string;
+}
+
 export interface PayrollRunPeriod {
   id: string;
   month: string; // Ex: 2026-09
@@ -269,6 +303,66 @@ export interface PayrollRunPeriod {
   validatedByDG?: string;
   validatedAt?: string;
   closureHash?: string;
+}
+
+export interface PayrollAllowance {
+  id: string;
+  name: string;
+  code: string;
+  type: 'fixe' | 'pourcentage';
+  defaultValue: number;
+  isTaxable: boolean;
+  isSubjectToSocialContributions: boolean;
+  isActive: boolean;
+  category: 'transport' | 'logement' | 'responsabilite' | 'repas' | 'performance' | 'autre';
+  description?: string;
+}
+
+export interface PayrollSocialContribution {
+  id: string;
+  name: string;
+  code: string;
+  employeeRate: number;
+  employerRate: number;
+  ceilingAmount?: number;
+  isActive: boolean;
+  description?: string;
+}
+
+export interface PayrollTaxBracket {
+  id: string;
+  min: number;
+  max: number | null;
+  rate: number;
+}
+
+export interface PayrollSystemConfig {
+  id: string;
+  organizationId: string;
+  isStandardTemplate: boolean;
+  systemName: string;
+  currency: 'USD' | 'CDF';
+  standardMonthlyHours: number;
+  overtimeRates: {
+    firstBracketRate: number;
+    secondBracketRate: number;
+    weekendHolidayRate: number;
+  };
+  payFrequency: 'mensuelle' | 'bimensuelle' | 'hebdomadaire';
+  allowances: PayrollAllowance[];
+  socialContributions: PayrollSocialContribution[];
+  taxConfig: {
+    taxName: string;
+    type: 'progressif' | 'fixe';
+    brackets: PayrollTaxBracket[];
+    flatRate?: number;
+    creditPerDependentChild: number;
+    localDevelopmentTax: number;
+  };
+  seniorityBonusPerTwoYearsPercent: number;
+  lastModifiedBy?: string;
+  lastModifiedAt?: string;
+  notes?: string;
 }
 
 export interface PayslipRecord {
