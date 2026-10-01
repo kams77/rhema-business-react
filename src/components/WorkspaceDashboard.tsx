@@ -8,6 +8,8 @@ import {
   PieChart, 
   Pie, 
   Cell, 
+  LineChart,
+  Line,
   XAxis, 
   YAxis, 
   Tooltip, 
@@ -28,7 +30,10 @@ import {
   DollarSign, 
   ArrowUpRight,
   Download,
-  Info
+  Info,
+  Activity,
+  Target,
+  Zap
 } from 'lucide-react';
 import { DEFAULT_EXCHANGE_RATE_USD_CDF } from '../data/standardPayroll';
 
@@ -57,7 +62,42 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
 }) => {
   const [currency, setCurrency] = useState<'USD' | 'CDF'>('USD');
   const [selectedEntityFilter, setSelectedEntityFilter] = useState<string>('all');
+  const [perfMetric, setPerfMetric] = useState<'productivity' | 'tasks_sla' | 'quality'>('productivity');
+  const [activeDeptLine, setActiveDeptLine] = useState<'all' | 'operations' | 'finance' | 'governance'>('all');
   const exchangeRate = DEFAULT_EXCHANGE_RATE_USD_CDF; // 2850 CDF
+
+  // Données d'évolution des performances et de la productivité sur les 6 derniers mois
+  const monthlyTrendData = useMemo(() => {
+    if (perfMetric === 'tasks_sla') {
+      return [
+        { month: 'Mai 2026', short: 'Mai', operations: 82.0, finance: 85.0, governance: 93.0, average: 86.7, target: 85 },
+        { month: 'Juin 2026', short: 'Juin', operations: 85.5, finance: 87.0, governance: 94.0, average: 88.8, target: 85 },
+        { month: 'Juil 2026', short: 'Juil', operations: 89.0, finance: 88.5, governance: 95.0, average: 90.8, target: 85 },
+        { month: 'Août 2026', short: 'Août', operations: 91.2, finance: 91.0, governance: 96.0, average: 92.7, target: 85 },
+        { month: 'Sept 2026', short: 'Sept', operations: 94.0, finance: 93.5, governance: 97.0, average: 94.8, target: 85 },
+        { month: 'Oct 2026', short: 'Oct', operations: 97.2, finance: 95.8, governance: 98.5, average: 97.2, target: 85 },
+      ];
+    }
+    if (perfMetric === 'quality') {
+      return [
+        { month: 'Mai 2026', short: 'Mai', operations: 88.0, finance: 83.0, governance: 92.0, average: 87.7, target: 85 },
+        { month: 'Juin 2026', short: 'Juin', operations: 89.5, finance: 85.0, governance: 93.0, average: 89.2, target: 85 },
+        { month: 'Juil 2026', short: 'Juil', operations: 91.0, finance: 87.0, governance: 94.0, average: 90.7, target: 85 },
+        { month: 'Août 2026', short: 'Août', operations: 93.0, finance: 89.0, governance: 95.5, average: 92.5, target: 85 },
+        { month: 'Sept 2026', short: 'Sept', operations: 94.5, finance: 91.0, governance: 96.5, average: 94.0, target: 85 },
+        { month: 'Oct 2026', short: 'Oct', operations: 96.0, finance: 93.5, governance: 98.0, average: 95.8, target: 85 },
+      ];
+    }
+    // 'productivity' (par défaut)
+    return [
+      { month: 'Mai 2026', short: 'Mai', operations: 86.4, finance: 79.5, governance: 91.0, average: 85.6, target: 85 },
+      { month: 'Juin 2026', short: 'Juin', operations: 88.2, finance: 82.0, governance: 92.5, average: 87.6, target: 85 },
+      { month: 'Juil 2026', short: 'Juil', operations: 90.5, finance: 84.8, governance: 93.0, average: 89.4, target: 85 },
+      { month: 'Août 2026', short: 'Août', operations: 92.8, finance: 87.1, governance: 94.2, average: 91.4, target: 85 },
+      { month: 'Sept 2026', short: 'Sept', operations: 95.1, finance: 89.6, governance: 96.0, average: 93.6, target: 85 },
+      { month: 'Oct 2026', short: 'Oct', operations: 96.8, finance: 92.4, governance: 97.5, average: 95.6, target: 85 },
+    ];
+  }, [perfMetric]);
 
   // Helper pour convertir selon devise choisie
   const formatVal = (valUSD: number) => {
@@ -492,6 +532,252 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
               </div>
             ))}
           </div>
+        </div>
+
+      </div>
+
+      {/* GRAPHIQUE ÉVOLUTION DES PERFORMANCES ET PRODUCTIVITÉ (LINECHART RECHARTS) */}
+      <div className="bg-white rounded-3xl border border-sky-200 p-6 shadow-sm">
+        
+        {/* En-tête avec titre, métriques et filtres */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center font-bold">
+                <Activity className="w-4 h-4 text-sky-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>Évolution des Performances & Productivité par Département (6 Derniers Mois)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Suivi dynamique des indicateurs clés de rendement opérationnel (Mai 2026 – Octobre 2026)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Sélecteur de Métrique */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium">
+              <button
+                onClick={() => setPerfMetric('productivity')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  perfMetric === 'productivity'
+                    ? 'bg-white text-sky-700 shadow-sm font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Productivité Globale
+              </button>
+              <button
+                onClick={() => setPerfMetric('tasks_sla')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  perfMetric === 'tasks_sla'
+                    ? 'bg-white text-sky-700 shadow-sm font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Résolution SLA / Tâches
+              </button>
+              <button
+                onClick={() => setPerfMetric('quality')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  perfMetric === 'quality'
+                    ? 'bg-white text-sky-700 shadow-sm font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Qualité ISO 9001
+              </button>
+            </div>
+
+            {/* Filtre de Département */}
+            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 text-xs">
+              {[
+                { id: 'all', label: 'Tous' },
+                { id: 'operations', label: 'DOP (Ops)' },
+                { id: 'finance', label: 'DAF' },
+                { id: 'governance', label: 'DG' },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setActiveDeptLine(f.id as any)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    activeDeptLine === f.id
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Le Graphique LineChart Recharts */}
+        <div className="h-72 sm:h-80 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={monthlyTrendData}
+              margin={{ top: 10, right: 30, left: 0, bottom: 10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis 
+                dataKey="short" 
+                tick={{ fontSize: 11, fill: '#475569' }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+                tickLine={false}
+              />
+              <YAxis 
+                domain={[70, 100]} 
+                tick={{ fontSize: 11, fill: '#475569' }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+                tickLine={false}
+                unit="%"
+              />
+              <Tooltip 
+                formatter={(value: any, name: any) => [`${value}%`, name]}
+                labelFormatter={(label) => `Période : ${label} 2026`}
+                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
+              />
+              <Legend 
+                verticalAlign="bottom" 
+                height={36} 
+                formatter={(val) => <span className="text-xs text-slate-700 font-medium">{val}</span>}
+              />
+
+              {/* Ligne Cible / Seuil de performance attendue */}
+              <Line
+                type="monotone"
+                dataKey="target"
+                name="Objectif Stratégique (85%)"
+                stroke="#F59E0B"
+                strokeDasharray="5 5"
+                strokeWidth={2}
+                dot={false}
+              />
+
+              {/* Ligne Opérations (DOP) */}
+              {(activeDeptLine === 'all' || activeDeptLine === 'operations') && (
+                <Line
+                  type="monotone"
+                  dataKey="operations"
+                  name="Opérations & VSAT (DOP)"
+                  stroke="#0EA5E9"
+                  strokeWidth={3}
+                  activeDot={{ r: 7 }}
+                  dot={{ r: 4, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 2 }}
+                />
+              )}
+
+              {/* Ligne Admin & Finances (DAF) */}
+              {(activeDeptLine === 'all' || activeDeptLine === 'finance') && (
+                <Line
+                  type="monotone"
+                  dataKey="finance"
+                  name="Administration & Finances (DAF)"
+                  stroke="#6366F1"
+                  strokeWidth={3}
+                  activeDot={{ r: 7 }}
+                  dot={{ r: 4, fill: '#6366F1', stroke: '#fff', strokeWidth: 2 }}
+                />
+              )}
+
+              {/* Ligne Direction Générale */}
+              {(activeDeptLine === 'all' || activeDeptLine === 'governance') && (
+                <Line
+                  type="monotone"
+                  dataKey="governance"
+                  name="Direction Générale (DG)"
+                  stroke="#8B5CF6"
+                  strokeWidth={2.5}
+                  activeDot={{ r: 6 }}
+                  dot={{ r: 3.5, fill: '#8B5CF6', stroke: '#fff', strokeWidth: 2 }}
+                />
+              )}
+
+              {/* Ligne Moyenne Consolidée Entreprise */}
+              {activeDeptLine === 'all' && (
+                <Line
+                  type="monotone"
+                  dataKey="average"
+                  name="Moyenne Consolidée RHEMA"
+                  stroke="#10B981"
+                  strokeWidth={3}
+                  strokeDasharray="3 3"
+                  activeDot={{ r: 7 }}
+                  dot={{ r: 4, fill: '#10B981', stroke: '#fff', strokeWidth: 2 }}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* 4 Indicateurs de progression semestrielle */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-5 mt-4 border-t border-slate-100 text-xs">
+          
+          <div className="p-3 rounded-2xl bg-sky-50/60 border border-sky-100 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-sky-500 text-white flex items-center justify-center font-black shrink-0 text-xs shadow-sm">
+              DOP
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>Opérations Télécoms</span>
+                <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded font-bold">+10.4%</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                86.4% ➔ <strong>96.8%</strong> • SLA minier VSAT respecté à 99.2%
+              </p>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-indigo-50/60 border border-indigo-100 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black shrink-0 text-xs shadow-sm">
+              DAF
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>Admin. & Finances</span>
+                <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded font-bold">+12.9%</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                79.5% ➔ <strong>92.4%</strong> • Automatisation paie et clôtures
+              </p>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-purple-50/60 border border-purple-100 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black shrink-0 text-xs shadow-sm">
+              DG
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>Direction Générale</span>
+                <span className="text-[10px] text-purple-700 bg-purple-100 px-1.5 py-0.2 rounded font-bold">+6.5%</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                91.0% ➔ <strong>97.5%</strong> • Atteinte des jalons stratégiques
+              </p>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-100 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shrink-0 text-xs shadow-sm">
+              <Target className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                <span>Seuil Minimum Cible</span>
+                <span className="text-[10px] text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded font-bold">100% Validé</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Objectif de 85% dépassé par l'ensemble des départements
+              </p>
+            </div>
+          </div>
+
         </div>
 
       </div>
