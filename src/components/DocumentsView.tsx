@@ -376,7 +376,22 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         <RhemaOfficialDocument
           document={selectedDoc}
           organization={organization}
+          currentUser={currentUser}
+          entities={entities}
           onClose={() => setSelectedDoc(null)}
+          onSignDocument={(docId) => {
+            // Mise à jour locale du statut
+            setSelectedDoc(prev => prev ? {
+              ...prev,
+              status: 'signe',
+              electronicSignature: {
+                signedBy: `${currentUser.name} (${currentUser.roleTitle})`,
+                signedAt: new Date().toLocaleTimeString(),
+                role: currentUser.roleTitle,
+                certificateHash: `SHA256:7f83b1657ff1fc53b${Math.random().toString(36).substring(2, 8)}`,
+              }
+            } : null);
+          }}
         />
       )}
 

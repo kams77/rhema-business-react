@@ -35,6 +35,7 @@ import { PayrollSystemView } from './components/PayrollSystemView';
 import { SecurityView } from './components/SecurityView';
 import { AgentCrudView } from './components/AgentCrudView';
 import { AuditView } from './components/AuditView';
+import { OrganizationOnboardingWizard } from './components/OrganizationOnboardingWizard';
 import { 
   Building2, 
   ShieldAlert, 
@@ -75,10 +76,13 @@ export default function App() {
 
   // État d'authentification utilisateur
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [showOnboardingWizard, setShowOnboardingWizard] = useState<boolean>(false);
+  const [onboardingSuccessMsg, setOnboardingSuccessMsg] = useState<string | null>(null);
 
   const handleLogin = (user: User, method: 'credentials' | 'demo') => {
     setCurrentUser(user);
     setIsAuthenticated(true);
+    setOnboardingSuccessMsg(null);
 
     const ip = `192.168.1.${Math.floor(Math.random() * 150) + 100}`;
     setLogs(prev => [
@@ -111,6 +115,72 @@ export default function App() {
         details: `Session de ${departingUser.name} fermée avec succès. Retour à l'écran d'authentification.`,
         ip: '127.0.0.1',
         hash: `sha256-logout-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  // RÈGLE STRICTE PREMIÈRE UTILISATION : INITIALISATION DE L'ORGANISATION & CONNECTIVITÉ OBLIGATOIRE DES AGENTS VIA LOGIN
+  const handleCompleteOnboarding = (data: {
+    organization: Organization;
+    entities: HierarchicalEntity[];
+    users: User[];
+  }) => {
+    setOrganizations(prev => [data.organization, ...prev.filter(o => o.id !== data.organization.id)]);
+    setCurrentOrg(data.organization);
+    setEntities(data.entities);
+    setUsers(data.users);
+    
+    // Création de la configuration de paie standard pour la nouvelle organisation
+    setPayrollConfigs(prev => ({
+      ...prev,
+      [data.organization.id]: createStandardPayrollSystem(data.organization.id, data.organization.name)
+    }));
+
+    // Oblige une connectivité de tous les agents de cette organisation à pouvoir se connecter via un login
+    setIsAuthenticated(false);
+    setShowOnboardingWizard(false);
+    setOnboardingSuccessMsg(
+      `L'organisation "${data.organization.name}" a été initialisée avec succès ! Tous les agents (${data.users.length}) et la Direction Générale doivent désormais se connecter via leur LOGIN sécurisé.`
+    );
+
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: data.organization.managerName || 'Direction Générale',
+        userRole: 'Directeur Général (DG)',
+        action: 'Initialisation Organisation (Première Utilisation)',
+        category: 'admin',
+        details: `Déploiement complet de l'organisation "${data.organization.name}" (${data.organization.registrationNumber || 'RDC'}), ${data.entities.length} entités hiérarchiques et ${data.users.length} collaborateurs pré-enrôlés pour connexion obligatoire.`,
+        ip: '127.0.0.1',
+        hash: `sha256-onboarding-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  // RÈGLE STRICTE 6 : GESTION DE LA DÉLÉGATION DE VISA DE DOCUMENTS POUR LES AGENTS
+  const handleToggleDelegation = (userId: string) => {
+    const target = users.find(u => u.id === userId);
+    if (!target) return;
+    const nextVal = !target.canApproveServiceDocuments;
+
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, canApproveServiceDocuments: nextVal } : u));
+
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: nextVal ? 'Octroi Délégation Visa Service (Règle 6)' : 'Révocation Délégation Visa Service (Règle 6)',
+        category: 'security',
+        details: nextVal 
+          ? `Délégation d'approbation et visa de documents accordée à l'agent ${target.name} pour les dossiers de son service.`
+          : `Délégation d'approbation révoquée pour l'agent ${target.name}. Statut repassé en exécution exclusive.`,
+        ip: '127.0.0.1',
+        hash: `sha256-delegation-${Date.now()}`
       },
       ...prev
     ]);
@@ -366,11 +436,22 @@ export default function App() {
   // Affichage du système de Login sécurisé
   if (!isAuthenticated) {
     return (
-      <LoginView
-        organization={currentOrg}
-        users={users}
-        onLogin={handleLogin}
-      />
+      <>
+        <LoginView
+          organization={currentOrg}
+          organizations={organizations}
+          onSelectOrg={(org) => setCurrentOrg(org)}
+          users={users}
+          onLogin={handleLogin}
+          onOpenOnboarding={() => setShowOnboardingWizard(true)}
+          onboardingSuccessMsg={onboardingSuccessMsg}
+        />
+        <OrganizationOnboardingWizard
+          isOpen={showOnboardingWizard}
+          onClose={() => setShowOnboardingWizard(false)}
+          onCompleteOnboarding={handleCompleteOnboarding}
+        />
+      </>
     );
   }
 
@@ -416,7 +497,7 @@ export default function App() {
           });
           setShowOrgIdentityModal(true);
         }}
-        onOpenNewAccount={() => setShowNewOrgModal(true)}
+        onOpenNewAccount={() => setShowOnboardingWizard(true)}
         onOpenHelp={() => setShowHelpModal(true)}
       />
 
@@ -662,6 +743,8 @@ export default function App() {
               users={users}
               currentUser={currentUser}
               entities={entities}
+              organization={currentOrg}
+              onToggleDelegation={handleToggleDelegation}
               onCreateUser={newUser => {
                 const createdUser: User = {
                   ...newUser,
@@ -1328,6 +1411,13 @@ class DocumentPolicy
           </div>
         </div>
       )}
+
+      {/* ASSISTANT INITIAL DE CRÉATION D'ORGANISATION (ONBOARDING) */}
+      <OrganizationOnboardingWizard
+        isOpen={showOnboardingWizard}
+        onClose={() => setShowOnboardingWizard(false)}
+        onCompleteOnboarding={handleCompleteOnboarding}
+      />
     </div>
   );
 }

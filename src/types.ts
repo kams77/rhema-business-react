@@ -60,6 +60,7 @@ export interface User {
   lastLogin?: string;
   phone?: string;
   canCreateSubAgents: boolean;
+  canApproveServiceDocuments?: boolean;
 }
 
 export interface Organization {
@@ -300,11 +301,20 @@ export interface PayrollRunPeriod {
   title: string; // Ex: Paie Septembre 2026
   currency: 'USD' | 'CDF';
   exchangeRateUSD_CDF: number; // Taux de change officiel BCC (ex: 2850 CDF = 1 USD)
-  status: 'brouillon' | 'en_validation' | 'cloture' | 'archive';
+  status: 'brouillon' | 'parametre' | 'en_validation' | 'valide_drh' | 'virement_confirme' | 'cloture' | 'archive';
   totalGross: number;
   totalNet: number;
   totalEmployerCharges: number;
   totalEmployees: number;
+  validatedByDRH?: string;
+  validatedAtDRH?: string;
+  bankTransferConfirmedBy?: string;
+  bankTransferReference?: string;
+  bankTransferConfirmedAt?: string;
+  bankName?: string;
+  payslipsAutoDispatched?: boolean;
+  payslipsDispatchedAt?: string;
+  dispatchedCount?: number;
   validatedByDG?: string;
   validatedAt?: string;
   closureHash?: string;

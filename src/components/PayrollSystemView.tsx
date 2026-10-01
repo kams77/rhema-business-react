@@ -14,7 +14,8 @@ import type {
   SalaryAdvanceRequest,
   PayrollRunPeriod,
   OvertimeRecord,
-  DisciplinaryAction
+  DisciplinaryAction,
+  DocumentItem
 } from '../types';
 import { 
   calculatePayslipSimulation, 
@@ -63,7 +64,9 @@ import {
   X,
   Check,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  CreditCard,
+  Sparkles
 } from 'lucide-react';
 
 export interface PayrollSystemViewProps {
@@ -75,6 +78,7 @@ export interface PayrollSystemViewProps {
   onUpdatePayrollConfig?: (updatedConfig: PayrollSystemConfig, auditNote?: string) => void;
   onResetToStandard?: () => void;
   onLogAction?: (action: string, details: string, category: 'admin' | 'document' | 'task' | 'security') => void;
+  onAddDocument?: (document: DocumentItem) => void;
 }
 
 export type PayrollTabType = 
@@ -98,7 +102,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   payrollConfig,
   onUpdatePayrollConfig,
   onResetToStandard,
-  onLogAction
+  onLogAction,
+  onAddDocument,
 }) => {
   // Organisation par défaut RDC
   const currentOrg: Organization = propCurrentOrg || organization || {
@@ -194,9 +199,42 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   ]);
 
   // =========================================================================
-  // ÉTATS DES MODALES D'ACTIONS RH
+  // ÉTATS DES MODALES D'ACTIONS RH & WORKFLOW MENSUEL STRICT
   // =========================================================================
-  const [modalAction, setModalAction] = useState<null | 'new_contract' | 'new_leave' | 'new_advance' | 'new_overtime' | 'new_discipline' | 'doc_print'>(null);
+  const [modalAction, setModalAction] = useState<null | 'new_contract' | 'new_leave' | 'new_advance' | 'new_overtime' | 'new_discipline' | 'doc_print' | 'configure_payment_run' | 'confirm_bank_transfer'>(null);
+  const [selectedRunForWorkflow, setSelectedRunForWorkflow] = useState<PayrollRunPeriod | null>(null);
+
+  // Formulaire Étape 1 : Paramétrage du Paiement Mensuel
+  const [paymentParamForm, setPaymentParamForm] = useState({
+    month: '2026-09',
+    exchangeRateUSD_CDF: DEFAULT_EXCHANGE_RATE_USD_CDF,
+    bankName: 'Rawbank Kinshasa',
+    bankAccount: '01002-39201928019-88',
+    valueDate: '2026-09-30',
+    globalBonusUSD: 100,
+    currency: 'USD' as 'USD' | 'CDF',
+    comments: 'Paie mensuelle conforme au barème légal et convention collective RHEMA BUSINESS.'
+  });
+
+  // Formulaire Étape 3 : Confirmation du Virement Bancaire
+  const [bankConfirmForm, setBankConfirmForm] = useState({
+    bankName: 'Rawbank Kinshasa',
+    transactionRef: 'RAW-TXN-202609-481029',
+    confirmedDate: new Date().toISOString().slice(0, 10),
+    debitAccount: '01002-39201928019-88',
+    bankReceiptNote: 'Ordre de virement de masse exécuté par Rawbank Kinshasa. Tous les comptes agents ont été crédités.'
+  });
+
+  // Notification Étape 4 : Déclenchement automatique de l'envoi des bulletins
+  const [autoDispatchNotification, setAutoDispatchNotification] = useState<{
+    show: boolean;
+    runTitle: string;
+    count: number;
+    bankRef: string;
+    bankName: string;
+    timestamp: string;
+  } | null>(null);
+
   const [activeDocData, setActiveDocData] = useState<{ docType: string; title: string; ref: string; content: any }>({
     docType: 'bulletin',
     title: 'Bulletin de Paie Individuel',
@@ -363,11 +401,195 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     setPayrollRuns(prev => prev.map(r => r.id === runId ? {
       ...r,
       status: 'cloture',
-      validatedByDG: `${currentUser?.name || 'Dr. Amadou Diallo'} (DG / PDG)`,
+      validatedByDG: `${currentUser?.name || 'Junior Monya'} (DG / Direction Générale)`,
       validatedAt: `${new Date().toISOString().slice(0, 10)} 17:00`,
       closureHash: hash
     } : r));
     if (onLogAction) onLogAction('Signature DG Paie', `Période clôturée par la Direction Générale.`, 'admin');
+  };
+
+  // -------------------------------------------------------------------------
+  // RÈGLE STRICTE 1 : ÉTAPE 1 - PARAMÉTRAGE DES PAIEMENTS MENSUELS
+  // -------------------------------------------------------------------------
+  const handleOpenConfigPayment = (run: PayrollRunPeriod) => {
+    setSelectedRunForWorkflow(run);
+    setPaymentParamForm({
+      month: run.month,
+      exchangeRateUSD_CDF: run.exchangeRateUSD_CDF || exchangeRate,
+      bankName: run.bankName || 'Rawbank Kinshasa',
+      bankAccount: '01002-39201928019-88',
+      valueDate: `${run.month}-28`,
+      globalBonusUSD: 100,
+      currency: run.currency,
+      comments: `Paramètres de paiement officiels pour la période ${run.title}.`
+    });
+    setModalAction('configure_payment_run');
+  };
+
+  const handleConfigurePaymentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRunForWorkflow) return;
+
+    setPayrollRuns(prev => prev.map(r => r.id === selectedRunForWorkflow.id ? {
+      ...r,
+      status: 'parametre',
+      currency: paymentParamForm.currency,
+      exchangeRateUSD_CDF: paymentParamForm.exchangeRateUSD_CDF,
+      bankName: paymentParamForm.bankName,
+    } : r));
+
+    if (onLogAction) {
+      onLogAction(
+        'Paramétrage Paie Mensuelle',
+        `Paramètres de versement arrêtés pour ${selectedRunForWorkflow.title} (Banque: ${paymentParamForm.bankName}, Taux: ${paymentParamForm.exchangeRateUSD_CDF} CDF, Échéance: ${paymentParamForm.valueDate})`,
+        'admin'
+      );
+    }
+
+    setModalAction(null);
+  };
+
+  // -------------------------------------------------------------------------
+  // RÈGLE STRICTE 2 : ÉTAPE 2 - APPROBATION DRH
+  // -------------------------------------------------------------------------
+  const handleApproveDRH = (runId: string) => {
+    const run = payrollRuns.find(r => r.id === runId);
+    if (!run) return;
+
+    const drhName = currentUser?.name || 'M. Jean-Paul Kouassi';
+    const drhRole = currentUser?.roleTitle || 'Directeur des Ressources Humaines (DRH)';
+    const dateStr = new Date().toISOString().replace('T', ' ').slice(0, 16);
+
+    setPayrollRuns(prev => prev.map(r => r.id === runId ? {
+      ...r,
+      status: 'valide_drh',
+      validatedByDRH: `${drhName} (${drhRole})`,
+      validatedAtDRH: dateStr,
+    } : r));
+
+    if (onLogAction) {
+      onLogAction(
+        'Visa & Approbation DRH',
+        `L'état des salaires pour la période ${run.title} a été certifié par le DRH (${drhName}). Autorisation de transmission bancaire émise.`,
+        'admin'
+      );
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // RÈGLE STRICTE 3 & 4 : ÉTAPE 3 & 4 - CONFIRMATION BANCAIRE & ENVOI AUTOMATIQUE DES BULLETINS
+  // -------------------------------------------------------------------------
+  const handleOpenBankConfirm = (run: PayrollRunPeriod) => {
+    setSelectedRunForWorkflow(run);
+    setBankConfirmForm({
+      bankName: run.bankName || 'Rawbank Kinshasa',
+      transactionRef: `RAW-TXN-${run.month.replace('-', '')}-${Math.floor(100000 + Math.random() * 900000)}`,
+      confirmedDate: new Date().toISOString().slice(0, 10),
+      debitAccount: '01002-39201928019-88',
+      bankReceiptNote: `Ordre de virement bancaire collectif exécuté par la banque pour ${contracts.length} agents. Fonds transférés sur les comptes bénéficiaires.`
+    });
+    setModalAction('confirm_bank_transfer');
+  };
+
+  const handleConfirmBankTransferAndAutoDispatch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRunForWorkflow) return;
+
+    const run = selectedRunForWorkflow;
+    const nowIso = new Date().toISOString();
+    const dateStr = nowIso.replace('T', ' ').slice(0, 16);
+    const dateOnly = nowIso.slice(0, 10);
+    const bankRef = bankConfirmForm.transactionRef || `RAW-TXN-${Date.now()}`;
+    const bankName = bankConfirmForm.bankName || 'Rawbank Kinshasa';
+
+    // RÈGLE STRICTE : GÉNÉRATION ET ENVOI AUTOMATIQUE DES BULLETINS DE PAIE À TOUS LES AGENTS
+    let dispatched = 0;
+    contracts.forEach(c => {
+      const u = users.find(usr => usr.id === c.userId);
+      const agentName = u?.name || `Agent ${c.matricule}`;
+      const baseSal = c.baseSalary;
+      const bonus = paymentParamForm.globalBonusUSD || 100;
+      const gross = baseSal + bonus;
+      const cnssEmployee = gross * 0.05; // 5% CNSS salarié RDC
+      const ipr = Math.max(0, (gross - cnssEmployee) * 0.15); // IPR barème moyen
+      const net = Math.round(gross - cnssEmployee - ipr);
+
+      const payslipDoc: DocumentItem = {
+        id: `doc-payslip-${run.month}-${c.matricule || c.userId}-${Date.now().toString().slice(-4)}`,
+        title: `Bulletin de Paie Officiel - ${run.title} - ${agentName}`,
+        referenceNumber: `BP-${run.month}-${c.matricule || 'AG'}`,
+        category: 'ressources_humaines',
+        subtype: 'bulletin_de_paie',
+        organizationId: currentOrg.id,
+        authorId: currentUser.id,
+        authorName: `${currentUser.name} (${currentUser.roleTitle})`,
+        authorRole: currentUser.role,
+        authorEntity: 'Direction des Ressources Humaines (DRH) & DAF',
+        createdAt: dateOnly,
+        status: 'signe',
+        size: '1.4 Mo',
+        fileType: 'PDF',
+        targetUserId: c.userId,
+        targetUserName: agentName,
+        targetEntityId: u?.departementId || u?.serviceId || 'dept-daf',
+        isConfidentialPayslip: true,
+        amount: net,
+        currency: (c.salaryCurrency || run.currency) as any,
+        description: `Bulletin de paie mensuel certifié et scellé électroniquement. Salaire Net transféré par virement bancaire (${bankName} - Réf Virement: ${bankRef}). Cotisations CNSS (5% salarié / 13% employeur) et IPR décomptés.`,
+        electronicSignature: {
+          signedBy: `${currentOrg.managerName || 'Direction Générale'} (DG) & DRH`,
+          signedAt: new Date().toLocaleTimeString(),
+          role: 'Directeur Général & DRH',
+          certificateHash: `SHA256:bank-transfer-confirmed-${run.month}-${Math.random().toString(36).substring(2, 9)}`,
+        },
+        allowedRoles: ['dg', 'directeur', 'chef_departement', 'agent'],
+        permissions: {
+          viewRoles: ['dg', 'directeur', 'chef_departement', 'agent'],
+          editRoles: ['dg', 'directeur'],
+          validateRoles: ['dg', 'directeur'],
+          signRoles: ['dg', 'directeur']
+        }
+      };
+
+      if (onAddDocument) {
+        onAddDocument(payslipDoc);
+        dispatched++;
+      }
+    });
+
+    // Mise à jour de la période de paie
+    setPayrollRuns(prev => prev.map(r => r.id === run.id ? {
+      ...r,
+      status: 'virement_confirme',
+      bankTransferConfirmedBy: `${currentUser.name} (${currentUser.roleTitle})`,
+      bankTransferReference: bankRef,
+      bankTransferConfirmedAt: dateStr,
+      bankName: bankName,
+      payslipsAutoDispatched: true,
+      payslipsDispatchedAt: dateStr,
+      dispatchedCount: contracts.length,
+      validatedByDG: `${currentOrg.managerName || 'Junior Monya'} (DG)`,
+      validatedAt: dateStr,
+      closureHash: `SHA256:paie-scellee-${run.month}-${Math.random().toString(36).substring(2, 8)}`
+    } : r));
+
+    if (onLogAction) {
+      onLogAction(
+        'Virement Bancaire Confirmé & Envoi Automatique des Bulletins',
+        `La banque ${bankName} a transféré les salaires (Réf: ${bankRef}). L'ERP a automatiquement généré et expédié ${contracts.length} bulletins de paie scellés dans le coffre-fort numérique de chaque agent.`,
+        'admin'
+      );
+    }
+
+    setModalAction(null);
+    setAutoDispatchNotification({
+      show: true,
+      runTitle: run.title,
+      count: contracts.length,
+      bankRef,
+      bankName,
+      timestamp: dateStr
+    });
   };
 
   const formatMoney = (amount: number, customCurr?: string) => {
@@ -738,22 +960,62 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             </button>
           </div>
 
+          {/* NOTIFICATION D'ENVOI AUTOMATIQUE DES BULLETINS */}
+          {autoDispatchNotification && (
+            <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-indigo-950 border-2 border-emerald-500 rounded-2xl p-5 shadow-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in slide-in-from-top-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-lg">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Virement Bancaire Confirmé & {autoDispatchNotification.count} Bulletins Envoyés Automatiquement !</span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/40">
+                      Règles Strictes RDC Validées
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    La banque <strong>{autoDispatchNotification.bankName}</strong> a exécuté le virement (Réf: <code className="text-emerald-400 font-mono">{autoDispatchNotification.bankRef}</code>).
+                    L'ERP a instantanément généré, scellé et déposé les fiches de paie dans le coffre-fort numérique personnel de chaque agent.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setAutoDispatchNotification(null)}
+                className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold shrink-0 transition"
+              >
+                Fermer
+              </button>
+            </div>
+          )}
+
           <div className="space-y-4">
             {payrollRuns.map(run => {
-              const isClosed = run.status === 'cloture';
+              const isClosed = run.status === 'cloture' || run.status === 'virement_confirme';
               const isExpanded = expandedPayrollRunId === run.id;
               return (
                 <div key={run.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5 flex-wrap">
                       <span className="text-xs font-bold text-white font-mono bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
                         {run.month}
                       </span>
                       <h4 className="text-base font-bold text-white">{run.title}</h4>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        isClosed ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        run.status === 'virement_confirme' || run.status === 'cloture'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          : run.status === 'valide_drh'
+                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                            : run.status === 'parametre'
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
                       }`}>
-                        {isClosed ? 'Clôturé & E-Signé par le DG' : 'En Validation Direction'}
+                        {run.status === 'virement_confirme' && '✓ Virement Confirmé & Bulletins Envoyés'}
+                        {run.status === 'cloture' && '✓ Clôturé & E-Signé par le DG'}
+                        {run.status === 'valide_drh' && '✓ Visé par le DRH (En attente virement)'}
+                        {run.status === 'parametre' && 'Paramétré (En attente visa DRH)'}
+                        {run.status === 'brouillon' && 'Brouillon à paramétrer'}
                       </span>
                     </div>
 
@@ -789,16 +1051,115 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                         {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         <span>{isExpanded ? 'Masquer' : 'Consulter le Livre de Paie'}</span>
                       </button>
+                    </div>
+                  </div>
 
-                      {!isClosed && (
-                        <button
-                          onClick={() => handleSignPayroll(run.id)}
-                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl flex items-center gap-1.5 shadow"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                          <span>Signer & Clôturer</span>
-                        </button>
-                      )}
+                  {/* BARRE DU PROCESSUS STRICT 4 ÉTAPES */}
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2">
+                      <span className="font-bold text-white flex items-center gap-1.5">
+                        <Coins className="w-4 h-4 text-amber-400" />
+                        <span>Cycle Mensuel : Paramétrage ➔ Visa DRH ➔ Virement Bancaire ➔ Envoi Auto Bulletins</span>
+                      </span>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {run.bankName && `Banque : ${run.bankName}`}
+                        {run.bankTransferReference && ` • Réf : ${run.bankTransferReference}`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-[11px]">
+                      {/* Étape 1 */}
+                      <div className={`p-3 rounded-xl border transition ${
+                        run.status !== 'brouillon'
+                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                          : 'bg-indigo-950/30 border-indigo-500/40 text-indigo-200'
+                      }`}>
+                        <div className="font-bold flex items-center justify-between">
+                          <span>1. Paramétrage</span>
+                          {run.status !== 'brouillon' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          Taux BCC: {run.exchangeRateUSD_CDF} CDF • {run.currency}
+                        </div>
+                        {run.status === 'brouillon' && (
+                          <button
+                            onClick={() => handleOpenConfigPayment(run)}
+                            className="mt-2 w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-[10px] transition shadow"
+                          >
+                            Paramétrer le Paiement
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Étape 2 */}
+                      <div className={`p-3 rounded-xl border transition ${
+                        run.status === 'valide_drh' || run.status === 'virement_confirme' || run.status === 'cloture'
+                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                          : run.status === 'parametre'
+                            ? 'bg-amber-950/30 border-amber-500/40 text-amber-200'
+                            : 'bg-slate-900 border-slate-800 text-slate-500'
+                      }`}>
+                        <div className="font-bold flex items-center justify-between">
+                          <span>2. Visa DRH</span>
+                          {(run.status === 'valide_drh' || run.status === 'virement_confirme' || run.status === 'cloture') && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          {run.validatedByDRH ? 'Certifié conforme DRH' : 'Examen fiches & heures'}
+                        </div>
+                        {run.status === 'parametre' && (
+                          <button
+                            onClick={() => handleApproveDRH(run.id)}
+                            className="mt-2 w-full py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg font-bold text-[10px] transition shadow"
+                          >
+                            Viser & Valider (DRH)
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Étape 3 */}
+                      <div className={`p-3 rounded-xl border transition ${
+                        run.status === 'virement_confirme' || run.status === 'cloture'
+                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                          : run.status === 'valide_drh'
+                            ? 'bg-blue-950/40 border-blue-500/50 text-blue-200 ring-1 ring-blue-500/30'
+                            : 'bg-slate-900 border-slate-800 text-slate-500'
+                      }`}>
+                        <div className="font-bold flex items-center justify-between">
+                          <span>3. Virement Bancaire</span>
+                          {(run.status === 'virement_confirme' || run.status === 'cloture') && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          {run.bankTransferReference ? `Exécuté : ${run.bankTransferReference}` : 'Transfert aux agents'}
+                        </div>
+                        {run.status === 'valide_drh' && (
+                          <button
+                            onClick={() => handleOpenBankConfirm(run)}
+                            className="mt-2 w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-[10px] transition shadow animate-pulse"
+                          >
+                            Confirmer Virement Banque
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Étape 4 */}
+                      <div className={`p-3 rounded-xl border transition ${
+                        run.payslipsAutoDispatched
+                          ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300 font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-500'
+                      }`}>
+                        <div className="font-bold flex items-center justify-between">
+                          <span>4. Envoi Bulletins</span>
+                          {run.payslipsAutoDispatched && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          {run.payslipsAutoDispatched ? `${run.dispatchedCount || run.totalEmployees} bulletins transmis` : 'Déclenchement auto'}
+                        </div>
+                        {run.payslipsAutoDispatched && (
+                          <div className="mt-2 text-center text-[10px] text-emerald-400 bg-emerald-500/20 py-1 rounded-lg font-bold">
+                            ✓ Espace agents alimenté
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2049,8 +2410,246 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* MODALE D'IMPRESSION UNIVERSELLE DE TOUS LES DOCUMENTS OFFICIELS RDC    */}
+      {/* RÈGLE STRICTE 1 : MODALE DE PARAMÉTRAGE DU PAIEMENT MENSUEL           */}
       {/* ===================================================================== */}
+      {modalAction === 'configure_payment_run' && selectedRunForWorkflow && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 max-w-lg w-full text-xs space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+                  <Sliders className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Étape 1 : Paramétrage du Paiement Mensuel</h3>
+                  <p className="text-[11px] text-slate-400">Période : {selectedRunForWorkflow.title}</p>
+                </div>
+              </div>
+              <button onClick={() => setModalAction(null)} className="p-1 rounded-lg text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfigurePaymentSubmit} className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Mois de Paie</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={paymentParamForm.month}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono opacity-80"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Devise de Paiement</label>
+                  <select
+                    value={paymentParamForm.currency}
+                    onChange={e => setPaymentParamForm({ ...paymentParamForm, currency: e.target.value as any })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold"
+                  >
+                    <option value="USD">$ USD (Dollar Américain)</option>
+                    <option value="CDF">CDF (Franc Congolais)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Taux Officiel BCC (CDF / USD)</label>
+                  <input
+                    type="number"
+                    value={paymentParamForm.exchangeRateUSD_CDF}
+                    onChange={e => setPaymentParamForm({ ...paymentParamForm, exchangeRateUSD_CDF: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Date Valeur du Virement</label>
+                  <input
+                    type="date"
+                    value={paymentParamForm.valueDate}
+                    onChange={e => setPaymentParamForm({ ...paymentParamForm, valueDate: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Banque Partenaire Exécutante (RDC)</label>
+                <select
+                  value={paymentParamForm.bankName}
+                  onChange={e => setPaymentParamForm({ ...paymentParamForm, bankName: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold"
+                >
+                  <option value="Rawbank Kinshasa">Rawbank Kinshasa (Partenaire Principal)</option>
+                  <option value="Equity BCDC">Equity BCDC Kinshasa</option>
+                  <option value="Trust Merchant Bank (TMB)">Trust Merchant Bank (TMB)</option>
+                  <option value="FBNBank DRC">FBNBank DRC</option>
+                  <option value="Standard Bank RDC">Standard Bank RDC</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">N° Compte Entreprise Débiteur</label>
+                <input
+                  type="text"
+                  value={paymentParamForm.bankAccount}
+                  onChange={e => setPaymentParamForm({ ...paymentParamForm, bankAccount: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Note explicative de clôture des paramètres</label>
+                <textarea
+                  rows={2}
+                  value={paymentParamForm.comments}
+                  onChange={e => setPaymentParamForm({ ...paymentParamForm, comments: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setModalAction(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-md transition"
+                >
+                  Enregistrer & Transmettre au DRH (Étape 2)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* RÈGLE STRICTE 3 & 4 : CONFIRMATION BANCAIRE & ENVOI AUTOMATIQUE       */}
+      {/* ===================================================================== */}
+      {modalAction === 'confirm_bank_transfer' && selectedRunForWorkflow && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+          <div className="bg-slate-900 border-2 border-blue-500/60 rounded-3xl p-6 max-w-lg w-full text-xs space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Étape 3 : Confirmation Virement Bancaire & Envoi Auto</h3>
+                  <p className="text-[11px] text-slate-400">Période : {selectedRunForWorkflow.title}</p>
+                </div>
+              </div>
+              <button onClick={() => setModalAction(null)} className="p-1 rounded-lg text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Bannière Règle Stricte */}
+            <div className="bg-blue-950/50 border border-blue-500/40 rounded-2xl p-4 text-xs text-blue-200 space-y-2">
+              <div className="font-bold text-white flex items-center gap-2 text-xs">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Règle Stricte de Déclenchement Automatique :</span>
+              </div>
+              <p className="leading-relaxed text-[11px] text-blue-200/90">
+                Dès que vous confirmez ici que <strong>la banque a déjà transféré aux agents leurs salaires</strong>, l'ERP envoie <strong>AUTOMATIQUEMENT</strong> les bulletins de paie scellés électroniquement avec le certificat de virement dans le coffre-fort numérique de chaque agent ({contracts.length} agents concernés).
+              </p>
+            </div>
+
+            <form onSubmit={handleConfirmBankTransferAndAutoDispatch} className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Banque Exécutante</label>
+                  <input
+                    type="text"
+                    value={bankConfirmForm.bankName}
+                    onChange={e => setBankConfirmForm({ ...bankConfirmForm, bankName: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Date Exécution Virement</label>
+                  <input
+                    type="date"
+                    value={bankConfirmForm.confirmedDate}
+                    onChange={e => setBankConfirmForm({ ...bankConfirmForm, confirmedDate: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Référence Transaction / Ordre Bancaire</label>
+                <input
+                  type="text"
+                  required
+                  value={bankConfirmForm.transactionRef}
+                  onChange={e => setBankConfirmForm({ ...bankConfirmForm, transactionRef: e.target.value })}
+                  placeholder="Ex: RAW-TXN-202609-481029"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-emerald-400 font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Compte Entreprise Débité</label>
+                <input
+                  type="text"
+                  value={bankConfirmForm.debitAccount}
+                  onChange={e => setBankConfirmForm({ ...bankConfirmForm, debitAccount: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Mention / Accusé de Réception Banque</label>
+                <textarea
+                  rows={2}
+                  value={bankConfirmForm.bankReceiptNote}
+                  onChange={e => setBankConfirmForm({ ...bankConfirmForm, bankReceiptNote: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white"
+                />
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-400 block font-medium">Masse Nette Virée aux Agents :</span>
+                  <span className="text-emerald-400 font-mono font-black text-base">{formatMoney(selectedRunForWorkflow.totalNet, selectedRunForWorkflow.currency)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 block font-medium">Bénéficiaires :</span>
+                  <span className="text-white font-bold">{contracts.length} Collaborateurs</span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setModalAction(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold shadow-lg transition active:scale-95 flex items-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirmer Virement & Déclencher Envoi Automatique ({contracts.length} Bulletins)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {modalAction === 'doc_print' && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
           <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl space-y-5 my-8 print:p-0 print:shadow-none print:m-0 print:max-w-none">

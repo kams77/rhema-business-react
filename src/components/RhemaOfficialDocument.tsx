@@ -1,6 +1,6 @@
 // src/components/RhemaOfficialDocument.tsx
 import React, { useState } from 'react';
-import type { DocumentItem, Organization } from '../types';
+import type { DocumentItem, Organization, User, HierarchicalEntity } from '../types';
 import { 
   Printer, 
   X, 
@@ -10,26 +10,43 @@ import {
   Globe2, 
   ShieldCheck, 
   FileText,
-  Download 
+  Download,
+  AlertTriangle 
 } from 'lucide-react';
 import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
+import { canUserApproveDocument } from '../utils/rbac';
 
 interface RhemaOfficialDocumentProps {
   document: DocumentItem;
   organization: Organization;
+  currentUser?: User;
+  entities?: HierarchicalEntity[];
   onClose: () => void;
+  onSignDocument?: (docId: string) => void;
 }
 
 export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
   document,
   organization,
+  currentUser,
+  entities = [],
   onClose,
+  onSignDocument,
 }) => {
   const [isSigned, setIsSigned] = useState(document.status === 'signe');
   const [shareSuccess, setShareSuccess] = useState(false);
 
+  // RÈGLE STRICTE 6 & 1-5 : Vérification d'habilitation de visa/signature
+  const approvalCheck = currentUser 
+    ? canUserApproveDocument(currentUser, document, entities) 
+    : { allowed: true };
+
   const handleSign = () => {
+    if (!approvalCheck.allowed) return;
     setIsSigned(true);
+    if (onSignDocument) {
+      onSignDocument(document.id);
+    }
   };
 
   const handleShare = () => {
@@ -262,13 +279,20 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
 
           <div className="flex items-center gap-2">
             {!isSigned && (
-              <button
-                onClick={handleSign}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition active:scale-95"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Signer & Sceller pour {organization.name}</span>
-              </button>
+              approvalCheck.allowed ? (
+                <button
+                  onClick={handleSign}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition active:scale-95"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Viser & Sceller pour {organization.name}</span>
+                </button>
+              ) : (
+                <div className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>{approvalCheck.reason || "Visa restreint (Règles hiérarchiques)"}</span>
+                </div>
+              )
             )}
 
             <button

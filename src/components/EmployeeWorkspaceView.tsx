@@ -1,5 +1,5 @@
 // src/components/EmployeeWorkspaceView.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract } from '../types';
 import { 
   CheckCircle2, 
@@ -22,9 +22,12 @@ import {
   Eye,
   Check,
   X,
-  BarChart3
+  BarChart3,
+  CreditCard,
+  Sparkles
 } from 'lucide-react';
 import { WorkspaceDashboard } from './WorkspaceDashboard';
+import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { initialContracts } from '../data/initialData';
 
 interface EmployeeWorkspaceViewProps {
@@ -57,7 +60,26 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const [showNotification, setShowNotification] = useState<boolean>(true);
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState<boolean>(false);
-  const [viewingDoc, setViewingDoc] = useState<any | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<DocumentItem | null>(null);
+
+  // Documents strictement accessibles à l'agent connecté selon les règles de confidentialité
+  const agentDocuments = useMemo(() => {
+    return documents.filter(doc => {
+      // Bulletin de paie : STRICTEMENT réservé à son titulaire
+      if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
+        return doc.targetUserId === currentUser.id;
+      }
+      return (
+        doc.authorId === currentUser.id ||
+        doc.targetUserId === currentUser.id ||
+        (doc.targetEntityId && (
+          doc.targetEntityId === currentUser.serviceId ||
+          doc.targetEntityId === currentUser.directionId ||
+          doc.targetEntityId === currentUser.departementId
+        ))
+      );
+    });
+  }, [documents, currentUser]);
 
   // État interactif des tâches opérationnelles
   const [taskList, setTaskList] = useState([
@@ -354,7 +376,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             { id: 'dashboard', label: 'Tableau de Bord & Ratios RH', icon: <BarChart3 className="w-4 h-4" /> },
             { id: 'tasks', label: `Mes Tâches Opérationnelles (${taskList.length})`, icon: <CheckCircle2 className="w-4 h-4" /> },
             { id: 'attendance', label: 'Pointage & Présences (2)', icon: <Clock className="w-4 h-4" /> },
-            { id: 'documents', label: 'Mes Documents & Fiches (8)', icon: <FileText className="w-4 h-4" /> },
+            { id: 'documents', label: `Mes Documents & Bulletins (${agentDocuments.length})`, icon: <FileText className="w-4 h-4" /> },
             { id: 'transmissions', label: 'Transmissions Hiérarchiques & Consignes', icon: <MessageSquare className="w-4 h-4" /> },
             { id: 'profile', label: 'Fiche de Poste & Habilitations', icon: <Shield className="w-4 h-4" /> },
           ].map(tab => (
@@ -641,54 +663,93 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         </div>
       )}
 
-      {/* SOUS-MODULE 3 : MES DOCUMENTS & FICHES RH */}
+      {/* SOUS-MODULE 3 : MES DOCUMENTS & FICHES RH (COFFRE-FORT AGENT) */}
       {activeTab === 'documents' && (
         <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-600" /> Coffre-Fort Numérique & Bulletins Personnels
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Bulletin de Paie - Septembre 2026</h4>
-                  <p className="text-[11px] text-slate-500">Net : 1 450 USD • Émis par DRH</p>
-                </div>
-                <button
-                  onClick={() => setViewingDoc({ title: 'Bulletin de Paie - Septembre 2026', ref: 'PAY-2026-09', amount: '1 450 USD' })}
-                  className="p-2 bg-white rounded-lg border text-sky-700 hover:bg-sky-50 font-bold text-xs shadow-sm"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
+          <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <span>Coffre-Fort Numérique & Pièces RH Sécurisées</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Bulletins de paie scellés et pièces personnelles de {currentUser.name} ({currentUser.matricule || 'Agent'})
+                </p>
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Contrat de Travail Cadre (CDI)</h4>
-                  <p className="text-[11px] text-slate-500">Signé le 15/01/2020 • RCCM RDC</p>
-                </div>
-                <button
-                  onClick={() => setViewingDoc({ title: 'Contrat de Travail Cadre (CDI)', ref: 'CONTRAT-CDI-001', amount: 'Réf légale OHADA' })}
-                  className="p-2 bg-white rounded-lg border text-sky-700 hover:bg-sky-50 font-bold text-xs shadow-sm"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-slate-900">Ordre de Mission Kolwezi</h4>
-                  <p className="text-[11px] text-slate-500">Prise en charge VSAT station</p>
-                </div>
-                <button
-                  onClick={() => setViewingDoc({ title: 'Ordre de Mission Kolwezi', ref: 'OM-2026-44', amount: 'Prise en charge validée' })}
-                  className="p-2 bg-white rounded-lg border text-sky-700 hover:bg-sky-50 font-bold text-xs shadow-sm"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Coffre-Fort Inviolable RDC</span>
               </div>
             </div>
+
+            {agentDocuments.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400">
+                <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p>Aucun document ou bulletin n'a encore été transmis dans votre coffre-fort personnel.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {agentDocuments.map(doc => {
+                  const isPayslip = doc.subtype === 'bulletin_de_paie' || doc.isConfidentialPayslip;
+                  return (
+                    <div 
+                      key={doc.id} 
+                      className={`p-4 rounded-2xl border transition shadow-xs hover:shadow-md flex flex-col justify-between ${
+                        isPayslip 
+                          ? 'border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white' 
+                          : 'border-slate-200 bg-slate-50/60'
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
+                            isPayslip 
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                              : 'bg-sky-100 text-sky-800 border border-sky-200'
+                          }`}>
+                            {isPayslip ? 'Bulletin de Paie Certifié' : doc.subtype.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400">{doc.createdAt}</span>
+                        </div>
+
+                        <div>
+                          <h4 className="font-bold text-xs text-slate-900 leading-snug line-clamp-2">{doc.title}</h4>
+                          <p className="text-[11px] font-mono text-slate-500 mt-0.5">Réf : {doc.referenceNumber}</p>
+                        </div>
+
+                        {doc.amount !== undefined && (
+                          <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase">
+                              {isPayslip ? 'Net Viré en Banque' : 'Montant'} :
+                            </span>
+                            <span className="font-mono font-black text-sm text-emerald-700">
+                              {doc.amount.toLocaleString()} {doc.currency || 'USD'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Scellé Direction</span>
+                        </div>
+
+                        <button
+                          onClick={() => setViewingDoc(doc)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs shadow-sm transition active:scale-95"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Consulter</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -890,7 +951,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
               <button onClick={() => setViewingDoc(null)} className="text-slate-400 hover:text-slate-700">✕</button>
             </div>
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
-              <p>Référence : <strong>{viewingDoc.ref}</strong></p>
+              <p>Référence : <strong>{viewingDoc.referenceNumber || (viewingDoc as any).ref}</strong></p>
               <p>Montant / Valeur : <strong>{viewingDoc.amount}</strong></p>
               <p>Statut : <span className="text-emerald-700 font-bold">Document Certifié RHEMA BUSINESS</span></p>
               <p className="text-slate-500 text-[11px]">Horodaté et scellé sous le RCCM/20-A-01120 Kinshasa RD CONGO.</p>

@@ -24,14 +24,22 @@ import { getRoleBadgeClass } from '../utils/rbac';
 
 interface LoginViewProps {
   organization: Organization;
+  organizations?: Organization[];
+  onSelectOrg?: (org: Organization) => void;
   users: User[];
   onLogin: (user: User, method: 'credentials' | 'demo') => void;
+  onOpenOnboarding?: () => void;
+  onboardingSuccessMsg?: string | null;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
   organization,
+  organizations = [],
+  onSelectOrg,
   users,
-  onLogin
+  onLogin,
+  onOpenOnboarding,
+  onboardingSuccessMsg
 }) => {
   const [identifier, setIdentifier] = useState('dg@rhemabusiness.com');
   const [password, setPassword] = useState('rhema2026');
@@ -131,9 +139,44 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
 
           <div className="mb-6">
+            {/* BOUTON PREMIÈRE UTILISATION : CRÉATION D'ORGANISATION */}
+            {onOpenOnboarding && (
+              <button
+                type="button"
+                onClick={onOpenOnboarding}
+                className="w-full mb-4 p-3 rounded-2xl bg-gradient-to-r from-blue-600/30 to-indigo-600/30 border border-indigo-500/40 hover:border-indigo-400 hover:bg-indigo-600/40 text-left flex items-center justify-between transition group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow">
+                    <Sparkles className="w-4 h-4 text-white animate-spin-slow" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-white block group-hover:text-indigo-200">
+                      Première Utilisation ? Créer une Organisation
+                    </span>
+                    <span className="text-[10px] text-slate-300">
+                      Assistant d'initialisation & connexion obligatoire des agents
+                    </span>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-indigo-400 group-hover:translate-x-1 transition" />
+              </button>
+            )}
+
+            {/* MESSAGE DE SUCCÈS ONBOARDING */}
+            {onboardingSuccessMsg && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <strong className="block text-emerald-300 font-bold mb-0.5">Organisation Déployée avec Succès !</strong>
+                  {onboardingSuccessMsg}
+                </div>
+              </div>
+            )}
+
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-semibold mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Portail ERP, RH & Paie Conforme RDC</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Connectivité Obligatoire des Agents via Login</span>
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">
               Connexion Sécurisée
@@ -141,6 +184,29 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
               Connectez-vous avec vos identifiants d'entreprise pour accéder à votre espace de travail et habilitations hiérarchiques.
             </p>
+
+            {/* SÉLECTEUR D'ORGANISATION SI MULTIPLES */}
+            {organizations.length > 1 && onSelectOrg && (
+              <div className="mt-4 pt-3 border-t border-slate-800">
+                <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                  Organisation sélectionnée :
+                </label>
+                <select
+                  value={organization.id}
+                  onChange={e => {
+                    const sel = organizations.find(o => o.id === e.target.value);
+                    if (sel) onSelectOrg(sel);
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                >
+                  {organizations.map(o => (
+                    <option key={o.id} value={o.id}>
+                      {o.name} ({o.registrationNumber || 'RDC'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {errorMsg && (

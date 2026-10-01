@@ -498,13 +498,20 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Créer une Tâche Workflow</span>
-        </button>
+        {currentUser.role !== 'agent' ? (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Créer une Tâche Workflow</span>
+          </button>
+        ) : (
+          <div className="text-[11px] text-slate-400 bg-slate-800/60 px-3 py-1.5 rounded-xl border border-slate-700/60 flex items-center gap-1.5">
+            <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Mode Exécutant : Consultez et validez vos jalons assignés</span>
+          </div>
+        )}
       </div>
 
       {/* 2. ONGLETS DE FILTRAGE RÉEL */}
@@ -757,6 +764,8 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
         <RhemaOfficialDocument
           document={selectedViewingDoc}
           organization={organization}
+          currentUser={currentUser}
+          entities={entities}
           onClose={() => setSelectedViewingDoc(null)}
         />
       )}
