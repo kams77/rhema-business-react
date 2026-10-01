@@ -105,8 +105,8 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
         </div>
 
         {/* FEUILLE DE PAPIER BLANCHE OFFICIELLE (EXACTE À LA CAPTURE 2) */}
-        <div className="p-6 sm:p-8 overflow-y-auto bg-slate-950/90 flex justify-center">
-          <div className="bg-white text-slate-900 rounded-xl p-8 sm:p-10 shadow-2xl max-w-3xl w-full border border-slate-200 min-h-[700px] flex flex-col justify-between font-sans relative">
+        <div className="flex-1 min-h-0 p-4 sm:p-8 overflow-y-auto bg-slate-950/90 flex justify-center items-start">
+          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 md:p-10 shadow-2xl max-w-3xl w-full border border-slate-200 flex flex-col font-sans relative my-auto shrink-0">
             
             {/* Filigrane d'authenticité */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] select-none text-9xl font-black text-slate-900 rotate-[-25deg]">
@@ -115,7 +115,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
 
             <div>
               {/* EN-TÊTE OFFICIEL */}
-              <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b pb-6 mb-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b pb-6 mb-5">
                 <div>
                   {/* Logo Officiel RHEMA BUSINESS (avec Globe et Bandeau Rouge) */}
                   <div className="flex items-center gap-3 mb-2">
@@ -164,14 +164,14 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
               </div>
 
               {/* TITRE PRINCIPAL DU DOCUMENT */}
-              <div className="text-center my-6">
+              <div className="text-center my-4 sm:my-5">
                 <h2 className="text-base sm:text-lg font-black text-slate-950 uppercase tracking-tight">
                   {document.title}
                 </h2>
               </div>
 
               {/* CADRES DE CONTENU DE LA PIÈCE */}
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 {/* Nature du document */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex justify-between items-center text-xs">
                   <div>
@@ -188,7 +188,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                 </div>
 
                 {/* Objet / Contexte */}
-                <div className="border border-slate-200 rounded-xl p-4 text-xs">
+                <div className="border border-slate-200 rounded-xl p-3.5 sm:p-4 text-xs">
                   <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
                     OBJET / CONTEXTE OPÉRATIONNEL :
                   </span>
@@ -199,7 +199,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
 
                 {/* Montant engagé */}
                 {document.amount && (
-                  <div className="border border-slate-200 rounded-xl p-4 flex justify-between items-center bg-slate-50/50">
+                  <div className="border border-slate-200 rounded-xl p-3.5 sm:p-4 flex justify-between items-center bg-slate-50/50">
                     <span className="text-xs font-bold text-slate-700 uppercase">
                       MONTANT ENGAGÉ / TOTAL FACTURÉ :
                     </span>
@@ -212,13 +212,13 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
             </div>
 
             {/* CADRES DE SIGNATURES DU BAS */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-8 mt-8 border-t border-slate-200 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-5 mt-6 border-t border-slate-200 text-xs">
               {/* Émetteur */}
-              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/40">
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50">
                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Émetteur / Service Rédacteur</span>
                 <p className="font-bold text-slate-900 mt-1">{document.authorName}</p>
                 <p className="text-[11px] text-slate-500">{document.authorEntity}</p>
-                <div className="mt-4 pt-2 border-t border-dashed border-slate-300 text-[10px] text-slate-400 italic">
+                <div className="mt-3 pt-2 border-t border-dashed border-slate-300 text-[10px] text-slate-400 italic">
                   Visa pour transmission et exécution
                 </div>
               </div>
@@ -226,20 +226,20 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
               {/* Certification Direction Générale */}
               <div className={`border rounded-xl p-3.5 transition ${
                 isSigned 
-                  ? 'border-amber-400 bg-amber-50/50 text-amber-950' 
-                  : 'border-slate-200 bg-slate-50/40'
+                  ? 'border-amber-400 bg-amber-50 text-amber-950' 
+                  : 'border-slate-200 bg-slate-50'
               }`}>
                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Certification Direction Générale</span>
                 {isSigned ? (
                   <div className="mt-1">
                     <p className="font-bold text-amber-900 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                      Signé & Certifié par {document.electronicSignature?.signedBy || organization.managerName}
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span className="truncate">Signé & Certifié par {document.electronicSignature?.signedBy || organization.managerName}</span>
                     </p>
                     <p className="text-[10px] font-mono text-slate-600 mt-1 truncate">
                       {document.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}
                     </p>
-                    <div className="mt-3 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300 inline-block">
+                    <div className="mt-2 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300 inline-block">
                       ✓ Sceau d'entreprise inviolable
                     </div>
                   </div>
