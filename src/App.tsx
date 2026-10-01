@@ -8,7 +8,9 @@ import type {
   TaskItem, 
   SecurityAlert,
   AuditLog,
-  PayrollSystemConfig
+  PayrollSystemConfig,
+  EmployeeContract,
+  PayrollRunPeriod
 } from './types';
 import { 
   initialOrganizations, 
@@ -36,6 +38,7 @@ import { SecurityView } from './components/SecurityView';
 import { AgentCrudView } from './components/AgentCrudView';
 import { AuditView } from './components/AuditView';
 import { OrganizationOnboardingWizard } from './components/OrganizationOnboardingWizard';
+import { BulkImportView } from './components/BulkImportView';
 import { 
   Building2, 
   ShieldAlert, 
@@ -60,7 +63,18 @@ import {
   RefreshCw
 } from 'lucide-react';
 
-type ActiveTab = 'workspace' | 'hierarchy' | 'documents' | 'workflows' | 'payroll' | 'security' | 'agents' | 'audit' | 'laravel';
+type ActiveTab = 
+  | 'workspace' 
+  | 'hierarchy' 
+  | 'documents' 
+  | 'workflows' 
+  | 'payroll' 
+  | 'bulk_import'
+  | 'attendance_dispatch'
+  | 'security' 
+  | 'agents' 
+  | 'audit' 
+  | 'laravel';
 
 export default function App() {
   const [organizations, setOrganizations] = useState<Organization[]>(initialOrganizations);
@@ -68,6 +82,7 @@ export default function App() {
   const [entities, setEntities] = useState<HierarchicalEntity[]>(initialEntities);
   const [users, setUsers] = useState<User[]>(initialUsers);
   const [currentUser, setCurrentUser] = useState<User>(initialUsers[0]);
+  const [contracts, setContracts] = useState<EmployeeContract[]>(initialContracts);
   const [documents, setDocuments] = useState<DocumentItem[]>(initialDocuments);
   const [tasks, setTasks] = useState<TaskItem[]>(initialTasks);
   
@@ -181,6 +196,45 @@ export default function App() {
           : `Délégation d'approbation révoquée pour l'agent ${target.name}. Statut repassé en exécution exclusive.`,
         ip: '127.0.0.1',
         hash: `sha256-delegation-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  // MASSIFICATION DES COLLABORATEURS & CONTRATS RH VIA CSV
+  const handleImportUsersAndContracts = (newUsers: User[], newContracts: EmployeeContract[], auditNote: string) => {
+    setUsers(prev => [...newUsers, ...prev]);
+    setContracts(prev => [...newContracts, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Massification CSV Employés & Contrats RH',
+        category: 'admin',
+        details: auditNote,
+        ip: '127.0.0.1',
+        hash: `sha256-bulk-users-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  // MASSIFICATION DES HISTORIQUES DE PAIE & ARCHIVES VIA CSV
+  const handleImportPayrollHistory = (newRun: PayrollRunPeriod, newPayslipDocs: DocumentItem[], auditNote: string) => {
+    setDocuments(prev => [...newPayslipDocs, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Massification CSV Historique Paie',
+        category: 'admin',
+        details: auditNote,
+        ip: '127.0.0.1',
+        hash: `sha256-bulk-payroll-${Date.now()}`
       },
       ...prev
     ]);
@@ -518,7 +572,7 @@ export default function App() {
               users={users}
               tasks={tasks}
               documents={documents}
-              contracts={initialContracts}
+              contracts={contracts}
               onSelectUser={setCurrentUser}
             />
           )}
@@ -672,6 +726,66 @@ export default function App() {
                   ...prev
                 ]);
               }}
+            />
+          )}
+
+          {/* MODULE DE MASSIFICATION CSV & IMPORT RH / PAIE */}
+          {currentTab === 'bulk_import' && (
+            <BulkImportView
+              currentUser={currentUser}
+              currentOrg={currentOrg}
+              entities={entities}
+              users={users}
+              contracts={contracts}
+              onImportUsersAndContracts={handleImportUsersAndContracts}
+              onImportPayrollHistory={handleImportPayrollHistory}
+              onLogAction={(action, details, category) => {
+                setLogs(prev => [
+                  {
+                    id: `log-${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    userName: currentUser.name,
+                    userRole: currentUser.roleTitle,
+                    action,
+                    category: category as any,
+                    details,
+                    ip: '127.0.0.1',
+                    hash: `sha256-import-${Date.now()}`
+                  },
+                  ...prev
+                ]);
+              }}
+              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
+            />
+          )}
+
+          {/* MODULE DE POINTAGE & HORODATAGE 28 JOURS OUVRABLES (+ HEURES SUP) */}
+          {currentTab === 'attendance_dispatch' && (
+            <BulkImportView
+              currentUser={currentUser}
+              currentOrg={currentOrg}
+              entities={entities}
+              users={users}
+              contracts={contracts}
+              onImportUsersAndContracts={handleImportUsersAndContracts}
+              onImportPayrollHistory={handleImportPayrollHistory}
+              onLogAction={(action, details, category) => {
+                setLogs(prev => [
+                  {
+                    id: `log-${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    userName: currentUser.name,
+                    userRole: currentUser.roleTitle,
+                    action,
+                    category: category as any,
+                    details,
+                    ip: '127.0.0.1',
+                    hash: `sha256-att-${Date.now()}`
+                  },
+                  ...prev
+                ]);
+              }}
+              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
             />
           )}
 

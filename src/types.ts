@@ -192,6 +192,8 @@ export type NavigationTab =
   | 'payroll'
   | 'security' 
   | 'agents' 
+  | 'bulk_import'
+  | 'attendance_dispatch'
   | 'audit';
 
 export interface SecurityAlert {
@@ -416,4 +418,69 @@ export interface PayslipRecord {
   status: 'emis' | 'signe_electronique' | 'paye';
   signatureHash?: string;
   signedAt?: string;
+}
+
+// -------------------------------------------------------------
+// MODULE POINTAGE & HORODATAGE 28 JOURS OUVRABLES RDC
+// -------------------------------------------------------------
+
+export interface AttendanceRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  matricule: string;
+  date: string;
+  clockIn: string;
+  clockOut?: string;
+  effectiveHours: number;
+  overtimeDayHours: number;
+  overtimeNightHours: number;
+  overtimeHolidayHours: number;
+  ipAddress: string;
+  status: 'present' | 'retard' | 'mission' | 'conge' | 'absent';
+  entityId: string;
+  entityName: string;
+  isCertified: boolean;
+}
+
+export interface Attendance28DaysCycleReport {
+  id: string;
+  cycleNumber: number;
+  monthPeriod: string; // Ex: 09/2026
+  workingDaysCompleted: number; // Ex: 28 jours ouvrables
+  targetWorkingDays: number; // 28 jours ouvrables
+  entityId: string;
+  entityName: string;
+  entityLevel: EntityLevel;
+  managerId?: string;
+  managerName: string;
+  managerEmail: string;
+  managerRole: UserRole;
+  totalAgents: number;
+  totalNormalHours: number;
+  totalOvertimeHours: number;
+  overtimeDayHours: number;
+  overtimeNightHours: number;
+  overtimeHolidayHours: number;
+  autoDispatchedAt?: string;
+  isAutoDispatched: boolean;
+  status: 'en_cours' | 'cycle_28j_atteint' | 'transmis_responsable' | 'valide_drh';
+  agentSummaries: {
+    userId: string;
+    userName: string;
+    matricule: string;
+    daysWorked: number;
+    normalHours: number;
+    overtimeHours: number;
+    overtimeDay: number;
+    overtimeNight: number;
+    overtimeHoliday: number;
+    estimatedOvertimeBonusUSD: number;
+  }[];
+  sha256Hash: string;
+  signatureCert?: {
+    signedBy: string;
+    signedAt: string;
+    role: string;
+  };
 }

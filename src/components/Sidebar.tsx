@@ -12,7 +12,9 @@ import {
   History,
   ChevronRight,
   Fingerprint,
-  Coins
+  Coins,
+  UploadCloud,
+  Clock
 } from 'lucide-react';
 
 export type ActiveTab = 
@@ -23,6 +25,8 @@ export type ActiveTab =
   | 'payroll'
   | 'security' 
   | 'agents' 
+  | 'bulk_import'
+  | 'attendance_dispatch'
   | 'audit' 
   | 'laravel';
 
@@ -46,7 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     roleTitle: 'Président Directeur Général (PDG / DG)',
   };
 
-  const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string | number; badgeColor?: string }[] = [
+  const isDGOrManager = activeUser.role === 'dg' || activeUser.role === 'chef_departement' || activeUser.role === 'directeur';
+
+  const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string | number; badgeColor?: string; isVisible?: boolean }[] = [
     {
       id: 'workspace',
       label: 'Espace Employé (Connexion & Travail)',
@@ -77,6 +83,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Coins className="w-4 h-4 text-amber-400" />,
       badge: 'RH & Salaires',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+    },
+    {
+      id: 'bulk_import',
+      label: 'Import Massif CSV & Paie',
+      icon: <UploadCloud className="w-4 h-4 text-emerald-400" />,
+      badge: 'Direction DG',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 font-bold',
+      isVisible: isDGOrManager,
+    },
+    {
+      id: 'attendance_dispatch',
+      label: 'Pointage & Envoi 28 Jours',
+      icon: <Clock className="w-4 h-4 text-cyan-400" />,
+      badge: '28j Ouvrables',
+      badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+      isVisible: activeUser.role !== 'agent',
     },
     {
       id: 'security',
@@ -132,7 +154,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
           Modules Principaux
         </div>
-        {navItems.map((item) => {
+        {navItems.filter(item => item.isVisible !== false).map((item) => {
           const isActive = currentTab === item.id;
           return (
             <button
