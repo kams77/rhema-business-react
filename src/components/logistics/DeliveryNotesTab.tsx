@@ -1,6 +1,6 @@
 // src/components/logistics/DeliveryNotesTab.tsx
 import React, { useState } from 'react';
-import type { DeliveryNoteItem, PurchaseOrderItem, User, Organization } from '../../types';
+import type { DeliveryNoteItem, PurchaseOrderItem, User, Organization, EquipmentCategory } from '../../types';
 import { 
   Plus, 
   Search, 
@@ -37,7 +37,7 @@ export const DeliveryNotesTab: React.FC<Props> = ({
   onSignDeliveryNote,
   onPrintDeliveryNote
 }) => {
-  const [filterCategory, setFilterCategory] = useState<'all' | 'vsat' | 'energie_solaire'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | EquipmentCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedBL, setSelectedBL] = useState<DeliveryNoteItem | null>(null);
@@ -49,7 +49,7 @@ export const DeliveryNotesTab: React.FC<Props> = ({
   const [vehiclePlateNumber, setVehiclePlateNumber] = useState('');
   const [sealNumber, setSealNumber] = useState('');
   const [destinationSite, setDestinationSite] = useState('Dépôt Central Rhema Kinshasa');
-  const [category, setCategory] = useState<'vsat' | 'energie_solaire' | 'hybride'>('vsat');
+  const [category, setCategory] = useState<EquipmentCategory>('vsat');
   const [recipientName, setRecipientName] = useState(currentUser.name);
   const [recipientTitle, setRecipientTitle] = useState(currentUser.roleTitle);
   const [remarks, setRemarks] = useState('');

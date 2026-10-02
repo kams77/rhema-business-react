@@ -46,11 +46,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   unreadAlertsCount = 2,
 }) => {
-  const activeUser = currentUser || {
+  const activeUser: User = currentUser || {
     id: 'default-user',
     name: 'Dr. Amadou Diallo',
+    email: 'dg@rhemabusiness.com',
     role: 'dg' as const,
     roleTitle: 'Président Directeur Général (PDG / DG)',
+    organizationId: 'org-1',
+    status: 'actif' as const,
+    failedAccessAttempts: 0,
+    canCreateSubAgents: true,
   };
 
   const isDGOrManager = activeUser.role === 'dg' || activeUser.role === 'chef_departement' || activeUser.role === 'directeur';
