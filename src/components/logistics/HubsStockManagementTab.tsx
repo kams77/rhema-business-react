@@ -40,9 +40,11 @@ import {
   Check,
   ChevronRight,
   ExternalLink,
-  Shield
+  Shield,
+  Activity
 } from 'lucide-react';
 import { canManageHubs } from '../../utils/rbac';
+import { HubsStockChartDashboard } from './HubsStockChartDashboard';
 
 interface HubsStockManagementTabProps {
   currentUser: User;
@@ -78,7 +80,7 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
   const [selectedHubId, setSelectedHubId] = useState<string>('all');
   
   // Sous-onglets dans la vue Hub
-  const [subTab, setSubTab] = useState<'inventory' | 'movements' | 'documents'>('inventory');
+  const [subTab, setSubTab] = useState<'inventory' | 'charts' | 'movements' | 'documents'>('inventory');
 
   // Filtres de recherche inventaire
   const [searchQuery, setSearchQuery] = useState('');
@@ -285,8 +287,11 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
             </div>
           </div>
 
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-red-500/15 text-red-400">
+          <div 
+            onClick={() => setSubTab('charts')}
+            className="cursor-pointer bg-slate-900/80 hover:bg-slate-900 border border-slate-800 hover:border-red-500/50 rounded-2xl p-4 flex items-center gap-4 transition shadow-md group"
+          >
+            <div className="p-3 rounded-xl bg-red-500/15 text-red-400 group-hover:scale-105 transition">
               <AlertTriangle className="w-6 h-6" />
             </div>
             <div>
@@ -294,8 +299,9 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
               <div className="text-xl font-black text-white font-mono mt-0.5">
                 {nationalStats.alertCount} référence(s)
               </div>
-              <div className="text-[10px] text-red-400 mt-0.5">
-                À réapprovisionner d'urgence
+              <div className="text-[10px] text-red-400 mt-0.5 flex items-center gap-1">
+                <span>Voir Graphiques Recharts & Alertes</span>
+                <Activity className="w-3 h-3" />
               </div>
             </div>
           </div>
@@ -408,6 +414,15 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
             <span>Inventaire & S/N ({filteredStocks.length})</span>
           </button>
           <button
+            onClick={() => setSubTab('charts')}
+            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+              subTab === 'charts' ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Graphiques Recharts & Alertes</span>
+          </button>
+          <button
             onClick={() => setSubTab('movements')}
             className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
               subTab === 'movements' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
@@ -456,6 +471,25 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
       </div>
 
       {/* CONTENU SELON LE SOUS-ONGLET ACTIF */}
+
+      {/* 0. SOUS-ONGLET : TABLEAU DE BORD GRAPHIQUE RECHARTS & ALERTES EN TEMPS RÉEL */}
+      {subTab === 'charts' && (
+        <HubsStockChartDashboard
+          currentUser={currentUser}
+          hubs={hubs}
+          stocks={stocks}
+          catalog={catalog}
+          movements={movements}
+          onSelectHub={(hubId) => setSelectedHubId(hubId)}
+          onRequestTransfer={(stk) => {
+            setMovementInitialType('transfert_inter_hub');
+            setShowNewMovementModal(true);
+          }}
+          onRequestOrder={() => {
+            setSubTab('inventory');
+          }}
+        />
+      )}
 
       {/* 1. SOUS-ONGLET : INVENTAIRE & TRAÇABILITÉ DES NUMÉROS DE SÉRIE */}
       {subTab === 'inventory' && (

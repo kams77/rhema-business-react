@@ -32,7 +32,8 @@ import {
   Sparkles,
   Barcode,
   Warehouse,
-  Boxes
+  Boxes,
+  Activity
 } from 'lucide-react';
 import { LogisticsSummaryCards } from './logistics/LogisticsSummaryCards';
 import { PurchaseOrdersTab } from './logistics/PurchaseOrdersTab';
@@ -40,6 +41,7 @@ import { DeliveryNotesTab } from './logistics/DeliveryNotesTab';
 import { ShipmentTrackingTab } from './logistics/ShipmentTrackingTab';
 import { InvoicesTab } from './logistics/InvoicesTab';
 import { HubsStockManagementTab } from './logistics/HubsStockManagementTab';
+import { HubsStockChartDashboard } from './logistics/HubsStockChartDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 
 interface LogisticsModuleViewProps {
@@ -101,8 +103,17 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   onRegisterPayment,
   onLogAction,
 }) => {
-  const [activeTab, setActiveTab] = useState<'hubs' | 'orders' | 'delivery' | 'shipments' | 'invoices'>('hubs');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'hubs' | 'orders' | 'delivery' | 'shipments' | 'invoices'>('dashboard');
   
+  // Alertes de stock calculées en temps réel
+  const stockAlertsCount = React.useMemo(() => {
+    return stocks.filter(s => s.quantityAvailable <= s.minAlertThreshold || s.status === 'rupture' || s.status === 'alerte_basse').length;
+  }, [stocks]);
+
+  const immediateRupturesCount = React.useMemo(() => {
+    return stocks.filter(s => s.quantityAvailable === 0 || s.status === 'rupture').length;
+  }, [stocks]);
+
   // Document pour visualisation officielle imprimable
   const [printableDoc, setPrintableDoc] = useState<DocumentItem | null>(null);
 
@@ -234,25 +245,59 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
             </div>
           </div>
 
-          {/* BADGE D'EXÉCUTANT DU SERVICE (RÈGLE MÉTIER FORMELLE) */}
-          <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-xs shrink-0 flex items-center gap-3">
-            <div className={`p-2 rounded-xl ${isAgent ? 'bg-emerald-500/15 text-emerald-400' : 'bg-sky-500/15 text-sky-400'}`}>
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                {isAgent ? 'Exécutant Habilité du Service' : 'Superviseur Hiérarchique'}
+          {/* BADGE D'EXÉCUTANT DU SERVICE ET ACCÈS RAPIDE GRAPHIQUES */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2.5 transition shadow-lg ${
+                activeTab === 'dashboard'
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-extrabold shadow-amber-500/25'
+                  : 'bg-slate-950/80 hover:bg-slate-900 text-slate-200 border-slate-800'
+              }`}
+            >
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300">
+                <Activity className="w-4 h-4" />
               </div>
-              <div className="font-bold text-white flex items-center gap-1.5">
-                <span>{currentUser.name}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
-                  isAgent ? 'bg-emerald-500/20 text-emerald-300' : 'bg-sky-500/20 text-sky-300'
-                }`}>
-                  {isAgent ? 'AGENT EXÉCUTANT' : currentUser.role.toUpperCase()}
-                </span>
+              <div className="text-left">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Supervision Visuelle</div>
+                <div className="text-xs font-black flex items-center gap-1.5">
+                  <span>Graphiques Recharts</span>
+                  {immediateRupturesCount > 0 ? (
+                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[10px] animate-pulse">
+                      {immediateRupturesCount} Rupture{immediateRupturesCount > 1 ? 's' : ''}
+                    </span>
+                  ) : stockAlertsCount > 0 ? (
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-mono text-[10px]">
+                      {stockAlertsCount} Alertes
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
+                      Temps Réel
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">
-                {currentUser.departmentName || 'Service Opérationnel'} — Saisie & certification active
+            </button>
+
+            <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-xs shrink-0 flex items-center gap-3">
+              <div className={`p-2 rounded-xl ${isAgent ? 'bg-emerald-500/15 text-emerald-400' : 'bg-sky-500/15 text-sky-400'}`}>
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                  {isAgent ? 'Exécutant Habilité du Service' : 'Superviseur Hiérarchique'}
+                </div>
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <span>{currentUser.name}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                    isAgent ? 'bg-emerald-500/20 text-emerald-300' : 'bg-sky-500/20 text-sky-300'
+                  }`}>
+                    {isAgent ? 'AGENT EXÉCUTANT' : currentUser.role.toUpperCase()}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-0.5">
+                  {currentUser.departmentName || 'Service Opérationnel'} — Saisie & certification active
+                </div>
               </div>
             </div>
           </div>
@@ -286,6 +331,31 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       {/* ONGLETS PRINCIPAUX DU MODULE LOGISTIQUE */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto select-none">
         <button
+          onClick={() => setActiveTab('dashboard')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'dashboard'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-extrabold'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span>1. Graphiques Stocks & Alertes Recharts</span>
+          {immediateRupturesCount > 0 ? (
+            <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white font-mono text-[10px] font-black animate-pulse">
+              {immediateRupturesCount} Rupture{immediateRupturesCount > 1 ? 's' : ''}
+            </span>
+          ) : stockAlertsCount > 0 ? (
+            <span className="px-1.5 py-0.5 rounded-full bg-amber-500/30 text-amber-200 border border-amber-500/50 font-mono text-[10px] font-bold">
+              {stockAlertsCount} Alertes
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
+              Optimal
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab('hubs')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'hubs'
@@ -294,7 +364,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Warehouse className="w-4 h-4" />
-          1. Stocks & Hubs Provinciaux ({hubs.length} Hubs)
+          2. Stocks & Hubs Provinciaux ({hubs.length} Hubs)
         </button>
 
         <button
@@ -306,7 +376,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Package className="w-4 h-4" />
-          2. Bons de Commande ({orders.length})
+          3. Bons de Commande ({orders.length})
         </button>
 
         <button
@@ -318,7 +388,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <CheckCircle2 className="w-4 h-4" />
-          3. Bons de Livraison & S/N ({deliveryNotes.length})
+          4. Bons de Livraison & S/N ({deliveryNotes.length})
         </button>
 
         <button
@@ -330,7 +400,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Truck className="w-4 h-4" />
-          4. Suivi Expéditions Fret ({shipments.length})
+          5. Suivi Expéditions Fret ({shipments.length})
         </button>
 
         <button
@@ -342,11 +412,23 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <DollarSign className="w-4 h-4" />
-          5. Factures Proforma & Net à Payer ({invoices.length + proformas.length})
+          6. Factures Proforma & Net à Payer ({invoices.length + proformas.length})
         </button>
       </div>
 
       {/* CONTENU SELON L'ONGLET ACTIF */}
+      {activeTab === 'dashboard' && (
+        <HubsStockChartDashboard
+          currentUser={currentUser}
+          hubs={hubs}
+          stocks={stocks}
+          catalog={catalog}
+          movements={movements}
+          onSelectHub={() => setActiveTab('hubs')}
+          onRequestTransfer={() => setActiveTab('hubs')}
+          onRequestOrder={() => setActiveTab('orders')}
+        />
+      )}
       {activeTab === 'hubs' && (
         <HubsStockManagementTab
           currentUser={currentUser}
