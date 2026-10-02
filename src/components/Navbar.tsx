@@ -35,10 +35,10 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   organizations = [],
   currentOrg,
-  onSelectOrg = () => {},
+  onSelectOrg = (_org: Organization) => {},
   users = [],
   currentUser,
-  onSelectUser = () => {},
+  onSelectUser = (_user: User) => {},
   securityAlerts = [],
   onOpenSecurity = () => {},
   onOpenNewAccount = () => {},

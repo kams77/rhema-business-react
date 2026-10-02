@@ -45,7 +45,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [password, setPassword] = useState('rhema2026');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'security'>('all');
+  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'logistics' | 'security'>('all');
 
   const handleManualLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +92,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     if (selectedDemoCategory === 'finance') return u.directionId === 'dir-finance' || u.departementId === 'dept-daf' || u.roleTitle.toLowerCase().includes('compt') || u.roleTitle.toLowerCase().includes('finan');
     if (selectedDemoCategory === 'rh') return u.directionId === 'dir-rh' || u.roleTitle.toLowerCase().includes('rh') || u.roleTitle.toLowerCase().includes('paie');
     if (selectedDemoCategory === 'operations') return u.departementId === 'dept-ops' || u.roleTitle.toLowerCase().includes('vsat') || u.roleTitle.toLowerCase().includes('réseau') || u.roleTitle.toLowerCase().includes('opérat');
+    if (selectedDemoCategory === 'logistics') return u.directionId === 'dir-log' || u.roleTitle.toLowerCase().includes('logistique') || u.roleTitle.toLowerCase().includes('hub') || u.departmentName?.toLowerCase().includes('logistique');
     if (selectedDemoCategory === 'security') return u.status === 'verrouille' || u.failedAccessAttempts > 0;
     return true;
   });
@@ -303,6 +304,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 { id: 'finance', label: 'DAF & Finance' },
                 { id: 'rh', label: 'RH & Paie' },
                 { id: 'operations', label: 'Télécoms VSAT' },
+                { id: 'logistics', label: 'Logistique & Hubs' },
                 { id: 'security', label: 'Compte Verrouillé' },
               ].map(f => (
                 <button

@@ -17,6 +17,7 @@ import {
   Clock,
   Truck
 } from 'lucide-react';
+import { canAccessLogistics } from '../utils/rbac';
 
 export type ActiveTab = 
   | 'workspace'
@@ -81,10 +82,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'logistics',
-      label: 'Logistique & Équipements',
+      label: 'Logistique & Hubs (Stocks)',
       icon: <Truck className="w-4 h-4 text-amber-400" />,
-      badge: 'VSAT & Solaire',
+      badge: 'VSAT & Hubs',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-semibold',
+      isVisible: canAccessLogistics(activeUser),
     },
     {
       id: 'payroll',

@@ -392,6 +392,44 @@ export const initialUsers: User[] = [
     lastLogin: 'Aujourd\'hui à 06:40'
   },
   {
+    id: 'user-dir-log',
+    name: 'M. Thomas Owona',
+    email: 't.owona@rhemabusiness.com',
+    password: 'rhema2026',
+    matricule: 'MAT-014-LOG',
+    employeeCode: 'RH-2026-014',
+    role: 'directeur',
+    roleTitle: 'Directeur Logistique & Gestion des Stocks',
+    departmentName: 'Direction Logistique & Gestion des Stocks',
+    organizationId: 'org-1',
+    departementId: 'dept-ops',
+    directionId: 'dir-log',
+    status: 'actif',
+    failedAccessAttempts: 0,
+    canCreateSubAgents: true,
+    phone: '+243 81 555 1200',
+    lastLogin: 'Aujourd\'hui à 08:10'
+  },
+  {
+    id: 'user-chef-log',
+    name: 'M. Dieudonné Bofata',
+    email: 'hubs.log@rhemabusiness.com',
+    password: 'rhema2026',
+    matricule: 'MAT-015-HUB',
+    employeeCode: 'RH-2026-015',
+    role: 'chef_service',
+    roleTitle: 'Chef Service Hubs Provinciaux & Approvisionnements',
+    departmentName: 'Direction Logistique & Gestion des Stocks',
+    organizationId: 'org-1',
+    departementId: 'dept-ops',
+    directionId: 'dir-log',
+    status: 'actif',
+    failedAccessAttempts: 0,
+    canCreateSubAgents: true,
+    phone: '+243 82 333 4455',
+    lastLogin: 'Aujourd\'hui à 08:25'
+  },
+  {
     id: 'user-chef-vsat',
     name: 'M. Fabrice Mukendi',
     email: 'vsat@rhemabusiness.com',
@@ -1098,6 +1136,38 @@ export const initialDocuments: DocumentItem[] = [
     allowedRoles: ['dg', 'directeur'],
     permissions: {
       viewRoles: ['dg', 'directeur'],
+      editRoles: ['dg'],
+      validateRoles: ['dg'],
+      signRoles: ['dg']
+    }
+  },
+  {
+    id: 'doc-note-service-1',
+    title: 'Note de Service N°044/DG/2026 — Protocole de Sécurisation des Stations Terriennes VSAT',
+    referenceNumber: 'DOC-2026-901',
+    category: 'chaine_logistique_commerciale',
+    subtype: 'contrat_travail',
+    organizationId: 'org-1',
+    authorId: 'user-dg',
+    authorName: 'Dr. Amadou Diallo',
+    authorRole: 'dg',
+    authorEntity: 'Direction Générale',
+    createdAt: '2026-09-28',
+    status: 'signe',
+    size: '1.1 Mo',
+    fileType: 'PDF',
+    description: "La présente note de service fixe les obligations impératives de contrôle d'accès physique et logique aux shelters télécoms et antennes VSAT déployées sur l'ensemble des sites miniers et bancaires de la RDC. Tout accès non consigné au registre numérique engage la responsabilité disciplinaire immédiate des intervenants.",
+    electronicSignature: {
+      signedBy: 'Dr. Amadou Diallo (Directeur Général)',
+      signedAt: '2026-09-28 14:15:00',
+      role: 'Directeur Général',
+      certificateHash: 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b',
+      signatureType: 'certificate',
+      legalConsent: true
+    },
+    allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+    permissions: {
+      viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
       editRoles: ['dg'],
       validateRoles: ['dg'],
       signRoles: ['dg']

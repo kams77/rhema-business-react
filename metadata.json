@@ -1,6 +1,6 @@
 {
-  "name": "Rhema Business - ERP, RH & Paie RDC",
-  "description": "Système de gestion d'entreprise, hiérarchie organisationnelle, workflows, sécurité RBAC et paie conforme à la législation RDC.",
+  "name": "OrgWorkflow - Portail Entreprise & Gestion Hiérarchique",
+  "description": "Plateforme d'organisation hiérarchique, gestion des workflows documentaires, système de paie RH paramétrable, en-tête et pied de page RHEMA pour tous les documents d'entreprise, habilitations RBAC et signature électronique.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,5 +1,5 @@
 // src/components/RhemaOfficialDocument.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { DocumentItem, Organization, User, HierarchicalEntity } from '../types';
 import { 
   Printer, 
@@ -11,10 +11,12 @@ import {
   ShieldCheck, 
   FileText,
   Download,
-  AlertTriangle 
+  AlertTriangle,
+  Award 
 } from 'lucide-react';
 import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
 import { canUserApproveDocument } from '../utils/rbac';
+import { ElectronicSignatureModal, type SignatureData } from './ElectronicSignatureModal';
 
 interface RhemaOfficialDocumentProps {
   document: DocumentItem;
@@ -22,7 +24,7 @@ interface RhemaOfficialDocumentProps {
   currentUser?: User;
   entities?: HierarchicalEntity[];
   onClose: () => void;
-  onSignDocument?: (docId: string) => void;
+  onSignDocument?: (docId: string, signatureData?: SignatureData) => void;
 }
 
 export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
@@ -33,19 +35,47 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
   onClose,
   onSignDocument,
 }) => {
+  const [docState, setDocState] = useState<DocumentItem>(document);
   const [isSigned, setIsSigned] = useState(document.status === 'signe');
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
+
+  useEffect(() => {
+    setDocState(document);
+    setIsSigned(document.status === 'signe');
+  }, [document]);
 
   // RÈGLE STRICTE 6 & 1-5 : Vérification d'habilitation de visa/signature
   const approvalCheck = currentUser 
-    ? canUserApproveDocument(currentUser, document, entities) 
+    ? canUserApproveDocument(currentUser, docState, entities) 
     : { allowed: true };
 
-  const handleSign = () => {
+  const handleOpenSignature = () => {
     if (!approvalCheck.allowed) return;
+    setShowSignatureModal(true);
+  };
+
+  const handleSignatureComplete = (docId: string, sigData: SignatureData) => {
+    const updatedDoc: DocumentItem = {
+      ...docState,
+      status: 'signe',
+      electronicSignature: {
+        signedBy: sigData.signedBy,
+        signedAt: sigData.signedAt,
+        role: sigData.role,
+        certificateHash: sigData.certificateHash,
+        signatureImage: sigData.signatureImage,
+        signatureType: sigData.signatureType,
+        legalConsent: sigData.legalConsent,
+        verificationAudit: sigData.verificationAudit,
+      }
+    };
+    setDocState(updatedDoc);
     setIsSigned(true);
+    setShowSignatureModal(false);
+
     if (onSignDocument) {
-      onSignDocument(document.id);
+      onSignDocument(docId, sigData);
     }
   };
 
@@ -204,25 +234,39 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                   </div>
                 </div>
 
-                {/* Objet / Contexte */}
-                <div className="border border-slate-200 rounded-xl p-3.5 sm:p-4 text-xs">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
-                    OBJET / CONTEXTE OPÉRATIONNEL :
-                  </span>
-                  <p className="text-slate-800 leading-relaxed font-medium">
-                    {document.description}
-                  </p>
+                {/* CORPS DESCRIPTIF OFFICIEL & DISPOSITIF LÉGAL (OBLIGATOIRE) */}
+                <div className="border border-slate-300 rounded-xl p-4 sm:p-5 text-xs bg-slate-50/50 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-[10px] font-black text-blue-950 uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-700" />
+                      <span>CORPS DESCRIPTIF OFFICIEL & DISPOSITIF :</span>
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300">
+                      Texte Exécutoire
+                    </span>
+                  </div>
+                  <div className="text-slate-800 leading-relaxed font-normal whitespace-pre-line text-xs sm:text-sm pt-1">
+                    {docState.description}
+                  </div>
                 </div>
 
-                {/* Montant engagé */}
-                {document.amount && (
+                {/* Montant engagé (Optionnel / Sans obligation de montant) */}
+                {docState.amount !== undefined && docState.amount !== null && docState.amount > 0 ? (
                   <div className="border border-slate-200 rounded-xl p-3.5 sm:p-4 flex justify-between items-center bg-slate-50/50">
-                    <span className="text-xs font-bold text-slate-700 uppercase">
-                      MONTANT ENGAGÉ / TOTAL FACTURÉ :
-                    </span>
+                    <div>
+                      <span className="text-xs font-bold text-slate-700 uppercase block">
+                        MONTANT ENGAGÉ / VALORISATION :
+                      </span>
+                      <span className="text-[10px] text-slate-500">Valorisation financière associée</span>
+                    </div>
                     <span className="text-lg font-mono font-black text-blue-950">
-                      {document.amount.toLocaleString()} {document.currency || 'FCFA'}
+                      {docState.amount.toLocaleString()} {docState.currency || 'USD'}
                     </span>
+                  </div>
+                ) : (
+                  <div className="border border-dashed border-slate-200 rounded-xl p-2.5 px-4 flex justify-between items-center bg-slate-50/40 text-[11px] text-slate-500">
+                    <span className="font-medium text-slate-600">Incidence Financière :</span>
+                    <span className="italic text-slate-500">Document d'ordre administratif / RH — Émis sans obligation de prix ou de montant</span>
                   </div>
                 )}
               </div>
@@ -243,21 +287,36 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
               {/* Certification Direction Générale */}
               <div className={`border rounded-xl p-3.5 transition ${
                 isSigned 
-                  ? 'border-amber-400 bg-amber-50 text-amber-950' 
+                  ? 'border-amber-400 bg-amber-50 text-amber-950 shadow-sm' 
                   : 'border-slate-200 bg-slate-50'
               }`}>
                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Certification Direction Générale</span>
                 {isSigned ? (
-                  <div className="mt-1">
+                  <div className="mt-1 space-y-2">
                     <p className="font-bold text-amber-900 flex items-center gap-1.5">
                       <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="truncate">Signé & Certifié par {document.electronicSignature?.signedBy || organization.managerName}</span>
+                      <span className="truncate">Signé & Certifié par {docState.electronicSignature?.signedBy || organization.managerName}</span>
                     </p>
+                    
+                    {/* Empreinte visuelle de la signature */}
+                    {docState.electronicSignature?.signatureImage && (
+                      <div className="p-2 bg-white rounded-lg border border-amber-200/80 flex items-center justify-between shadow-inner">
+                        <img 
+                          src={docState.electronicSignature.signatureImage} 
+                          alt="Signature Électronique" 
+                          className="h-10 max-w-[180px] object-contain"
+                        />
+                        <span className="text-[9px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                          SCELLÉ RDC
+                        </span>
+                      </div>
+                    )}
+
                     <p className="text-[10px] font-mono text-slate-600 mt-1 truncate">
-                      {document.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}
+                      {docState.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}
                     </p>
-                    <div className="mt-2 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300 inline-block">
-                      ✓ Sceau d'entreprise inviolable
+                    <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300 inline-block">
+                      ✓ Sceau d'entreprise inviolable & vérifié
                     </div>
                   </div>
                 ) : (
@@ -281,8 +340,8 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
             {!isSigned && (
               approvalCheck.allowed ? (
                 <button
-                  onClick={handleSign}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg transition active:scale-95"
+                  onClick={handleOpenSignature}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg transition active:scale-95"
                 >
                   <Lock className="w-3.5 h-3.5" />
                   <span>Viser & Sceller pour {organization.name}</span>
@@ -305,6 +364,17 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
         </div>
 
       </div>
+
+      {/* COMPOSANT MODAL DE SIGNATURE ÉLECTRONIQUE AVEC ANIMATION DE VÉRIFICATION */}
+      {showSignatureModal && currentUser && (
+        <ElectronicSignatureModal
+          document={docState}
+          organization={organization}
+          currentUser={currentUser}
+          onClose={() => setShowSignatureModal(false)}
+          onSignComplete={handleSignatureComplete}
+        />
+      )}
     </div>
   );
 };

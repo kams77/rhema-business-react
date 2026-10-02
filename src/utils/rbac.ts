@@ -339,3 +339,68 @@ export function getRoleTitleFr(role: UserRole): string {
       return 'Collaborateur';
   }
 }
+
+/**
+ * RÈGLE MÉTIER STRICTE : Le module logistique n'est visible que par le DG 
+ * et tous les responsables du département de la Logistique.
+ */
+export function canAccessLogistics(user: User): boolean {
+  if (!user) return false;
+  // Le DG et DGA ont plein pouvoir sur toute l'entreprise
+  if (user.role === 'dg') return true;
+
+  // Uniquement les postes d'encadrement / responsables (Directeur, Chef Dépt, Chef Division, Chef Service)
+  const isResponsibleRole = ['chef_departement', 'directeur', 'chef_division', 'chef_service'].includes(user.role);
+  if (!isResponsibleRole) return false;
+
+  const dept = (user.departmentName || '').toLowerCase();
+  const roleTitle = (user.roleTitle || '').toLowerCase();
+
+  const isLogistics = 
+    dept.includes('logistique') || 
+    dept.includes('stock') || 
+    dept.includes('approvisionnement') ||
+    dept.includes('transit') ||
+    roleTitle.includes('logistique') || 
+    roleTitle.includes('stock') || 
+    roleTitle.includes('approvisionnement') ||
+    roleTitle.includes('transit') ||
+    (user as any).departementId === 'dept-ops' ||
+    (user as any).directionId === 'dir-log';
+
+  return isLogistics;
+}
+
+/**
+ * RÈGLE D'AFFICHAGE DU TABLEAU DE BORD :
+ * Seuls les responsables de la logistique, technique et DG peuvent voir les activités des Hubs.
+ */
+export function canViewHubActivities(user: User): boolean {
+  if (!user) return false;
+  if (user.role === 'dg') return true;
+  if (canAccessLogistics(user)) return true;
+
+  const isResponsibleRole = ['chef_departement', 'directeur', 'chef_division', 'chef_service'].includes(user.role);
+  if (!isResponsibleRole) return false;
+
+  const dept = (user.departmentName || '').toLowerCase();
+  const roleTitle = (user.roleTitle || '').toLowerCase();
+
+  return (
+    dept.includes('technique') ||
+    dept.includes('opération') ||
+    dept.includes('operation') ||
+    dept.includes('vsat') ||
+    roleTitle.includes('technique') ||
+    roleTitle.includes('opération') ||
+    roleTitle.includes('vsat') ||
+    (user as any).departementId === 'dept-ops'
+  );
+}
+
+/**
+ * Seuls le DG et les responsables du département logistique peuvent ajouter de nouveaux Hubs.
+ */
+export function canManageHubs(user: User): boolean {
+  return canAccessLogistics(user);
+}

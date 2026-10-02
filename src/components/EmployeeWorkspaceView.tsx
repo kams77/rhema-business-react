@@ -30,6 +30,7 @@ import {
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { initialContracts } from '../data/initialData';
+import { canAccessLogistics } from '../utils/rbac';
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -51,7 +52,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   tasks = [],
   documents = [],
   contracts = initialContracts,
-  onSelectUser = () => {},
+  onSelectUser = (_user: User) => {},
   onOpenLogistics,
 }) => {
   // Chronomètre de travail en direct (démarre à 01:20:10)
@@ -370,13 +371,13 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 <span>Changer de Compte</span>
               </button>
 
-              {onOpenLogistics && (
+              {onOpenLogistics && canAccessLogistics(currentUser) && (
                 <button
                   onClick={onOpenLogistics}
                   className="px-3 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300 text-amber-800 text-xs font-bold flex items-center gap-1.5 transition"
                 >
                   <Truck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Module Logistique (VSAT & Solaire)</span>
+                  <span>Module Logistique & Hubs (Stocks)</span>
                 </button>
               )}
             </div>
@@ -416,6 +417,8 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           users={users}
           contracts={contracts}
           organization={currentOrg}
+          currentUser={currentUser}
+          onOpenLogistics={onOpenLogistics}
         />
       )}
 
@@ -953,32 +956,25 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 3 : VISUALISATION DOCUMENT */}
+      {/* MODAL 3 : VISUALISATION DOCUMENT OFFICIEL RHEMA */}
       {viewingDoc && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-emerald-600" /> {viewingDoc.title}
-              </h3>
-              <button onClick={() => setViewingDoc(null)} className="text-slate-400 hover:text-slate-700">✕</button>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
-              <p>Référence : <strong>{viewingDoc.referenceNumber || (viewingDoc as any).ref}</strong></p>
-              <p>Montant / Valeur : <strong>{viewingDoc.amount}</strong></p>
-              <p>Statut : <span className="text-emerald-700 font-bold">Document Certifié RHEMA BUSINESS</span></p>
-              <p className="text-slate-500 text-[11px]">Horodaté et scellé sous le RCCM/20-A-01120 Kinshasa RD CONGO.</p>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-sky-600 text-white rounded-xl text-xs font-bold"
-              >
-                Imprimer / Exporter
-              </button>
-            </div>
-          </div>
-        </div>
+        <RhemaOfficialDocument
+          document={viewingDoc}
+          organization={currentOrg || {
+            id: 'org-1',
+            name: 'RHEMA BUSINESS RDC',
+            type: 'entreprise',
+            managerName: 'Junior Monya',
+            hasDepartements: true,
+            hasDirections: true,
+            hasDivisions: true,
+            hasServices: true,
+            createdAt: '2020-01-01'
+          }}
+          currentUser={currentUser}
+          entities={entities}
+          onClose={() => setViewingDoc(null)}
+        />
       )}
     </div>
   );

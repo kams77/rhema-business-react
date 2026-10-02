@@ -202,6 +202,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   // ÉTATS DES MODALES D'ACTIONS RH & WORKFLOW MENSUEL STRICT
   // =========================================================================
   const [modalAction, setModalAction] = useState<null | 'new_contract' | 'new_leave' | 'new_advance' | 'new_overtime' | 'new_discipline' | 'doc_print' | 'configure_payment_run' | 'confirm_bank_transfer'>(null);
+  const [docPreviewMode, setDocPreviewMode] = useState<'officiel' | 'specimen'>('officiel');
   const [selectedRunForWorkflow, setSelectedRunForWorkflow] = useState<PayrollRunPeriod | null>(null);
 
   // Formulaire Étape 1 : Paramétrage du Paiement Mensuel
@@ -1238,13 +1239,30 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                                           userName: u?.name || c.employeeCode,
                                           matricule: c.matricule
                                         });
-                                        exportPayslipToPDF(exportData);
-                                        if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Téléchargement PDF bulletin ${c.matricule} (${run.month})`, 'document');
+                                        exportPayslipToPDF(exportData, false);
+                                        if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Téléchargement PDF bulletin officiel ${c.matricule} (${run.month})`, 'document');
                                       }}
-                                      title="Télécharger le bulletin individuel en PDF certifié conforme RDC"
+                                      title="Télécharger le bulletin officiel en PDF certifié conforme RDC"
                                       className="p-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] transition"
                                     >
                                       <FileText className="w-3.5 h-3.5 text-indigo-400 hover:text-white" />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const exportData = getPayslipExportDataForUser(c.userId, {
+                                          ref: `BP-${run.month}-${c.matricule}`,
+                                          baseSalary: c.baseSalary,
+                                          currency: c.salaryCurrency,
+                                          userName: u?.name || c.employeeCode,
+                                          matricule: c.matricule
+                                        });
+                                        exportPayslipToPDF(exportData, true);
+                                        if (onLogAction) onLogAction('Export Spécimen PDF', `Téléchargement Spécimen bulletin ${c.matricule} (${run.month})`, 'document');
+                                      }}
+                                      title="Télécharger le Spécimen d'essai RH (Épreuve avec filigrane)"
+                                      className="p-1 bg-amber-950/40 hover:bg-amber-600 text-amber-300 hover:text-white rounded text-[10px] transition border border-amber-600/30"
+                                    >
+                                      <span className="font-bold font-mono text-[9px] px-1">SPÉC</span>
                                     </button>
                                     <button
                                       onClick={() => {
@@ -1838,14 +1856,32 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                       seniorityYears: simSeniorityYears,
                       dependents: simDependents,
                     });
-                    exportPayslipToPDF(exportData);
-                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF légal bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                    exportPayslipToPDF(exportData, true);
+                    if (onLogAction) onLogAction('Export Spécimen PDF', `Génération Spécimen PDF pour ${exportData.employeeName} (${exportData.matricule})`, 'document');
                   }}
-                  title="Générer directement le bulletin de paie certifié au format PDF conforme RDC"
+                  title="Générer un spécimen de bulletin d'essai avec filigrane non négociable"
+                  className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Télécharger Spécimen</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
+                      baseSalary: simBaseSalary,
+                      currency: config.currency,
+                      seniorityYears: simSeniorityYears,
+                      dependents: simDependents,
+                    });
+                    exportPayslipToPDF(exportData, false);
+                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF légal officiel de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Générer directement le bulletin officiel certifié au format PDF conforme RDC"
                   className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-indigo-600/30 active:scale-95"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Télécharger PDF</span>
+                  <span>Télécharger PDF Officiel</span>
                 </button>
 
                 <button
@@ -2652,14 +2688,55 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       )}
       {modalAction === 'doc_print' && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
-          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl space-y-5 my-8 print:p-0 print:shadow-none print:m-0 print:max-w-none">
+          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl space-y-5 my-8 print:p-0 print:shadow-none print:m-0 print:max-w-none relative">
             
-            {/* Barre d'action supérieure */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 print:hidden">
-              <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-                <Printer className="w-4 h-4 text-indigo-600" />
-                <span>{activeDocData.title} • République Démocratique du Congo</span>
+            {/* Filigrane Spécimen si activé */}
+            {docPreviewMode === 'specimen' && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-10 overflow-hidden">
+                <div className="text-red-500/15 border-4 border-red-500/25 font-black text-5xl sm:text-7xl uppercase tracking-widest rotate-[-30deg] px-8 py-4 rounded-3xl text-center">
+                  SPÉCIMEN<br />
+                  <span className="text-lg sm:text-2xl tracking-wider text-red-500/25 font-bold">ÉPREUVE D'ESSAI • NON NÉGOCIABLE</span>
+                </div>
               </div>
+            )}
+
+            {/* Barre d'action supérieure */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 print:hidden relative z-20">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+                  <Printer className="w-4 h-4 text-indigo-600" />
+                  <span>{activeDocData.title}</span>
+                </div>
+
+                {/* Sélecteur de mode : Bulletin Officiel vs Spécimen */}
+                <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-300 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDocPreviewMode('officiel')}
+                    className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 ${
+                      docPreviewMode === 'officiel'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3 h-3 text-emerald-300" />
+                    <span>Bulletin Officiel</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocPreviewMode('specimen')}
+                    className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 ${
+                      docPreviewMode === 'specimen'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3 h-3 text-amber-950" />
+                    <span>Spécimen</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   onClick={() => {
@@ -2677,8 +2754,21 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 <button
                   onClick={() => {
                     const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
-                    exportPayslipToPDF(exportData);
-                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF certifié du bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                    exportPayslipToPDF(exportData, true);
+                    if (onLogAction) onLogAction('Export Spécimen PDF', `Génération Spécimen PDF pour ${exportData.employeeName} (${exportData.matricule})`, 'document');
+                  }}
+                  title="Télécharger le Spécimen avec filigrane d'essai"
+                  className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <FileText className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Télécharger Spécimen</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
+                    exportPayslipToPDF(exportData, false);
+                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF officiel de ${exportData.employeeName} (${exportData.matricule})`, 'document');
                   }}
                   title="Générer et télécharger le bulletin officiel en format PDF A4 certifié RDC"
                   className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition active:scale-95"
@@ -2702,11 +2792,13 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             </div>
 
             {/* En-tête RHEMA BUSINESS Officiel */}
-            <header className="border-b-2 border-slate-300 pb-4">
+            <header className="border-b-2 border-slate-300 pb-4 relative z-20">
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 bg-indigo-950 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-md shrink-0 border-2 border-indigo-700">
-                    RB
+                  <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-md shrink-0 border-2 ${
+                    docPreviewMode === 'specimen' ? 'bg-amber-600 border-amber-500' : 'bg-indigo-950 border-indigo-700'
+                  }`}>
+                    {docPreviewMode === 'specimen' ? 'SP' : 'RB'}
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-slate-900 tracking-tight">{currentOrg.name}</h2>
@@ -2718,11 +2810,15 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </div>
 
                 <div className="text-right sm:self-center">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 uppercase tracking-wider border border-indigo-200 block sm:inline-block">
-                    {activeDocData.title.toUpperCase()}
+                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded uppercase tracking-wider border block sm:inline-block ${
+                    docPreviewMode === 'specimen'
+                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                      : 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                  }`}>
+                    {docPreviewMode === 'specimen' ? 'SPÉCIMEN RH - ESSAI' : activeDocData.title.toUpperCase()}
                   </span>
                   <div className="text-xs font-mono font-bold text-slate-700 mt-1">
-                    Réf : {activeDocData.ref}
+                    Réf : {docPreviewMode === 'specimen' ? `SPEC-${activeDocData.ref}` : activeDocData.ref}
                   </div>
                   <div className="text-[10px] text-slate-500">
                     Kinshasa, le {new Date().toLocaleDateString('fr-FR')}
@@ -2896,8 +2992,22 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   </div>
                   <div className="text-right text-xs text-slate-300 space-y-1">
                     <div>Coût global employeur : <strong>{formatMoney(simulation.grossSalary * 1.162)}</strong></div>
-                    <div className="text-emerald-400 font-bold">Scellé SHA-256 : d892bc018ae82103fca91</div>
-                    <div className="text-[10px] text-slate-400">Certifié conforme par la Direction Générale</div>
+                    {docPreviewMode === 'specimen' ? (
+                      <div className="text-amber-400 font-bold flex items-center justify-end gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <span>SPÉCIMEN RH (SANS EFFET BANCAIRE)</span>
+                      </div>
+                    ) : (
+                      <div className="text-emerald-400 font-bold flex items-center justify-end gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Scellé SHA-256 : d892bc018ae82103fca91</span>
+                      </div>
+                    )}
+                    <div className="text-[10px] text-slate-400">
+                      {docPreviewMode === 'specimen'
+                        ? 'Épreuve d\'essai non négociable - Simulation interne RH'
+                        : 'Bulletin officiel scellé et certifié conforme par la Direction Générale'}
+                    </div>
                   </div>
                 </div>
               </>

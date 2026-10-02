@@ -11,7 +11,10 @@ import type {
   NetToPayInvoiceItem,
   LogisticsItem,
   ShipmentWorkflowStep,
-  DocumentItem
+  DocumentItem,
+  LogisticsHub,
+  HubStockItem,
+  StockMovementItem
 } from '../types';
 import { 
   Truck, 
@@ -27,13 +30,16 @@ import {
   Info,
   Clock,
   Sparkles,
-  Barcode
+  Barcode,
+  Warehouse,
+  Boxes
 } from 'lucide-react';
 import { LogisticsSummaryCards } from './logistics/LogisticsSummaryCards';
 import { PurchaseOrdersTab } from './logistics/PurchaseOrdersTab';
 import { DeliveryNotesTab } from './logistics/DeliveryNotesTab';
 import { ShipmentTrackingTab } from './logistics/ShipmentTrackingTab';
 import { InvoicesTab } from './logistics/InvoicesTab';
+import { HubsStockManagementTab } from './logistics/HubsStockManagementTab';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 
 interface LogisticsModuleViewProps {
@@ -46,6 +52,13 @@ interface LogisticsModuleViewProps {
   shipments: ShipmentTracking[];
   proformas: ProformaInvoiceItem[];
   invoices: NetToPayInvoiceItem[];
+  hubs: LogisticsHub[];
+  stocks: HubStockItem[];
+  movements: StockMovementItem[];
+  onAddHub: (hub: LogisticsHub) => void;
+  onAddMovement: (mvt: StockMovementItem) => void;
+  onApproveMovement: (mvtId: string) => void;
+  onReceiveTransfer: (mvtId: string) => void;
   onCreateOrder: (order: PurchaseOrderItem) => void;
   onApproveOrder: (orderId: string) => void;
   onCreateDeliveryNote: (bl: DeliveryNoteItem) => void;
@@ -69,6 +82,13 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   shipments,
   proformas,
   invoices,
+  hubs,
+  stocks,
+  movements,
+  onAddHub,
+  onAddMovement,
+  onApproveMovement,
+  onReceiveTransfer,
   onCreateOrder,
   onApproveOrder,
   onCreateDeliveryNote,
@@ -81,7 +101,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   onRegisterPayment,
   onLogAction,
 }) => {
-  const [activeTab, setActiveTab] = useState<'orders' | 'delivery' | 'shipments' | 'invoices'>('orders');
+  const [activeTab, setActiveTab] = useState<'hubs' | 'orders' | 'delivery' | 'shipments' | 'invoices'>('hubs');
   
   // Document pour visualisation officielle imprimable
   const [printableDoc, setPrintableDoc] = useState<DocumentItem | null>(null);
@@ -91,8 +111,8 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
 
   // Convertit un objet logistique en DocumentItem compatible avec RhemaOfficialDocument
   const handlePrintItem = (
-    item: PurchaseOrderItem | DeliveryNoteItem | ProformaInvoiceItem | NetToPayInvoiceItem,
-    type: 'bc' | 'bl' | 'proforma' | 'invoice'
+    item: PurchaseOrderItem | DeliveryNoteItem | ProformaInvoiceItem | NetToPayInvoiceItem | StockMovementItem,
+    type: 'bc' | 'bl' | 'proforma' | 'invoice' | 'bes' | 'bss' | 'otih'
   ) => {
     let title = '';
     let refNum = '';
@@ -128,6 +148,27 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       subtype = 'facture_client';
       amount = inv.remainingBalanceUSD;
       desc = `Total Brut HT: $${inv.subtotalHT_USD.toLocaleString()} + TVA 16%: $${inv.vatAmount_USD.toLocaleString()} - Acompte: $${inv.advancePaymentDeduction_USD.toLocaleString()}. Net à Payer: $${inv.netToPayUSD.toLocaleString()} USD (~${inv.netToPayCDF.toLocaleString()} CDF).`;
+    } else if (type === 'bes') {
+      const mvt = item as StockMovementItem;
+      title = `Bon d'Entrée en Stock : ${mvt.movementNumber}`;
+      refNum = mvt.movementNumber;
+      subtype = 'bon_livraison';
+      amount = mvt.totalValueUSD;
+      desc = `Entrée et prise en charge physique des équipements au ${mvt.destinationHubName || 'Hub Provincial'}. Réf Source: ${mvt.referenceDocumentNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
+    } else if (type === 'bss') {
+      const mvt = item as StockMovementItem;
+      title = `Bon de Sortie & Mise en Service : ${mvt.movementNumber}`;
+      refNum = mvt.movementNumber;
+      subtype = 'bon_livraison';
+      amount = mvt.totalValueUSD;
+      desc = `Sortie du matériel depuis le ${mvt.sourceHubName || 'Hub'} pour déploiement direct sur site : ${mvt.destinationClientSite}. Matériels déstockés : ${mvt.items.map(i => `${i.quantity}x ${i.name} [S/N: ${i.serialNumbers.join(', ') || 'N/A'}]`).join(' ; ')}. ${mvt.notes}`;
+    } else if (type === 'otih') {
+      const mvt = item as StockMovementItem;
+      title = `Ordre de Transfert Inter-Hubs : ${mvt.movementNumber}`;
+      refNum = mvt.movementNumber;
+      subtype = 'bon_livraison';
+      amount = mvt.totalValueUSD;
+      desc = `Régulation logistique inter-provinces : Expédié de ${mvt.sourceHubName} à destination de ${mvt.destinationHubName}. Convoi / Fret sous scellé. Matériels transférés : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
     }
 
     const docItem: DocumentItem = {
@@ -245,6 +286,18 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       {/* ONGLETS PRINCIPAUX DU MODULE LOGISTIQUE */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto select-none">
         <button
+          onClick={() => setActiveTab('hubs')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'hubs'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-extrabold'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Warehouse className="w-4 h-4" />
+          1. Stocks & Hubs Provinciaux ({hubs.length} Hubs)
+        </button>
+
+        <button
           onClick={() => setActiveTab('orders')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'orders'
@@ -253,7 +306,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Package className="w-4 h-4" />
-          1. Bons de Commande ({orders.length})
+          2. Bons de Commande ({orders.length})
         </button>
 
         <button
@@ -265,7 +318,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <CheckCircle2 className="w-4 h-4" />
-          2. Bons de Livraison & S/N ({deliveryNotes.length})
+          3. Bons de Livraison & S/N ({deliveryNotes.length})
         </button>
 
         <button
@@ -277,7 +330,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Truck className="w-4 h-4" />
-          3. Suivi Expéditions Fret ({shipments.length})
+          4. Suivi Expéditions Fret ({shipments.length})
         </button>
 
         <button
@@ -289,11 +342,29 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <DollarSign className="w-4 h-4" />
-          4. Factures Proforma & Net à Payer ({invoices.length + proformas.length})
+          5. Factures Proforma & Net à Payer ({invoices.length + proformas.length})
         </button>
       </div>
 
       {/* CONTENU SELON L'ONGLET ACTIF */}
+      {activeTab === 'hubs' && (
+        <HubsStockManagementTab
+          currentUser={currentUser}
+          organization={organization}
+          entities={entities}
+          catalog={catalog}
+          hubs={hubs}
+          stocks={stocks}
+          movements={movements}
+          onAddHub={onAddHub}
+          onAddMovement={onAddMovement}
+          onApproveMovement={onApproveMovement}
+          onReceiveTransfer={onReceiveTransfer}
+          onPrintDocument={(mvt, type) => handlePrintItem(mvt, type)}
+          onLogAction={onLogAction}
+        />
+      )}
+
       {activeTab === 'orders' && (
         <PurchaseOrdersTab
           orders={orders}

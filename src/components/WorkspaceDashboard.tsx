@@ -33,15 +33,28 @@ import {
   Info,
   Activity,
   Target,
-  Zap
+  Zap,
+  Warehouse,
+  MapPin,
+  Truck,
+  Radio,
+  Sun,
+  ArrowLeftRight,
+  ShieldCheck,
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
 import { DEFAULT_EXCHANGE_RATE_USD_CDF } from '../data/standardPayroll';
+import { canViewHubActivities } from '../utils/rbac';
+import { initialHubs, initialHubStocks, initialStockMovements } from '../data/initialLogisticsData';
 
 interface WorkspaceDashboardProps {
   entities: HierarchicalEntity[];
   users: User[];
   contracts: EmployeeContract[];
   organization?: Organization;
+  currentUser?: User;
+  onOpenLogistics?: () => void;
 }
 
 const COLORS = [
@@ -58,7 +71,9 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
   entities,
   users,
   contracts,
-  organization
+  organization,
+  currentUser,
+  onOpenLogistics
 }) => {
   const [currency, setCurrency] = useState<'USD' | 'CDF'>('USD');
   const [selectedEntityFilter, setSelectedEntityFilter] = useState<string>('all');
@@ -907,6 +922,136 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
           </table>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* SECTION RÉSERVÉE : ACTIVITÉS & DISPONIBILITÉS DES 6 HUBS PROVINCIAUX      */}
+      {/* RÈGLE STRICTE : SEULS LES RESPONSABLES LOGISTIQUE, TECHNIQUE ET LE DG    */}
+      {/* PEUVENT VISUALISER LES ACTIVITÉS DE CES DERNIERS.                        */}
+      {/* ========================================================================= */}
+      {currentUser && canViewHubActivities(currentUser) && (
+        <div className="bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 rounded-3xl border border-amber-500/30 p-6 shadow-xl space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <Warehouse className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-base font-black text-white tracking-tight">
+                    Activités & Indicateurs Stratégiques des 6 Hubs Provinciaux (RDC)
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/40 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-amber-400" />
+                    ACCRÉDITATION : DG • TECHNIQUE • LOGISTIQUE
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Visualisation réservée de la chaîne d'approvisionnement des équipements VSAT & énergie solaire par province.
+                </p>
+              </div>
+            </div>
+
+            {onOpenLogistics && (
+              <button
+                onClick={onOpenLogistics}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition self-start sm:self-center"
+              >
+                <span>Gérer les Stocks Hubs</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Grille des 6 Hubs Provinciaux */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {initialHubs.map(hub => {
+              const hubStocks = initialHubStocks.filter(s => s.hubId === hub.id);
+              const totalVal = hubStocks.reduce((acc, s) => acc + s.totalValueUSD, 0);
+              const alertCount = hubStocks.filter(s => s.status === 'alerte_basse' || s.status === 'rupture').length;
+              const hasAlert = alertCount > 0;
+
+              return (
+                <div key={hub.id} className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 hover:border-slate-700 transition space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-[10px] font-mono text-indigo-400 font-bold uppercase">{hub.code}</div>
+                      <div className="font-bold text-sm text-white flex items-center gap-1.5 mt-0.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>{hub.name}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">Province : {hub.province}</div>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                      hub.status === 'actif'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    }`}>
+                      {hub.status}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-900 text-xs">
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase">Valeur Stock</div>
+                      <div className="font-mono font-bold text-amber-300">${totalVal.toLocaleString()} USD</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase">Occupation</div>
+                      <div className="font-mono font-bold text-white">{hub.currentOccupancyRate}%</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-900/80">
+                    <span className="text-slate-400 truncate max-w-[160px]">Resp: {hub.managerName}</span>
+                    {hasAlert ? (
+                      <span className="text-red-400 font-bold text-[10px] flex items-center gap-1 animate-pulse">
+                        <AlertTriangle className="w-3 h-3 text-red-400" />
+                        {alertCount} alerte(s)
+                      </span>
+                    ) : (
+                      <span className="text-emerald-400 font-bold text-[10px] flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        Appro OK
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Flux logistiques récents inter-hubs */}
+          <div className="p-4 bg-slate-950/70 rounded-2xl border border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                <ArrowLeftRight className="w-3.5 h-3.5 text-sky-400" />
+                Derniers Flux Logistiques & Transferts Provinciaux Inter-Hubs
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">Synchronisation temps réel</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              {initialStockMovements.map(mvt => (
+                <div key={mvt.id} className="p-2.5 bg-slate-900 rounded-xl border border-slate-800 text-xs space-y-1">
+                  <div className="flex justify-between items-center text-[10px]">
+                    <span className="font-mono font-bold text-indigo-300">{mvt.movementNumber}</span>
+                    <span className="text-slate-400">{mvt.date}</span>
+                  </div>
+                  <div className="font-semibold text-white truncate text-[11px]">
+                    {mvt.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
+                    <span>${mvt.totalValueUSD.toLocaleString()} USD</span>
+                    <span className="text-emerald-400 font-bold font-mono">
+                      {mvt.status.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

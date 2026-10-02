@@ -29,7 +29,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
   organization,
   entities = [],
   currentUser,
-  onAddEntity = () => {},
+  onAddEntity = (_entity: Omit<HierarchicalEntity, 'id'>) => {},
   onOpenOrgIdentity = () => {},
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);

@@ -30,13 +30,18 @@ import {
   initialContracts
 } from './data/initialData';
 import { 
-  initialLogisticsCatalog, 
-  initialPurchaseOrders, 
-  initialDeliveryNotes, 
-  initialShipments, 
-  initialProformas, 
-  initialNetToPayInvoices 
+  initialLogisticsCatalog,
+  initialPurchaseOrders,
+  initialDeliveryNotes,
+  initialShipments,
+  initialProformas,
+  initialNetToPayInvoices,
+  initialHubs,
+  initialHubStocks,
+  initialStockMovements
 } from './data/initialLogisticsData';
+import { canAccessLogistics, canViewHubActivities } from './utils/rbac';
+import type { LogisticsHub, HubStockItem, StockMovementItem } from './types';
 import { 
   createStandardPayrollSystem, 
   initialPayrollConfigs 
@@ -274,6 +279,215 @@ export default function App() {
   const [shipments, setShipments] = useState<ShipmentTracking[]>(initialShipments);
   const [proformas, setProformas] = useState<ProformaInvoiceItem[]>(initialProformas);
   const [netInvoices, setNetInvoices] = useState<NetToPayInvoiceItem[]>(initialNetToPayInvoices);
+
+  // GESTION DES 6 HUBS PROVINCIAUX & STOCKS DÉCENTRALISÉS
+  const [hubs, setHubs] = useState<LogisticsHub[]>(initialHubs);
+  const [stocks, setStocks] = useState<HubStockItem[]>(initialHubStocks);
+  const [stockMovements, setStockMovements] = useState<StockMovementItem[]>(initialStockMovements);
+
+  const handleAddHub = (newHub: LogisticsHub) => {
+    setHubs(prev => [newHub, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Création Hub Provincial',
+        category: 'admin',
+        details: `Raccordement du Hub ${newHub.name} (${newHub.province}) au réseau logistique national.`,
+        ip: '127.0.0.1',
+        hash: `sha256-hub-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleAddMovement = (mvt: StockMovementItem) => {
+    setStockMovements(prev => [mvt, ...prev]);
+
+    // Mettre à jour l'inventaire physique des Hubs selon le type de mouvement
+    mvt.items.forEach(item => {
+      if (mvt.type === 'entree_fournisseur' && mvt.destinationHubId) {
+        setStocks(prev => {
+          const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
+          if (existing) {
+            const newQty = existing.quantityAvailable + item.quantity;
+            return prev.map(s => s.id === existing.id ? {
+              ...s,
+              quantityAvailable: newQty,
+              totalValueUSD: newQty * s.unitPriceUSD,
+              serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
+              status: newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
+            } : s);
+          } else {
+            const newStock: HubStockItem = {
+              id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+              hubId: mvt.destinationHubId!,
+              catalogItemId: item.catalogItemId,
+              sku: item.sku,
+              name: item.name,
+              category: 'vsat',
+              quantityAvailable: item.quantity,
+              quantityReserved: 0,
+              quantityInTransit: 0,
+              minAlertThreshold: 2,
+              unitPriceUSD: item.unitPriceUSD,
+              totalValueUSD: item.quantity * item.unitPriceUSD,
+              locationRack: 'Travée Réception',
+              serialNumbers: item.serialNumbers,
+              lastAuditDate: new Date().toISOString().split('T')[0],
+              status: 'normal'
+            };
+            return [newStock, ...prev];
+          }
+        });
+      } else if (mvt.type === 'sortie_deploiement' && mvt.sourceHubId) {
+        setStocks(prev => prev.map(s => {
+          if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
+            const newQty = Math.max(0, s.quantityAvailable - item.quantity);
+            return {
+              ...s,
+              quantityAvailable: newQty,
+              totalValueUSD: newQty * s.unitPriceUSD,
+              serialNumbers: s.serialNumbers.filter(sn => !item.serialNumbers.includes(sn)),
+              status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
+            };
+          }
+          return s;
+        }));
+      } else if (mvt.type === 'transfert_inter_hub' && mvt.sourceHubId && mvt.destinationHubId) {
+        setStocks(prev => prev.map(s => {
+          if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
+            const newQty = Math.max(0, s.quantityAvailable - item.quantity);
+            return {
+              ...s,
+              quantityAvailable: newQty,
+              totalValueUSD: newQty * s.unitPriceUSD,
+              serialNumbers: s.serialNumbers.filter(sn => !item.serialNumbers.includes(sn)),
+              status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
+            };
+          }
+          if (s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId) {
+            return {
+              ...s,
+              quantityInTransit: s.quantityInTransit + item.quantity
+            };
+          }
+          return s;
+        }));
+      }
+    });
+
+    // Génération automatique du Document d'Approbation scellé
+    const docPrefix = mvt.type === 'entree_fournisseur' ? 'Bon d\'Entrée en Stock (BES)' : mvt.type === 'sortie_deploiement' ? 'Bon de Sortie & Mise en Service (BSS)' : 'Ordre de Transfert Inter-Hubs (OTIH)';
+    const docItem: DocumentItem = {
+      id: `doc-${mvt.id}`,
+      title: `${docPrefix} : ${mvt.movementNumber}`,
+      referenceNumber: mvt.movementNumber,
+      category: 'chaine_logistique_commerciale',
+      subtype: 'bon_livraison',
+      organizationId: currentOrg.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Service Logistique & Hubs',
+      createdAt: mvt.date,
+      status: 'signe',
+      size: '230 KB',
+      fileType: 'PDF',
+      amount: mvt.totalValueUSD,
+      currency: 'USD',
+      description: `Opération logistique ${mvt.movementNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}. Scellé SHA-256.`,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      },
+      electronicSignature: {
+        signedBy: currentUser.name,
+        signedAt: new Date().toISOString(),
+        role: currentUser.roleTitle,
+        certificateHash: mvt.electronicSealHash
+      }
+    };
+    setDocuments(prev => [docItem, ...prev]);
+
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: `Mouvement de Stock (${mvt.type})`,
+        category: 'document',
+        details: `Émission du document ${mvt.movementNumber} pour un montant de $${mvt.totalValueUSD.toLocaleString()} USD.`,
+        ip: '127.0.0.1',
+        hash: mvt.electronicSealHash
+      },
+      ...prev
+    ]);
+  };
+
+  const handleApproveMovement = (mvtId: string) => {
+    setStockMovements(prev => prev.map(m => m.id === mvtId ? {
+      ...m,
+      status: m.type === 'transfert_inter_hub' ? 'en_transit' : 'valide',
+      approvedByManagerName: currentUser.name,
+      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+    } : m));
+  };
+
+  const handleReceiveTransfer = (mvtId: string) => {
+    const mvt = stockMovements.find(m => m.id === mvtId);
+    if (!mvt || !mvt.destinationHubId) return;
+
+    setStockMovements(prev => prev.map(m => m.id === mvtId ? {
+      ...m,
+      status: 'receptionne',
+      notes: `${m.notes} — Réceptionné et scanné conforme par ${currentUser.name}.`
+    } : m));
+
+    mvt.items.forEach(item => {
+      setStocks(prev => {
+        const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
+        if (existing) {
+          const newAvail = existing.quantityAvailable + item.quantity;
+          const newTransit = Math.max(0, existing.quantityInTransit - item.quantity);
+          return prev.map(s => s.id === existing.id ? {
+            ...s,
+            quantityAvailable: newAvail,
+            quantityInTransit: newTransit,
+            totalValueUSD: newAvail * s.unitPriceUSD,
+            serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
+            status: newAvail <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
+          } : s);
+        } else {
+          const newStock: HubStockItem = {
+            id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+            hubId: mvt.destinationHubId!,
+            catalogItemId: item.catalogItemId,
+            sku: item.sku,
+            name: item.name,
+            category: 'vsat',
+            quantityAvailable: item.quantity,
+            quantityReserved: 0,
+            quantityInTransit: 0,
+            minAlertThreshold: 2,
+            unitPriceUSD: item.unitPriceUSD,
+            totalValueUSD: item.quantity * item.unitPriceUSD,
+            locationRack: 'Travée Réception',
+            serialNumbers: item.serialNumbers,
+            lastAuditDate: new Date().toISOString().split('T')[0],
+            status: 'normal'
+          };
+          return [newStock, ...prev];
+        }
+      });
+    });
+  };
 
   const handleCreateOrder = (order: PurchaseOrderItem) => {
     setPurchaseOrders(prev => [order, ...prev]);
@@ -1055,6 +1269,28 @@ export default function App() {
                   ...prev
                 ]);
               }}
+              onUpdateDocument={(docId, updates) => {
+                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
+              }}
+              onDeleteDocument={(docId) => {
+                setDocuments(prev => prev.filter(d => d.id !== docId));
+              }}
+              onLogAction={(action, details, category) => {
+                setLogs(prev => [
+                  {
+                    id: `log-${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    userName: currentUser.name,
+                    userRole: currentUser.roleTitle,
+                    action,
+                    category: category as any,
+                    details,
+                    ip: '127.0.0.1',
+                    hash: `sha256-doc-${Date.now()}`
+                  },
+                  ...prev
+                ]);
+              }}
             />
           )}
 
@@ -1090,31 +1326,9 @@ export default function App() {
                   ...prev
                 ]);
               }}
-            />
-          )}
-
-          {/* MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT & ÉNERGIE SOLAIRE */}
-          {currentTab === 'logistics' && (
-            <LogisticsModuleView
-              currentUser={currentUser}
-              organization={currentOrg}
-              entities={entities}
-              catalog={logisticsCatalog}
-              orders={purchaseOrders}
-              deliveryNotes={deliveryNotes}
-              shipments={shipments}
-              proformas={proformas}
-              invoices={netInvoices}
-              onCreateOrder={handleCreateOrder}
-              onApproveOrder={handleApproveOrder}
-              onCreateDeliveryNote={handleCreateDeliveryNote}
-              onSignDeliveryNote={handleSignDeliveryNote}
-              onUpdateShipmentStep={handleUpdateShipmentStep}
-              onCreateShipment={handleCreateShipment}
-              onCreateProforma={handleCreateProforma}
-              onConvertProforma={handleConvertProforma}
-              onCreateNetInvoice={handleCreateNetInvoice}
-              onRegisterPayment={handleRegisterPayment}
+              onUpdateDocument={(docId, updates) => {
+                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
+              }}
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
@@ -1126,12 +1340,83 @@ export default function App() {
                     category: category as any,
                     details,
                     ip: '127.0.0.1',
-                    hash: `sha256-logist-${Date.now()}`
+                    hash: `sha256-wf-${Date.now()}`
                   },
                   ...prev
                 ]);
               }}
             />
+          )}
+
+          {/* MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT, ÉNERGIE SOLAIRE & HUBS */}
+          {currentTab === 'logistics' && (
+            !canAccessLogistics(currentUser) ? (
+              <div className="bg-slate-900 border border-red-500/30 rounded-2xl p-8 max-w-xl mx-auto my-12 text-center space-y-4 shadow-2xl">
+                <div className="w-16 h-16 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
+                  <ShieldAlert className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-bold text-white">Accès Restreint au Module Logistique</h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Le module logistique et la gestion des stocks des Hubs provinciaux sont strictement réservés à la <strong>Direction Générale (DG)</strong> et aux <strong>responsables habilités du Département Logistique</strong>.
+                </p>
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-300">
+                  Votre profil actuel : <strong>{currentUser.name}</strong> ({currentUser.roleTitle || currentUser.role}) — {currentUser.departmentName || 'Service Opérationnel'}
+                </div>
+                <div className="flex justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => setCurrentTab('workspace')}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition"
+                  >
+                    Retour à mon Espace Collaborateur
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <LogisticsModuleView
+                currentUser={currentUser}
+                organization={currentOrg}
+                entities={entities}
+                catalog={logisticsCatalog}
+                orders={purchaseOrders}
+                deliveryNotes={deliveryNotes}
+                shipments={shipments}
+                proformas={proformas}
+                invoices={netInvoices}
+                hubs={hubs}
+                stocks={stocks}
+                movements={stockMovements}
+                onAddHub={handleAddHub}
+                onAddMovement={handleAddMovement}
+                onApproveMovement={handleApproveMovement}
+                onReceiveTransfer={handleReceiveTransfer}
+                onCreateOrder={handleCreateOrder}
+                onApproveOrder={handleApproveOrder}
+                onCreateDeliveryNote={handleCreateDeliveryNote}
+                onSignDeliveryNote={handleSignDeliveryNote}
+                onUpdateShipmentStep={handleUpdateShipmentStep}
+                onCreateShipment={handleCreateShipment}
+                onCreateProforma={handleCreateProforma}
+                onConvertProforma={handleConvertProforma}
+                onCreateNetInvoice={handleCreateNetInvoice}
+                onRegisterPayment={handleRegisterPayment}
+                onLogAction={(action, details, category) => {
+                  setLogs(prev => [
+                    {
+                      id: `log-${Date.now()}`,
+                      timestamp: new Date().toLocaleTimeString(),
+                      userName: currentUser.name,
+                      userRole: currentUser.roleTitle,
+                      action,
+                      category: category as any,
+                      details,
+                      ip: '127.0.0.1',
+                      hash: `sha256-logist-${Date.now()}`
+                    },
+                    ...prev
+                  ]);
+                }}
+              />
+            )
           )}
 
           {/* MODULE DE PAIE & RH RDC COMPLET */}

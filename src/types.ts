@@ -126,6 +126,16 @@ export interface DocumentItem {
     role: string;
     certificateHash: string;
     stampUrl?: string;
+    signatureImage?: string;
+    signatureType?: 'draw' | 'type' | 'certificate';
+    legalConsent?: boolean;
+    verificationAudit?: {
+      sha256Checked: boolean;
+      rbacChecked: boolean;
+      timestampChecked: boolean;
+      sealedAt: string;
+      token: string;
+    };
   };
   allowedRoles: UserRole[];
   permissions: {
@@ -489,7 +499,7 @@ export interface Attendance28DaysCycleReport {
 // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT & ÉNERGIE SOLAIRE (RDC)
 // -------------------------------------------------------------
 
-export type EquipmentCategory = 'vsat' | 'energie_solaire' | 'hybride';
+export type EquipmentCategory = 'vsat' | 'energie_solaire' | 'solaire' | 'hybride';
 
 export interface LogisticsItem {
   id: string;
@@ -775,4 +785,83 @@ export interface NetToPayInvoiceItem {
   preparedByAgentName: string;
   serviceName: string;
   isOfficialDocumentEmitted: boolean;
+}
+
+// =============================================================
+// GESTION DES HUBS PROVINCIAUX & GESTION DES STOCKS MULTI-SITES
+// =============================================================
+
+export interface LogisticsHub {
+  id: string;
+  code: string;
+  name: string;
+  province: string;
+  city: string;
+  address: string;
+  managerId?: string;
+  managerName: string;
+  managerContact: string;
+  managerEmail: string;
+  storageCapacityM3: number;
+  currentOccupancyRate: number; // En %
+  status: 'actif' | 'maintenance' | 'saturation';
+  coverageZones: string[];
+  securityLevel: string;
+  createdAt: string;
+}
+
+export interface HubStockItem {
+  id: string;
+  hubId: string;
+  catalogItemId: string;
+  sku: string;
+  name: string;
+  category: EquipmentCategory;
+  quantityAvailable: number;
+  quantityReserved: number;
+  quantityInTransit: number;
+  minAlertThreshold: number;
+  unitPriceUSD: number;
+  totalValueUSD: number;
+  locationRack: string;
+  serialNumbers: string[];
+  lastAuditDate: string;
+  status: 'normal' | 'alerte_basse' | 'rupture' | 'surstock';
+}
+
+export type StockMovementType = 
+  | 'entree_fournisseur' 
+  | 'sortie_deploiement' 
+  | 'transfert_inter_hub' 
+  | 'reception_transfert' 
+  | 'ajustement_inventaire';
+
+export interface StockMovementItem {
+  id: string;
+  movementNumber: string; // Ex: MVT-HUB-2026-001
+  type: StockMovementType;
+  sourceHubId?: string;
+  sourceHubName?: string;
+  destinationHubId?: string;
+  destinationHubName?: string;
+  destinationClientSite?: string;
+  items: {
+    catalogItemId: string;
+    sku: string;
+    name: string;
+    quantity: number;
+    unitPriceUSD: number;
+    serialNumbers: string[];
+  }[];
+  totalValueUSD: number;
+  referenceDocumentNumber: string;
+  operatorId: string;
+  operatorName: string;
+  operatorRole: string;
+  date: string;
+  status: 'en_attente_visa' | 'valide' | 'en_transit' | 'receptionne' | 'rejete';
+  approvedByManagerName?: string;
+  approvedAt?: string;
+  electronicSealHash: string;
+  notes: string;
 }
