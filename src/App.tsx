@@ -10,7 +10,14 @@ import type {
   AuditLog,
   PayrollSystemConfig,
   EmployeeContract,
-  PayrollRunPeriod
+  PayrollRunPeriod,
+  PurchaseOrderItem,
+  DeliveryNoteItem,
+  ShipmentTracking,
+  ProformaInvoiceItem,
+  NetToPayInvoiceItem,
+  LogisticsItem,
+  ShipmentWorkflowStep
 } from './types';
 import { 
   initialOrganizations, 
@@ -22,6 +29,14 @@ import {
   initialAuditLogs,
   initialContracts
 } from './data/initialData';
+import { 
+  initialLogisticsCatalog, 
+  initialPurchaseOrders, 
+  initialDeliveryNotes, 
+  initialShipments, 
+  initialProformas, 
+  initialNetToPayInvoices 
+} from './data/initialLogisticsData';
 import { 
   createStandardPayrollSystem, 
   initialPayrollConfigs 
@@ -39,6 +54,7 @@ import { AgentCrudView } from './components/AgentCrudView';
 import { AuditView } from './components/AuditView';
 import { OrganizationOnboardingWizard } from './components/OrganizationOnboardingWizard';
 import { BulkImportView } from './components/BulkImportView';
+import { LogisticsModuleView } from './components/LogisticsModuleView';
 import { 
   Building2, 
   ShieldAlert, 
@@ -60,7 +76,8 @@ import {
   Terminal,
   FileCheck2,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  Truck
 } from 'lucide-react';
 
 type ActiveTab = 
@@ -68,6 +85,7 @@ type ActiveTab =
   | 'hierarchy' 
   | 'documents' 
   | 'workflows' 
+  | 'logistics'
   | 'payroll' 
   | 'bulk_import'
   | 'attendance_dispatch'
@@ -246,6 +264,379 @@ export default function App() {
       'org-1': createStandardPayrollSystem('org-1', 'RHEMA BUSINESS')
     }
   );
+
+  // =========================================================================
+  // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT ET ÉNERGIE SOLAIRE (RDC)
+  // =========================================================================
+  const [logisticsCatalog, setLogisticsCatalog] = useState<LogisticsItem[]>(initialLogisticsCatalog);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderItem[]>(initialPurchaseOrders);
+  const [deliveryNotes, setDeliveryNotes] = useState<DeliveryNoteItem[]>(initialDeliveryNotes);
+  const [shipments, setShipments] = useState<ShipmentTracking[]>(initialShipments);
+  const [proformas, setProformas] = useState<ProformaInvoiceItem[]>(initialProformas);
+  const [netInvoices, setNetInvoices] = useState<NetToPayInvoiceItem[]>(initialNetToPayInvoices);
+
+  const handleCreateOrder = (order: PurchaseOrderItem) => {
+    setPurchaseOrders(prev => [order, ...prev]);
+    const docItem: DocumentItem = {
+      id: `doc-${order.id}`,
+      title: `Bon de Commande : ${order.orderNumber} - ${order.supplierName}`,
+      referenceNumber: order.orderNumber,
+      category: 'chaine_logistique_commerciale',
+      subtype: 'bon_commande_client',
+      organizationId: currentOrg.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Service Logistique',
+      createdAt: order.date,
+      status: order.status === 'approuve' ? 'approuve' : 'en_revue',
+      size: '240 KB',
+      fileType: 'PDF',
+      amount: order.totalTTC_USD,
+      currency: 'USD',
+      description: `Bon de commande ${order.category.toUpperCase()} pour ${order.destinationSite}. Émis par ${currentUser.name}.`,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      }
+    };
+    setDocuments(prev => [docItem, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Émission Bon de Commande (BC)',
+        category: 'document',
+        details: `Création du Bon de Commande ${order.orderNumber} ($${order.totalTTC_USD.toLocaleString()} TTC) pour ${order.destinationSite}.`,
+        ip: '127.0.0.1',
+        hash: `sha256-bc-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleApproveOrder = (orderId: string) => {
+    setPurchaseOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      status: 'approuve',
+      approvedByManagerId: currentUser.id,
+      approvedByManagerName: currentUser.name,
+      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+    } : o));
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Approbation / Visa Bon de Commande',
+        category: 'document',
+        details: `Visa hiérarchique apposé sur le Bon de Commande #${orderId} par ${currentUser.name}.`,
+        ip: '127.0.0.1',
+        hash: `sha256-appr-bc-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleCreateDeliveryNote = (bl: DeliveryNoteItem) => {
+    setDeliveryNotes(prev => [bl, ...prev]);
+    const docItem: DocumentItem = {
+      id: `doc-${bl.id}`,
+      title: `Bon de Livraison : ${bl.deliveryNumber} - ${bl.transporterName}`,
+      referenceNumber: bl.deliveryNumber,
+      category: 'chaine_logistique_commerciale',
+      subtype: 'bon_livraison',
+      organizationId: currentOrg.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Service Logistique',
+      createdAt: bl.date,
+      status: 'signe',
+      size: '220 KB',
+      fileType: 'PDF',
+      amount: 0,
+      currency: 'USD',
+      description: `Bon de livraison et relevé de numéros de série (S/N) pour ${bl.destinationSite}.`,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      }
+    };
+    setDocuments(prev => [docItem, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Enregistrement Bon de Livraison (BL)',
+        category: 'document',
+        details: `Réception et pointage des numéros de série pour le BL ${bl.deliveryNumber} (${bl.destinationSite}).`,
+        ip: '127.0.0.1',
+        hash: `sha256-bl-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleSignDeliveryNote = (blId: string, recipientName: string) => {
+    setDeliveryNotes(prev => prev.map(bl => bl.id === blId ? {
+      ...bl,
+      isRecipientSigned: true,
+      recipientName,
+      status: 'livre_conforme'
+    } : bl));
+  };
+
+  const handleUpdateShipmentStep = (shipmentId: string, newStep: ShipmentWorkflowStep) => {
+    setShipments(prev => prev.map(s => s.id === shipmentId ? {
+      ...s,
+      currentStatus: newStep.status,
+      workflowSteps: [...s.workflowSteps, newStep]
+    } : s));
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Mise à Jour Jalon Fret Logistique',
+        category: 'task',
+        details: `Nouveau jalon pour l'expédition #${shipmentId} : ${newStep.label} (${newStep.location})`,
+        ip: '127.0.0.1',
+        hash: `sha256-ship-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleCreateShipment = (shipment: ShipmentTracking) => {
+    setShipments(prev => [shipment, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Création Expédition Fret',
+        category: 'task',
+        details: `Nouvelle expédition ${shipment.trackingNumber} (${shipment.freightType.toUpperCase()}) vers ${shipment.destinationFinal}.`,
+        ip: '127.0.0.1',
+        hash: `sha256-new-ship-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleCreateProforma = (proforma: ProformaInvoiceItem) => {
+    setProformas(prev => [proforma, ...prev]);
+    const docItem: DocumentItem = {
+      id: `doc-${proforma.id}`,
+      title: `Facture Proforma : ${proforma.proformaNumber} - ${proforma.clientOrSupplierName}`,
+      referenceNumber: proforma.proformaNumber,
+      category: 'chaine_logistique_commerciale',
+      subtype: 'devis',
+      organizationId: currentOrg.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Service Facturation',
+      createdAt: proforma.date,
+      status: 'en_revue',
+      size: '210 KB',
+      fileType: 'PDF',
+      amount: proforma.totalTTC_USD,
+      currency: 'USD',
+      description: `Devis Proforma pour ${proforma.projectOrSite}.`,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      }
+    };
+    setDocuments(prev => [docItem, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Émission Facture Proforma',
+        category: 'document',
+        details: `Proforma ${proforma.proformaNumber} ($${proforma.totalTTC_USD.toLocaleString()} TTC) émise pour ${proforma.clientOrSupplierName}.`,
+        ip: '127.0.0.1',
+        hash: `sha256-pro-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleConvertProforma = (proformaId: string, target: 'order' | 'invoice') => {
+    const pro = proformas.find(p => p.id === proformaId);
+    if (!pro) return;
+
+    if (target === 'invoice') {
+      const newInvoice: NetToPayInvoiceItem = {
+        id: `fac-${Date.now()}`,
+        invoiceNumber: `FAC-2026-VSAT-${String(netInvoices.length + 1).padStart(3, '0')}`,
+        proformaReference: pro.proformaNumber,
+        organizationId: currentOrg.id,
+        date: new Date().toISOString().split('T')[0],
+        dueDate: '2026-11-20',
+        clientName: pro.clientOrSupplierName,
+        clientTaxId: 'RCCM: CD/KN/RCCM/20-B-001 | IdNat: 01-83-N44100 | NIF: A1100223Z',
+        clientAddress: 'Kinshasa / Lubumbashi - RD CONGO',
+        category: pro.category,
+        items: pro.items.map(it => ({
+          designation: it.designation,
+          specs: it.specs,
+          quantity: it.quantity,
+          unitPriceUSD: it.unitPriceUSD,
+          totalUSD: it.totalUSD
+        })),
+        subtotalHT_USD: pro.subtotalHT_USD,
+        vatRate: pro.vatRate,
+        vatAmount_USD: pro.vatAmount_USD,
+        advancePaymentDeduction_USD: 0,
+        withholdingTaxDeduction_USD: 0,
+        otherDeductions_USD: 0,
+        netToPayUSD: pro.totalTTC_USD,
+        netToPayCDF: pro.totalTTC_USD * 2850,
+        currencyRate: 2850,
+        bankDetails: {
+          bankName: 'RAWBANK KINSHASA (Siège Gombe)',
+          accountNumberUSD: '05100-01004419201-88 USD',
+          accountNumberCDF: '05100-01004419201-99 CDF',
+          swiftBic: 'RAWBCDZX',
+          ibanOrRib: 'CD68 0510 0010 0441 9201 88'
+        },
+        paymentStatus: 'en_attente',
+        paidAmountUSD: 0,
+        remainingBalanceUSD: pro.totalTTC_USD,
+        paymentRecords: [],
+        electronicSealHash: `sha256-fac-conv-${Date.now()}`,
+        preparedByAgentId: currentUser.id,
+        preparedByAgentName: `${currentUser.name} (Agent de Service)`,
+        serviceName: currentUser.departmentName || 'Service Facturation',
+        isOfficialDocumentEmitted: true
+      };
+      setNetInvoices(prev => [newInvoice, ...prev]);
+      setProformas(prev => prev.map(p => p.id === proformaId ? { ...p, status: 'acceptee_convertie', convertedToInvoiceId: newInvoice.id } : p));
+    }
+
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Conversion Facture Proforma',
+        category: 'document',
+        details: `Facture Proforma ${pro.proformaNumber} convertie en facture définitive Net à Payer.`,
+        ip: '127.0.0.1',
+        hash: `sha256-conv-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleCreateNetInvoice = (invoice: NetToPayInvoiceItem) => {
+    setNetInvoices(prev => [invoice, ...prev]);
+    const docItem: DocumentItem = {
+      id: `doc-${invoice.id}`,
+      title: `Facture Net à Payer : ${invoice.invoiceNumber} - ${invoice.clientName}`,
+      referenceNumber: invoice.invoiceNumber,
+      category: 'financier_comptable',
+      subtype: 'facture_client',
+      organizationId: currentOrg.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Service Facturation',
+      createdAt: invoice.date,
+      status: 'signe',
+      size: '250 KB',
+      fileType: 'PDF',
+      amount: invoice.netToPayUSD,
+      currency: 'USD',
+      description: `Facture Net à Payer pour ${invoice.clientName}. Net: $${invoice.netToPayUSD.toLocaleString()} USD (~${invoice.netToPayCDF.toLocaleString()} CDF).`,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      }
+    };
+    setDocuments(prev => [docItem, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Émission Facture Net à Payer',
+        category: 'document',
+        details: `Facture ${invoice.invoiceNumber} ($${invoice.netToPayUSD.toLocaleString()} Net) émise pour ${invoice.clientName}.`,
+        ip: '127.0.0.1',
+        hash: `sha256-fac-net-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleRegisterPayment = (invoiceId: string, amountUSD: number, ref: string, method: string) => {
+    setNetInvoices(prev => prev.map(inv => {
+      if (inv.id !== invoiceId) return inv;
+      const newPaid = inv.paidAmountUSD + amountUSD;
+      const newRemaining = Math.max(0, inv.netToPayUSD - newPaid);
+      const newStatus = newRemaining === 0 ? 'payee_net' : 'partiellement_payee';
+      return {
+        ...inv,
+        paidAmountUSD: newPaid,
+        remainingBalanceUSD: newRemaining,
+        paymentStatus: newStatus,
+        paymentRecords: [
+          ...inv.paymentRecords,
+          {
+            id: `pay-${Date.now()}`,
+            date: new Date().toISOString().split('T')[0],
+            amountUSD,
+            amountCDF: amountUSD * inv.currencyRate,
+            paymentMethod: method as any,
+            reference: ref,
+            registeredByAgent: `${currentUser.name} (Agent de Service)`
+          }
+        ]
+      };
+    }));
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Règlement Facture Net à Payer',
+        category: 'document',
+        details: `Encaissement de $${amountUSD.toLocaleString()} USD sur la facture #${invoiceId} (Réf : ${ref}).`,
+        ip: '127.0.0.1',
+        hash: `sha256-reg-pay-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
 
   const [currentTab, setCurrentTab] = useState<ActiveTab>('workspace');
 
@@ -574,6 +965,7 @@ export default function App() {
               documents={documents}
               contracts={contracts}
               onSelectUser={setCurrentUser}
+              onOpenLogistics={() => setCurrentTab('logistics')}
             />
           )}
 
@@ -694,6 +1086,47 @@ export default function App() {
                     details: `Ouverture du jalon/tâche ${createdTask.title} (${createdTask.priority})`,
                     ip: '127.0.0.1',
                     hash: `sha256-task-${Date.now()}`
+                  },
+                  ...prev
+                ]);
+              }}
+            />
+          )}
+
+          {/* MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT & ÉNERGIE SOLAIRE */}
+          {currentTab === 'logistics' && (
+            <LogisticsModuleView
+              currentUser={currentUser}
+              organization={currentOrg}
+              entities={entities}
+              catalog={logisticsCatalog}
+              orders={purchaseOrders}
+              deliveryNotes={deliveryNotes}
+              shipments={shipments}
+              proformas={proformas}
+              invoices={netInvoices}
+              onCreateOrder={handleCreateOrder}
+              onApproveOrder={handleApproveOrder}
+              onCreateDeliveryNote={handleCreateDeliveryNote}
+              onSignDeliveryNote={handleSignDeliveryNote}
+              onUpdateShipmentStep={handleUpdateShipmentStep}
+              onCreateShipment={handleCreateShipment}
+              onCreateProforma={handleCreateProforma}
+              onConvertProforma={handleConvertProforma}
+              onCreateNetInvoice={handleCreateNetInvoice}
+              onRegisterPayment={handleRegisterPayment}
+              onLogAction={(action, details, category) => {
+                setLogs(prev => [
+                  {
+                    id: `log-${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    userName: currentUser.name,
+                    userRole: currentUser.roleTitle,
+                    action,
+                    category: category as any,
+                    details,
+                    ip: '127.0.0.1',
+                    hash: `sha256-logist-${Date.now()}`
                   },
                   ...prev
                 ]);

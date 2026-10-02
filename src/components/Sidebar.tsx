@@ -14,7 +14,8 @@ import {
   Fingerprint,
   Coins,
   UploadCloud,
-  Clock
+  Clock,
+  Truck
 } from 'lucide-react';
 
 export type ActiveTab = 
@@ -22,6 +23,7 @@ export type ActiveTab =
   | 'hierarchy' 
   | 'documents' 
   | 'workflows' 
+  | 'logistics'
   | 'payroll'
   | 'security' 
   | 'agents' 
@@ -76,6 +78,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'workflows',
       label: 'Tâches & Approbations',
       icon: <Workflow className="w-4 h-4" />,
+    },
+    {
+      id: 'logistics',
+      label: 'Logistique & Équipements',
+      icon: <Truck className="w-4 h-4 text-amber-400" />,
+      badge: 'VSAT & Solaire',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-semibold',
     },
     {
       id: 'payroll',

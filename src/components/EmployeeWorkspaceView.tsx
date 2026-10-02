@@ -24,7 +24,8 @@ import {
   X,
   BarChart3,
   CreditCard,
-  Sparkles
+  Sparkles,
+  Truck
 } from 'lucide-react';
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
@@ -39,6 +40,7 @@ interface EmployeeWorkspaceViewProps {
   documents?: DocumentItem[];
   contracts?: EmployeeContract[];
   onSelectUser?: (user: User) => void;
+  onOpenLogistics?: () => void;
 }
 
 export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
@@ -50,6 +52,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   documents = [],
   contracts = initialContracts,
   onSelectUser = () => {},
+  onOpenLogistics,
 }) => {
   // Chronomètre de travail en direct (démarre à 01:20:10)
   const [seconds, setSeconds] = useState<number>(4810);
@@ -366,6 +369,16 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 <LogOut className="w-3.5 h-3.5 text-slate-500" />
                 <span>Changer de Compte</span>
               </button>
+
+              {onOpenLogistics && (
+                <button
+                  onClick={onOpenLogistics}
+                  className="px-3 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300 text-amber-800 text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <Truck className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Module Logistique (VSAT & Solaire)</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -1,0 +1,6 @@
+{
+  "name": "Rhema Business - ERP, RH & Paie RDC",
+  "description": "Système de gestion d'entreprise, hiérarchie organisationnelle, workflows, sécurité RBAC et paie conforme à la législation RDC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

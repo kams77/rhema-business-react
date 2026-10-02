@@ -484,3 +484,295 @@ export interface Attendance28DaysCycleReport {
     role: string;
   };
 }
+
+// -------------------------------------------------------------
+// MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT & ÉNERGIE SOLAIRE (RDC)
+// -------------------------------------------------------------
+
+export type EquipmentCategory = 'vsat' | 'energie_solaire' | 'hybride';
+
+export interface LogisticsItem {
+  id: string;
+  name: string;
+  category: EquipmentCategory;
+  subcategory: string;
+  sku: string;
+  brand: string;
+  specs: string;
+  unitPriceUSD: number;
+  unit: 'piece' | 'kit' | 'metre' | 'lot' | 'rouleau';
+  stockAvailable: number;
+  defaultSupplier?: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  orderNumber: string; // Ex: BC-VSAT-2026-001
+  organizationId: string;
+  date: string;
+  deliveryDueDate: string;
+  category: EquipmentCategory;
+  supplierName: string;
+  supplierContact: string;
+  supplierEmail: string;
+  supplierAddress: string;
+  destinationSite: string; // Ex: "Site Minier Tenke Fungurume", "Hub N'sele Kinshasa"
+  items: {
+    itemId?: string;
+    designation: string;
+    category: EquipmentCategory;
+    sku: string;
+    specs: string;
+    quantity: number;
+    unitPriceUSD: number;
+    totalUSD: number;
+    notes?: string;
+  }[];
+  totalHT_USD: number;
+  vatRate: number; // 0.16 (16% RDC)
+  vatAmount_USD: number;
+  totalTTC_USD: number;
+  currency: 'USD' | 'CDF';
+  exchangeRate: number; // Ex: 2850 CDF/USD
+  paymentTerms: string;
+  status: 'brouillon' | 'en_attente_approbation' | 'approuve' | 'commande_passee' | 'receptionne_partiel' | 'receptionne_conforme' | 'annule';
+  // Exécutant : Agent de service
+  createdByAgentId: string;
+  createdByAgentName: string;
+  createdByServiceId?: string;
+  createdByServiceName: string;
+  approvedByManagerId?: string;
+  approvedByManagerName?: string;
+  approvedAt?: string;
+  signatureHash?: string;
+  proformaReference?: string;
+  notes?: string;
+}
+
+export interface DeliveryNoteItem {
+  id: string;
+  deliveryNumber: string; // Ex: BL-VSAT-2026-001
+  purchaseOrderId?: string;
+  purchaseOrderNumber?: string;
+  organizationId: string;
+  date: string;
+  transporterName: string;
+  driverName?: string;
+  vehiclePlateNumber?: string;
+  sealNumber?: string; // N° de scellé conteneur / camion
+  destinationSite: string;
+  category: EquipmentCategory;
+  items: {
+    designation: string;
+    sku: string;
+    orderedQty: number;
+    deliveredQty: number;
+    serialNumbers: string[]; // N° de série scannés / vérifiés
+    condition: 'conforme' | 'avarie_mineure' | 'non_conforme' | 'manquant';
+    inspectionRemarks?: string;
+  }[];
+  status: 'en_preparation' | 'en_transit' | 'livre_conforme' | 'reserve_emettrice' | 'rejete';
+  recipientName: string;
+  recipientTitle: string;
+  recipientSignatureDate?: string;
+  isRecipientSigned: boolean;
+  // Exécutant : Agent de service
+  preparedByAgentId: string;
+  preparedByAgentName: string;
+  serviceName: string;
+  technicalReceiptCertificate?: {
+    isConform: boolean;
+    testPassed: boolean;
+    technicianNotes: string;
+    testedAt: string;
+    testedBy: string;
+  };
+  remarks?: string;
+}
+
+export interface AirWaybillDetails {
+  awbNumber: string; // Ex: AWB-ET-071-8842109
+  airline: string;
+  flightNumber: string;
+  originAirport: string; // Ex: Paris CDG / Dubai DWC
+  transitAirport?: string; // Ex: Addis Ababa ADD
+  destinationAirport: string; // Ex: Kinshasa FIH (N'djili)
+  grossWeightKg: number;
+  chargeableWeightKg: number;
+  volumeM3: number;
+  numberOfColis: number;
+  // Lettre de frais aérien
+  airFreightRatePerKg: number;
+  fuelSurchargeUSD: number;
+  securitySurchargeUSD: number;
+  handlingAirportUSD: number;
+  dgdaCustomsBondUSD: number;
+  totalAirCostUSD: number;
+}
+
+export interface OceanBillOfLadingDetails {
+  blNumber: string; // Ex: MEDU-8923014
+  shippingLine: string;
+  vesselName: string;
+  voyageNumber: string;
+  containerNumber: string;
+  containerType: '20_standard' | '40_high_cube' | 'lcl_groupage';
+  sealNumber: string;
+  portOfLoading: string; // Ex: Anvers, Ningbo, Durban
+  transshipmentPort?: string;
+  portOfDischarge: string; // Ex: Port de Matadi (RDC)
+  grossWeightTonnes: number;
+  cbmVolume: number;
+  // Lettre de frais maritime
+  oceanFreightBaseUSD: number;
+  bunkerAdjustmentBAF_USD: number;
+  currencyAdjustmentCAF_USD: number;
+  terminalHandlingTHC_MatadiUSD: number;
+  lmcAgencyFeeUSD: number; // Lignes Maritimes Congolaises
+  ogefremFeriFeeUSD: number; // Fiche FERI OGEFREM
+  isFeriValidated: boolean;
+  dgdaDutiesEstimateUSD: number;
+  totalOceanCostUSD: number;
+}
+
+export interface InlandTransitDetails {
+  corridor: string; // Ex: "Matadi -> Kinshasa (RN1)" ou "Kasumbalesa -> Kolwezi"
+  transportCompany: string;
+  truckPlate: string;
+  escortRequired: boolean;
+  checkpointStatus: string;
+  dgdaExitSlipNumber?: string;
+  estimatedArrivalSite: string;
+}
+
+export interface ShipmentWorkflowStep {
+  id: string;
+  status: 'depart_fournisseur' | 'fret_en_transit' | 'arrivee_douane' | 'dedouanement_dgda' | 'transit_national' | 'livre_sur_site';
+  label: string;
+  location: string;
+  timestamp: string;
+  executedByAgent: string;
+  agentRole: string;
+  comment: string;
+  completed: boolean;
+}
+
+export interface ShipmentTracking {
+  id: string;
+  trackingNumber: string; // Ex: EXP-2026-VSAT-089
+  title: string;
+  freightType: 'aerien' | 'maritime' | 'routier_convoi';
+  category: EquipmentCategory;
+  relatedOrderNumber?: string;
+  supplierOrigin: string;
+  destinationFinal: string;
+  carrierName: string;
+  airWaybillDetails?: AirWaybillDetails;
+  oceanBillOfLadingDetails?: OceanBillOfLadingDetails;
+  inlandTransitDetails?: InlandTransitDetails;
+  currentStatus: 'depart_fournisseur' | 'fret_en_transit' | 'arrivee_douane' | 'dedouanement_dgda' | 'transit_national' | 'livre_sur_site';
+  estimatedDeliveryDate: string;
+  actualDeliveryDate?: string;
+  workflowSteps: ShipmentWorkflowStep[];
+  totalLogisticsCostUSD: number;
+  // Exécutant : Agent de service
+  assignedAgentId: string;
+  assignedAgentName: string;
+  serviceName: string;
+  qrTrackingCode: string;
+}
+
+export interface ProformaInvoiceItem {
+  id: string;
+  proformaNumber: string; // Ex: PRO-2026-VSAT-042
+  organizationId: string;
+  date: string;
+  validityDate: string;
+  clientOrSupplierName: string;
+  clientType: 'client_externe' | 'fournisseur_appro' | 'projet_minier';
+  contactPerson: string;
+  contactEmail: string;
+  contactPhone: string;
+  projectOrSite: string;
+  category: EquipmentCategory;
+  items: {
+    designation: string;
+    category: EquipmentCategory;
+    specs: string;
+    quantity: number;
+    unitPriceUSD: number;
+    totalUSD: number;
+  }[];
+  subtotalHT_USD: number;
+  vatRate: number; // 0.16
+  vatAmount_USD: number;
+  discountRate?: number;
+  discountAmount_USD?: number;
+  totalTTC_USD: number;
+  paymentTerms: string;
+  deliveryLeadTime: string;
+  status: 'brouillon' | 'soumise' | 'acceptee_convertie' | 'expiree' | 'rejetee';
+  convertedToOrderId?: string;
+  convertedToInvoiceId?: string;
+  // Exécutant : Agent de service
+  preparedByAgentId: string;
+  preparedByAgentName: string;
+  serviceName: string;
+  notes: string;
+}
+
+export interface NetToPayInvoiceItem {
+  id: string;
+  invoiceNumber: string; // Ex: FAC-2026-VSAT-091
+  proformaReference?: string;
+  purchaseOrderReference?: string;
+  deliveryNoteReference?: string;
+  organizationId: string;
+  date: string;
+  dueDate: string;
+  clientName: string;
+  clientTaxId?: string;
+  clientAddress: string;
+  category: EquipmentCategory;
+  items: {
+    designation: string;
+    specs: string;
+    quantity: number;
+    unitPriceUSD: number;
+    totalUSD: number;
+  }[];
+  subtotalHT_USD: number;
+  vatRate: number; // 0.16
+  vatAmount_USD: number;
+  advancePaymentDeduction_USD: number; // Acompte déduit
+  withholdingTaxDeduction_USD: number; // Retenue à la source
+  otherDeductions_USD: number;
+  netToPayUSD: number; // NET À PAYER USD
+  netToPayCDF: number; // NET À PAYER CDF
+  currencyRate: number; // Taux de conversion USD -> CDF (ex: 2850)
+  bankDetails: {
+    bankName: string;
+    accountNumberUSD: string;
+    accountNumberCDF: string;
+    swiftBic: string;
+    ibanOrRib: string;
+  };
+  paymentStatus: 'en_attente' | 'partiellement_payee' | 'payee_net' | 'en_retard' | 'annulee';
+  paidAmountUSD: number;
+  remainingBalanceUSD: number;
+  paymentRecords: {
+    id: string;
+    date: string;
+    amountUSD: number;
+    amountCDF: number;
+    paymentMethod: 'virement_rawbank' | 'virement_equity' | 'cheque' | 'lettre_de_credit';
+    reference: string;
+    registeredByAgent: string;
+  }[];
+  electronicSealHash: string;
+  // Exécutant : Agent de service
+  preparedByAgentId: string;
+  preparedByAgentName: string;
+  serviceName: string;
+  isOfficialDocumentEmitted: boolean;
+}
