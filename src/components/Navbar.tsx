@@ -52,7 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const activeAlertCount = (securityAlerts || []).filter(a => a && a.status !== 'resolue').length;
 
-  const activeOrg = currentOrg || organizations[0] || {
+  const activeOrg: Partial<Organization> & { id: string; name: string } = currentOrg || organizations[0] || {
     id: 'org-1',
     name: 'RHEMA BUSINESS',
     type: 'entreprise' as const,
