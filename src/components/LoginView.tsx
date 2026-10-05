@@ -38,6 +38,13 @@ interface LoginViewProps {
   onboardingSuccessMsg?: string | null;
   /** Message affiché après une déconnexion automatique (inactivité…). */
   sessionNotice?: string | null;
+  /**
+   * Mode serveur : vérification des identifiants par le serveur.
+   * Renvoie l'utilisateur, ou lève une erreur dont le message est affiché.
+   */
+  remoteLogin?: (identifier: string, password: string) => Promise<{ user: User; mustChangePassword: boolean }>;
+  /** Mode serveur : enregistrement du nouveau mot de passe par le serveur. */
+  remoteChangePassword?: (newPassword: string) => Promise<User>;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -50,7 +57,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onPasswordChanged,
   onOpenOnboarding,
   onboardingSuccessMsg,
-  sessionNotice
+  sessionNotice,
+  remoteLogin,
+  remoteChangePassword
 }) => {
   // Champs pré-remplis uniquement en mode démonstration.
   const [identifier, setIdentifier] = useState(DEMO_MODE ? 'dg@rhemabusiness.com' : '');
@@ -71,6 +80,25 @@ export const LoginView: React.FC<LoginViewProps> = ({
     e.preventDefault();
     if (isChecking) return;
     setErrorMsg(null);
+
+    if (remoteLogin) {
+      // Mode serveur : c'est le serveur qui vérifie, compte les échecs et verrouille.
+      setIsChecking(true);
+      try {
+        const { user, mustChangePassword } = await remoteLogin(identifier.trim(), password);
+        if (mustChangePassword) {
+          setUserToUpdate(user);
+          setPassword('');
+        } else {
+          onLogin(user, 'credentials');
+        }
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Connexion impossible.');
+      } finally {
+        setIsChecking(false);
+      }
+      return;
+    }
 
     const cleanInput = identifier.trim().toLowerCase();
     const foundUser = users.find(
@@ -140,6 +168,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     setIsChecking(true);
     try {
+      if (remoteChangePassword) {
+        const updated = await remoteChangePassword(newPassword);
+        onLogin(updated, 'credentials');
+        return;
+      }
       if (await checkUserPassword(userToUpdate, newPassword)) {
         setErrorMsg("Le nouveau mot de passe doit être différent de l'ancien.");
         return;

@@ -3,6 +3,7 @@
 import React from 'react';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { resetAllData } from '../lib/storage';
+import { API_MODE } from '../config';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -94,7 +95,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             )}
           </div>
 
-          {isApp && (
+          {isApp && !API_MODE && (
             <button
               onClick={this.handleReset}
               className="w-full py-2 rounded-xl text-rose-300 hover:bg-rose-500/10 text-xs font-semibold flex items-center justify-center gap-2"

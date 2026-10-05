@@ -8,6 +8,9 @@ import {
   restoreBackup,
   resetAllData,
 } from '../lib/storage';
+import { API_MODE } from '../config';
+import { api } from '../lib/api';
+import { remoteStore } from '../lib/remoteStore';
 
 interface DataBackupModalProps {
   isOpen: boolean;
@@ -30,11 +33,28 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
 
   if (!isOpen) return null;
 
-  const usage = getStorageUsageBytes();
+  const usage = API_MODE ? 0 : getStorageUsageBytes();
   const usagePct = Math.min(100, Math.round((usage / QUOTA_ESTIMATE) * 100));
 
-  const handleExport = () => {
+  const handleExport = async () => {
     setError(null);
+    if (API_MODE) {
+      try {
+        await remoteStore.flush();
+        const backup = await api.exportBackup(); // journalisé par le serveur
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `rhema-sauvegarde-serveur-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setInfo('Sauvegarde du serveur téléchargée. Conservez ce fichier en lieu sûr : il contient toutes les données de l\'entreprise.');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Export impossible.');
+      }
+      return;
+    }
     onAudit?.('Export de sauvegarde', 'Téléchargement d\'un fichier de sauvegarde complet des données locales.');
     downloadBackup();
     setInfo('Sauvegarde téléchargée. Conservez ce fichier en lieu sûr : il contient toutes les données de l\'entreprise.');
@@ -50,10 +70,17 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
       setError('Fichier trop volumineux (20 Mo maximum).');
       return;
     }
-    if (!window.confirm('Restaurer cette sauvegarde remplacera TOUTES les données actuelles de ce navigateur. Continuer ?')) {
+    if (!window.confirm(API_MODE
+      ? 'Restaurer cette sauvegarde remplacera TOUTES les données du serveur, pour tous les utilisateurs. Tout le monde devra se reconnecter. Continuer ?'
+      : 'Restaurer cette sauvegarde remplacera TOUTES les données actuelles de ce navigateur. Continuer ?')) {
       return;
     }
     try {
+      if (API_MODE) {
+        await api.importBackup(JSON.parse(await file.text()));
+        window.location.reload(); // le serveur exige une nouvelle connexion
+        return;
+      }
       restoreBackup(await file.text());
       window.location.reload();
     } catch (err) {
@@ -82,7 +109,9 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
             </div>
             <div>
               <h3 id="backup-title" className="text-base font-bold text-white">Sauvegarde des données</h3>
-              <p className="text-xs text-slate-400">Les données sont enregistrées dans ce navigateur.</p>
+              <p className="text-xs text-slate-400">
+                {API_MODE ? 'Les données sont enregistrées sur le serveur de l\'entreprise.' : 'Les données sont enregistrées dans ce navigateur.'}
+              </p>
             </div>
           </div>
           <button onClick={onClose} aria-label="Fermer" className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">
@@ -90,6 +119,12 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
           </button>
         </div>
 
+        {API_MODE ? (
+          <p className="text-xs text-slate-500">
+            Tous les utilisateurs partagent ces données. En plus des sauvegardes du serveur (par ex. Hyper Backup sur Synology),
+            exportez régulièrement un fichier de sauvegarde.
+          </p>
+        ) : (
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs text-slate-400">
             <span>Espace utilisé</span>
@@ -106,6 +141,7 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
             (changement de navigateur, nettoyage de l'historique…).
           </p>
         </div>
+        )}
 
         {error && (
           <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs flex gap-2" role="alert">
@@ -140,7 +176,7 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
             </button>
             <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" onChange={handleImportFile} />
 
-            {!confirmReset ? (
+            {API_MODE ? null : !confirmReset ? (
               <button
                 onClick={() => setConfirmReset(true)}
                 className="w-full flex items-center gap-3 p-3 rounded-xl bg-transparent hover:bg-rose-500/10 border border-rose-500/30 text-rose-300 font-semibold transition"

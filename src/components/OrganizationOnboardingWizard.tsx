@@ -286,12 +286,13 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       }
     ];
 
+    // Le compte DG reprend l'identité saisie à l'étape 1 (nom, email, matricule, mot de passe).
     const finalUsers: User[] = agentsList.map(a => ({
       id: a.id,
-      name: a.name,
-      email: a.email,
-      matricule: a.matricule,
-      employeeCode: a.matricule,
+      name: a.role === 'dg' ? orgForm.dgName.trim() || a.name : a.name,
+      email: a.role === 'dg' ? orgForm.dgEmail.trim() || a.email : a.email,
+      matricule: a.role === 'dg' ? orgForm.dgMatricule.trim() || a.matricule : a.matricule,
+      employeeCode: a.role === 'dg' ? orgForm.dgMatricule.trim() || a.matricule : a.matricule,
       // Le compte DG reçoit le mot de passe saisi à l'étape 1.
       password: a.role === 'dg' ? orgForm.dgPassword : a.password,
       // En production, tout mot de passe provisoire ou faible doit être changé à la 1re connexion.

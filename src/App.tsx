@@ -2,7 +2,10 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
-import { DEMO_MODE, DEMO_PASSWORD } from './config';
+import { API_MODE, DEMO_MODE, DEMO_PASSWORD } from './config';
+import { SESSION_EXPIRED_EVENT } from './lib/api';
+import { SYNC_NOTICE_EVENT } from './lib/remoteStore';
+import { SyncIndicator } from './components/SyncIndicator';
 import { STORAGE_ERROR_EVENT } from './lib/storage';
 import { ToastStack } from './components/ToastStack';
 import type { ToastMessage, ToastType } from './components/ToastStack';
@@ -105,9 +108,16 @@ const LogisticsModuleView = lazy(() => import('./components/LogisticsModuleView'
 const LaravelIntegrationView = lazy(() => import('./components/LaravelIntegrationView').then(m => ({ default: m.LaravelIntegrationView })));
 const EntityInvitationsView = lazy(() => import('./components/EntityInvitationsView').then(m => ({ default: m.EntityInvitationsView })));
 
-export default function App() {
+interface AppProps {
+  /** Mode serveur : utilisateur déjà authentifié par le serveur (voir ServerGate). */
+  serverUser?: User;
+  /** Mode serveur : fermeture de session (déconnexion ou expiration). */
+  onServerLogout?: (notice: string | null) => void;
+}
+
+export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [organizations, setOrganizations] = usePersistentState<Organization[]>('organizations', initialOrganizations);
-  const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0]);
+  const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0], { keepDefaultInApi: true });
   const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
   const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
   const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
@@ -123,6 +133,10 @@ export default function App() {
   // La session (onglet en cours) survit au rechargement de la page, mais expire
   // après 30 min d'inactivité ou 10 h au total (voir src/lib/auth.ts).
   const [restoredSession] = useState(() => {
+    if (API_MODE) {
+      // Mode serveur : la session a déjà été vérifiée par le serveur.
+      return serverUser ? { user: users.find(u => u.id === serverUser.id) ?? serverUser } : null;
+    }
     const session = loadSession();
     const user = session ? users.find(u => u.id === session.userId) : undefined;
     if (!session || !user || user.status === 'verrouille' || user.status === 'suspendu') {
@@ -185,6 +199,7 @@ export default function App() {
 
   // Conversion unique des mots de passe en clair (données de démonstration) en empreintes chiffrées.
   useEffect(() => {
+    if (API_MODE) return; // en mode serveur, les mots de passe sont gérés par le serveur
     let cancelled = false;
     migratePlaintextPasswords(users, !DEMO_MODE)
       .then(migrated => {
@@ -211,9 +226,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, isAuthenticated]);
 
-  // Déconnexion automatique après inactivité.
+  // Mode serveur : session expirée côté serveur, et messages de synchronisation.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!API_MODE) return;
+    const onExpired = () => endSession('Votre session a expiré. Reconnectez-vous.');
+    const onNotice = (e: Event) => {
+      const { type, message } = (e as CustomEvent<{ type: ToastType; message: string }>).detail;
+      showToast(type, message);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    window.addEventListener(SYNC_NOTICE_EVENT, onNotice);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+      window.removeEventListener(SYNC_NOTICE_EVENT, onNotice);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Déconnexion automatique après inactivité (mode local ; en mode serveur, c'est le serveur qui l'applique).
+  useEffect(() => {
+    if (!isAuthenticated || API_MODE) return;
     let lastTouch = 0;
     const onActivity = () => {
       const now = Date.now();
@@ -258,6 +290,11 @@ export default function App() {
 
   /** Ferme la session (déconnexion volontaire ou automatique). */
   const endSession = (notice: string | null) => {
+    if (API_MODE) {
+      // Le serveur journalise lui-même les connexions et déconnexions.
+      onServerLogout?.(notice);
+      return;
+    }
     const departingUser = currentUser;
     clearSession();
     setIsAuthenticated(false);
@@ -1148,7 +1185,7 @@ export default function App() {
         onOpenOrgIdentity={() => {
           setShowOrgIdentityModal(true);
         }}
-        onOpenNewAccount={currentUser.role === 'dg' ? () => setShowOnboardingWizard(true) : undefined}
+        onOpenNewAccount={currentUser.role === 'dg' && !API_MODE ? () => setShowOnboardingWizard(true) : undefined}
         onOpenHelp={() => setShowHelpModal(true)}
         onOpenBackup={() => setShowBackupModal(true)}
         onToggleMobileNav={() => setIsMobileNavOpen(open => !open)}
@@ -1678,6 +1715,7 @@ export default function App() {
         onAudit={(action, details) => addAuditLog({ action, category: 'admin', details })}
       />
 
+      {API_MODE && <SyncIndicator />}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
