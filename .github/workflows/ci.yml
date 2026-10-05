@@ -6,6 +6,10 @@ on:
     branches: [main, 'amelioration/**']
   pull_request:
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +24,28 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Vérification TypeScript
-        run: npm run lint
+        id: tsc
+        run: |
+          set +e
+          npm run lint > tsc-report.txt 2>&1
+          code=$?
+          cat tsc-report.txt
+          echo "errors=$(grep -c 'error TS' tsc-report.txt)" >> "$GITHUB_OUTPUT"
+          exit $code
+        continue-on-error: true
+
+      - name: Rapport TypeScript lisible (onglet Checks)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          errors="${{ steps.tsc.outputs.errors }}"
+          conclusion=success; [ "${errors:-0}" != "0" ] && conclusion=failure
+          jq -n --arg sha "$GITHUB_SHA" --arg c "$conclusion" --arg n "${errors:-0}" \
+                --rawfile text tsc-report.txt \
+            '{name: "Rapport TypeScript", head_sha: $sha, status: "completed", conclusion: $c,
+              output: {title: ($n + " erreur(s) TypeScript"), summary: ($n + " erreur(s)"), text: ($text | .[0:60000])}}' \
+          | gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" --input - > /dev/null
 
       - name: Compilation (mode production)
         run: npm run build
@@ -29,3 +54,7 @@ jobs:
 
       - name: Compilation (mode démo)
         run: npm run build
+
+      - name: Échec si erreurs TypeScript
+        if: steps.tsc.outcome == 'failure'
+        run: exit 1
