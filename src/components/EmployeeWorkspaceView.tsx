@@ -26,10 +26,12 @@ import {
   CreditCard,
   Sparkles,
   Truck,
-  KeyRound
+  KeyRound,
+  TrendingUp
 } from 'lucide-react';
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
+import { DepartmentTasksProgressChart } from './DepartmentTasksProgressChart';
 import { initialContracts } from '../data/initialData';
 import { canAccessLogistics } from '../utils/rbac';
 import { isEntityManager } from '../utils/invitationUtils';
@@ -67,7 +69,8 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const [seconds, setSeconds] = useState<number>(4810);
   const [workStatus, setWorkStatus] = useState<'working' | 'coffee_break'>('working');
   const [breakSeconds, setBreakSeconds] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'task_analytics' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('dashboard');
+  const [showAnalyticsInTasks, setShowAnalyticsInTasks] = useState<boolean>(true);
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [showNotification, setShowNotification] = useState<boolean>(true);
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
@@ -419,6 +422,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           {[
             { id: 'dashboard', label: 'Tableau de Bord & Ratios RH', icon: <BarChart3 className="w-4 h-4" /> },
             { id: 'tasks', label: `Mes Tâches Opérationnelles (${taskList.length})`, icon: <CheckCircle2 className="w-4 h-4" /> },
+            { id: 'task_analytics', label: 'Progression des Tâches (30j)', icon: <TrendingUp className="w-4 h-4" /> },
             { id: 'attendance', label: 'Pointage & Présences (2)', icon: <Clock className="w-4 h-4" /> },
             { id: 'documents', label: `Mes Documents & Bulletins (${agentDocuments.length})`, icon: <FileText className="w-4 h-4" /> },
             { id: 'transmissions', label: 'Transmissions Hiérarchiques & Consignes', icon: <MessageSquare className="w-4 h-4" /> },
@@ -440,16 +444,36 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         </div>
       </div>
 
-      {/* SOUS-MODULE 0 : TABLEAU DE BORD RECHARTS (EFFECTIFS & RATIOS SALARIAUX) */}
+      {/* SOUS-MODULE 0 : TABLEAU DE BORD RECHARTS (EFFECTIFS, RATIOS SALARIAUX & TÂCHES 30J) */}
       {activeTab === 'dashboard' && (
-        <WorkspaceDashboard
-          entities={entities}
-          users={users}
-          contracts={contracts}
-          organization={currentOrg}
-          currentUser={currentUser}
-          onOpenLogistics={onOpenLogistics}
-        />
+        <div className="space-y-6">
+          <DepartmentTasksProgressChart
+            tasks={tasks}
+            entities={entities}
+            users={users}
+            currentUser={currentUser}
+          />
+          <WorkspaceDashboard
+            entities={entities}
+            users={users}
+            contracts={contracts}
+            organization={currentOrg}
+            currentUser={currentUser}
+            onOpenLogistics={onOpenLogistics}
+          />
+        </div>
+      )}
+
+      {/* SOUS-MODULE DÉDIÉ : VISUALISATION RECHARTS PROGRESSION DES TÂCHES PAR DÉPARTEMENT (30 JOURS) */}
+      {activeTab === 'task_analytics' && (
+        <div className="space-y-6">
+          <DepartmentTasksProgressChart
+            tasks={tasks}
+            entities={entities}
+            users={users}
+            currentUser={currentUser}
+          />
+        </div>
       )}
 
       {/* SOUS-MODULE 1 : MES TÂCHES OPÉRATIONNELLES */}
@@ -467,6 +491,18 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowAnalyticsInTasks(!showAnalyticsInTasks)}
+                className={`px-3 py-1.5 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition border ${
+                  showAnalyticsInTasks
+                    ? 'bg-sky-50 text-sky-700 border-sky-300'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                }`}
+                title="Afficher/masquer le graphique de progression Recharts sur 30 jours"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Graphique 30j</span>
+              </button>
               <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200 text-[11px]">
                 <button
                   onClick={() => setTaskFilter('all')}
@@ -503,6 +539,16 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Graphique de progression Recharts intégré aux tâches */}
+          {showAnalyticsInTasks && (
+            <DepartmentTasksProgressChart
+              tasks={tasks}
+              entities={entities}
+              users={users}
+              currentUser={currentUser}
+            />
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {taskList
