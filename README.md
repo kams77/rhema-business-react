@@ -75,7 +75,7 @@ Dans les deux modes :
 En mode serveur, deux personnes peuvent modifier le même module en même temps : leurs
 changements sont **fusionnés automatiquement**, et chacun voit ceux des autres en moins de 20 secondes.
 
-Pour essayer le serveur sans base de données : `npm run build` puis `npm run server:memoire`
+Pour essayer le serveur sans base de données : `npm run build` puis `npm run server:memoire` (ouvrir http://localhost:8080)
 (données perdues à l'arrêt, code d'installation : `essai`), avec `VITE_BACKEND=api` dans `.env`
 avant la compilation.
 

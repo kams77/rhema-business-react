@@ -17,6 +17,12 @@ import { SESSION_MAX_MS } from './auth.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
 
+// « npm run server:memoire » : essai sans base de données (fonctionne aussi sous Windows).
+if (process.argv.includes('--memoire')) {
+  env.DB_DRIVER = 'memory';
+  env.SETUP_CODE ??= 'essai';
+}
+
 const config = {
   port: Number(env.PORT || 8080),
   distDir: path.resolve(env.DIST_DIR || path.join(here, '..', 'dist')),
