@@ -1,6 +1,26 @@
 // src/utils/rbac.ts
 import type { User, HierarchicalEntity, DocumentItem, UserRole } from '../types';
 
+/** Normalise un intitulé (minuscules, sans accents) pour des comparaisons fiables. */
+function normalizeTitle(title?: string): string {
+  return (title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Vérifie si un intitulé de poste contient l'un des mots ou expressions donnés,
+ * en comparant des MOTS ENTIERS : « DG » ne correspond pas à « Budget », « RH » pas à « arrhes ».
+ */
+export function titleHasAny(title: string | undefined, terms: string[]): boolean {
+  const normalized = ` ${normalizeTitle(title).split(/[^a-z0-9]+/).filter(Boolean).join(' ')} `;
+  return terms.some(term => {
+    const t = normalizeTitle(term).split(/[^a-z0-9]+/).filter(Boolean).join(' ');
+    return t.length > 0 && normalized.includes(` ${t} `);
+  });
+}
+
+/** Fonctions RH / paie reconnues dans l'intitulé de poste. */
+export const HR_TITLE_TERMS = ['rh', 'drh', 'grh', 'paie', 'ressources humaines'];
+
 /**
  * Retourne la liste de tous les IDs d'entités subordonnées descendant d'un ancêtre
  */
@@ -185,8 +205,7 @@ export function canUserViewDocument(
     if (
       (user.role === 'directeur' && user.directionId === 'dir-rh') ||
       (user.role === 'chef_departement' && user.departementId === 'dept-daf') ||
-      user.roleTitle?.toLowerCase().includes('rh') ||
-      user.roleTitle?.toLowerCase().includes('paie')
+      titleHasAny(user.roleTitle, HR_TITLE_TERMS)
     ) {
       return { allowed: true };
     }
@@ -290,8 +309,7 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
         user.departementId === 'dept-daf' ||
         user.directionId === 'dir-rh' ||
         user.directionId === 'dir-finance' ||
-        (user.roleTitle || '').toLowerCase().includes('rh') ||
-        (user.roleTitle || '').toLowerCase().includes('paie')
+        titleHasAny(user.roleTitle, HR_TITLE_TERMS)
       );
     case 'security':
     case 'audit':

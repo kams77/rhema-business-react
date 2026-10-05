@@ -3,6 +3,8 @@
 // 100% Autonome et Identique à l'IMAGE 1 (Dark Theme Slate-900 / Slate-950, Devises $ USD et CDF, Taux BCC)
 
 import React, { useState, useMemo } from 'react';
+import { usePersistentState } from '../hooks/usePersistentState';
+import { titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
 import type { 
   PayrollSystemConfig, 
   PayrollAllowance, 
@@ -79,6 +81,9 @@ export interface PayrollSystemViewProps {
   onResetToStandard?: () => void;
   onLogAction?: (action: string, details: string, category: 'admin' | 'document' | 'task' | 'security') => void;
   onAddDocument?: (document: DocumentItem) => void;
+  /** Contrats partagés avec le reste de l'application (sinon, liste propre à ce module). */
+  contracts?: EmployeeContract[];
+  onContractsChange?: React.Dispatch<React.SetStateAction<EmployeeContract[]>>;
 }
 
 export type PayrollTabType = 
@@ -104,6 +109,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   onResetToStandard,
   onLogAction,
   onAddDocument,
+  contracts: sharedContracts,
+  onContractsChange,
 }) => {
   // Organisation par défaut RDC
   const currentOrg: Organization = propCurrentOrg || organization || {
@@ -128,18 +135,12 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   };
 
   // Droits Direction & DRH
-  const isHR = Boolean(
-    !currentUser ||
+  const isHR =
     currentUser.role === 'dg' ||
     currentUser.role === 'chef_departement' ||
     currentUser.role === 'directeur' ||
-    currentUser.roleTitle?.toLowerCase().includes('pdg') ||
-    currentUser.roleTitle?.toLowerCase().includes('dg') ||
-    currentUser.roleTitle?.toLowerCase().includes('président') ||
-    currentUser.roleTitle?.toLowerCase().includes('rh') ||
-    currentUser.roleTitle?.toLowerCase().includes('ressources humaines') ||
-    currentUser.roleTitle?.toLowerCase().includes('financier')
-  );
+    titleHasAny(currentUser.roleTitle, ['pdg', 'dg', 'president', 'financier', 'daf', ...HR_TITLE_TERMS]);
+
 
   // Configuration avec devises strictes USD / CDF
   const [config, setConfig] = useState<PayrollSystemConfig>(() => {
@@ -156,19 +157,21 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [activeTab, setActiveTab] = useState<PayrollTabType>('overview');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
-  const [exchangeRate, setExchangeRate] = useState<number>(DEFAULT_EXCHANGE_RATE_USD_CDF);
+  const [exchangeRate, setExchangeRate] = usePersistentState<number>('payroll.exchangeRate', DEFAULT_EXCHANGE_RATE_USD_CDF);
   const [expandedPayrollRunId, setExpandedPayrollRunId] = useState<string | null>('run-2026-09');
 
   // =========================================================================
   // DONNÉES DU PERSONNEL & HISTORIQUE DES ACTIONS RH
   // =========================================================================
-  const [contracts, setContracts] = useState<EmployeeContract[]>(initialContracts);
-  const [leaves, setLeaves] = useState<LeaveRequest[]>(initialLeaves);
-  const [advances, setAdvances] = useState<SalaryAdvanceRequest[]>(initialAdvances);
-  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>(initialOvertimes);
-  const [disciplinaryActions, setDisciplinaryActions] = useState<DisciplinaryAction[]>(initialDisciplinaryActions);
+  const [localContracts, setLocalContracts] = usePersistentState<EmployeeContract[]>('payroll.contracts', initialContracts);
+  const contracts = sharedContracts ?? localContracts;
+  const setContracts = onContractsChange ?? setLocalContracts;
+  const [leaves, setLeaves] = usePersistentState<LeaveRequest[]>('payroll.leaves', initialLeaves);
+  const [advances, setAdvances] = usePersistentState<SalaryAdvanceRequest[]>('payroll.advances', initialAdvances);
+  const [overtimeRecords, setOvertimeRecords] = usePersistentState<OvertimeRecord[]>('payroll.overtime', initialOvertimes);
+  const [disciplinaryActions, setDisciplinaryActions] = usePersistentState<DisciplinaryAction[]>('payroll.disciplinary', initialDisciplinaryActions);
 
-  const [payrollRuns, setPayrollRuns] = useState<PayrollRunPeriod[]>([
+  const [payrollRuns, setPayrollRuns] = usePersistentState<PayrollRunPeriod[]>('payroll.runs', [
     {
       id: 'run-2026-08',
       month: '2026-08',

@@ -1,5 +1,7 @@
 // src/components/BulkImportView.tsx
 import React, { useState, useId } from 'react';
+import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import { generateTemporaryPassword } from '../lib/auth';
 import type { 
   User, 
   Organization, 
@@ -35,7 +37,7 @@ import {
   Calendar,
   AlertCircle
 } from 'lucide-react';
-import { getRoleBadgeClass } from '../utils/rbac';
+import { getRoleBadgeClass, titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
 
 interface BulkImportViewProps {
   currentUser: User;
@@ -132,8 +134,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
     currentUser.role === 'dg' || 
     currentUser.role === 'chef_departement' || 
     currentUser.role === 'directeur' ||
-    currentUser.roleTitle?.toLowerCase().includes('dg') ||
-    currentUser.roleTitle?.toLowerCase().includes('rh');
+    titleHasAny(currentUser.roleTitle, ['dg', 'pdg', ...HR_TITLE_TERMS]);
 
   // =========================================================================
   // GABARITS CSV TÉLÉCHARGEABLES
@@ -213,11 +214,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       const rawRole = getVal(['role', 'grade', 'statut']).toLowerCase();
       
       let role: UserRole = 'agent';
-      if (rawRole.includes('dg') || rawRole.includes('directeur général') || rawRole.includes('pdg')) role = 'dg';
-      else if (rawRole.includes('chef_departement') || rawRole.includes('departement')) role = 'chef_departement';
-      else if (rawRole.includes('directeur') || rawRole.includes('dir')) role = 'directeur';
-      else if (rawRole.includes('chef_division') || rawRole.includes('division')) role = 'chef_division';
-      else if (rawRole.includes('chef_service') || rawRole.includes('service')) role = 'chef_service';
+      // Comparaison par mots entiers : « Budget » ne doit jamais donner le rôle DG.
+      if (rawRole === 'dg' || titleHasAny(rawRole, ['dg', 'pdg', 'directeur general'])) role = 'dg';
+      else if (rawRole.includes('chef_departement') || titleHasAny(rawRole, ['departement', 'chef departement'])) role = 'chef_departement';
+      else if (titleHasAny(rawRole, ['directeur', 'directrice', 'dir'])) role = 'directeur';
+      else if (rawRole.includes('chef_division') || titleHasAny(rawRole, ['division'])) role = 'chef_division';
+      else if (rawRole.includes('chef_service') || titleHasAny(rawRole, ['service', 'chef service'])) role = 'chef_service';
 
       const roleTitle = getVal(['intitule_poste', 'poste', 'fonction', 'title']) || 'Agent Spécialiste';
       const nomEntite = getVal(['nom_entite', 'entite', 'service', 'departement']) || 'Service Opérationnel VSAT';
@@ -289,6 +291,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     const newUsers: User[] = [];
     const newContracts: EmployeeContract[] = [];
+    // Identifiants provisoires à transmettre aux collaborateurs (changement obligatoire à la 1re connexion).
+    const credentials: Array<{ name: string; email: string; matricule: string; password: string }> = [];
 
     valids.forEach(row => {
       const userId = `usr-csv-${Date.now()}-${row.index}-${Math.random().toString(36).substring(2, 6)}`;
@@ -307,7 +311,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         email: row.email,
         matricule: row.matricule,
         employeeCode: row.matricule,
-        password: 'rhema2026',
+        password: DEMO_MODE ? DEMO_PASSWORD : generateTemporaryPassword(),
+        mustChangePassword: !DEMO_MODE,
         role: row.role,
         roleTitle: row.roleTitle,
         organizationId: currentOrg.id,
@@ -345,6 +350,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
       newUsers.push(newUser);
       newContracts.push(newContract);
+      credentials.push({ name: fullUserName, email: row.email, matricule: row.matricule, password: newUser.password! });
     });
 
     onImportUsersAndContracts(
@@ -353,7 +359,27 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       `Massification de ${newUsers.length} collaborateurs & contrats RH via import CSV officiel par la Direction Générale.`
     );
 
-    setEmployeeImportSuccess(`Succès : ${newUsers.length} nouveaux collaborateurs et contrats ont été intégrés dans l'annuaire et le système de paie RDC.`);
+    if (!DEMO_MODE) {
+      // Fichier à remettre aux collaborateurs puis à détruire : c'est la seule fois où les mots de passe sont visibles.
+      const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const csv = ['Nom;Email;Matricule;Mot de passe provisoire']
+        .concat(credentials.map(c => [c.name, c.email, c.matricule, c.password].map(esc).join(';')))
+        .join('\n');
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `identifiants-provisoires-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    setEmployeeImportSuccess(
+      `Succès : ${newUsers.length} nouveaux collaborateurs et contrats ont été intégrés dans l'annuaire et le système de paie RDC.` +
+      (DEMO_MODE
+        ? ` Mot de passe de démonstration : ${DEMO_PASSWORD}.`
+        : ' Les mots de passe provisoires ont été téléchargés (fichier CSV) : remettez-les aux collaborateurs puis supprimez ce fichier.')
+    );
     setParsedEmployees([]);
     setEmployeeRawCSV('');
   };

@@ -1,5 +1,6 @@
 // src/components/WorkflowsView.tsx
 import React, { useState, useEffect } from 'react';
+import { usePersistentState } from '../hooks/usePersistentState';
 import type { TaskItem, User, HierarchicalEntity, DocumentItem, Organization } from '../types';
 import { 
   GitBranch, 
@@ -200,7 +201,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
   });
 
   // Liste interne des tâches
-  const [localTasks, setLocalTasks] = useState<WorkflowTask[]>([
+  const [localTasks, setLocalTasks] = usePersistentState<WorkflowTask[]>('workflows.tasks', [
     {
       id: 'task-1',
       category: 'jalons',

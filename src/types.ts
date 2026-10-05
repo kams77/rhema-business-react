@@ -43,7 +43,12 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  /** @deprecated Mot de passe en clair des données de démonstration : converti en `passwordHash` au démarrage. */
   password?: string;
+  /** Empreinte PBKDF2 du mot de passe (voir src/lib/auth.ts). */
+  passwordHash?: string;
+  /** Oblige l'utilisateur à choisir un nouveau mot de passe à sa prochaine connexion. */
+  mustChangePassword?: boolean;
   matricule?: string;
   employeeCode?: string;
   role: UserRole;

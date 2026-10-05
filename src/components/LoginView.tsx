@@ -21,6 +21,14 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { getRoleBadgeClass } from '../utils/rbac';
+import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import {
+  MAX_FAILED_ATTEMPTS,
+  MIN_PASSWORD_LENGTH,
+  checkUserPassword,
+  hashPassword,
+  validatePasswordStrength,
+} from '../lib/auth';
 
 interface LoginViewProps {
   organization: Organization;
@@ -28,8 +36,14 @@ interface LoginViewProps {
   onSelectOrg?: (org: Organization) => void;
   users: User[];
   onLogin: (user: User, method: 'credentials' | 'demo') => void;
+  /** Mot de passe erroné : l'application incrémente le compteur et verrouille si nécessaire. */
+  onFailedAttempt?: (user: User) => void;
+  /** Nouveau mot de passe choisi (empreinte déjà calculée). */
+  onPasswordChanged?: (userId: string, passwordHash: string) => void;
   onOpenOnboarding?: () => void;
   onboardingSuccessMsg?: string | null;
+  /** Message affiché après une déconnexion automatique (inactivité…). */
+  sessionNotice?: string | null;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -38,46 +52,114 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onSelectOrg,
   users,
   onLogin,
+  onFailedAttempt,
+  onPasswordChanged,
   onOpenOnboarding,
-  onboardingSuccessMsg
+  onboardingSuccessMsg,
+  sessionNotice
 }) => {
-  const [identifier, setIdentifier] = useState('dg@rhemabusiness.com');
-  const [password, setPassword] = useState('rhema2026');
+  // Champs pré-remplis uniquement en mode démonstration.
+  const [identifier, setIdentifier] = useState(DEMO_MODE ? 'dg@rhemabusiness.com' : '');
+  const [password, setPassword] = useState(DEMO_MODE ? DEMO_PASSWORD : '');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+
+  // Étape « changement de mot de passe obligatoire »
+  const [userToUpdate, setUserToUpdate] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'logistics' | 'security'>('all');
 
-  const handleManualLogin = (e: React.FormEvent) => {
+  const isLocked = (u: User) => u.status === 'verrouille' || u.status === 'suspendu';
+
+  const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isChecking) return;
     setErrorMsg(null);
 
     const cleanInput = identifier.trim().toLowerCase();
     const foundUser = users.find(
-      u => u.email.toLowerCase() === cleanInput || 
+      u => u.email.toLowerCase() === cleanInput ||
            (u.matricule && u.matricule.toLowerCase() === cleanInput) ||
            (u.employeeCode && u.employeeCode.toLowerCase() === cleanInput)
     );
 
+    // Message volontairement identique : on ne révèle pas si le compte existe.
+    const genericError = 'Identifiant ou mot de passe incorrect.';
+
     if (!foundUser) {
-      setErrorMsg("Identifiant ou adresse email introuvable dans l'annuaire de l'entreprise.");
+      setErrorMsg(genericError);
       return;
     }
 
-    if (foundUser.status === 'verrouille' || foundUser.status === 'suspendu') {
-      setErrorMsg(`Accès refusé : Le compte de ${foundUser.name} est actuellement VERROUILLÉ suite à des infractions de sécurité ou récidives. Veuillez contacter la Direction Générale.`);
+    if (isLocked(foundUser)) {
+      setErrorMsg(`Accès refusé : ce compte est verrouillé. Contactez la Direction Générale pour le débloquer.`);
       return;
     }
 
-    // Vérification mot de passe démo ou spécifique
-    if (password !== 'rhema2026' && foundUser.password && password !== foundUser.password) {
-      setErrorMsg("Mot de passe incorrect. Le mot de passe par défaut pour tous les comptes de test est : rhema2026");
+    setIsChecking(true);
+    try {
+      const ok = await checkUserPassword(foundUser, password);
+      if (!ok) {
+        onFailedAttempt?.(foundUser);
+        const remaining = MAX_FAILED_ATTEMPTS - (foundUser.failedAccessAttempts + 1);
+        setErrorMsg(
+          remaining > 0
+            ? `${genericError} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le verrouillage du compte.`
+            : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.'
+        );
+        return;
+      }
+
+      if (foundUser.mustChangePassword && !DEMO_MODE) {
+        setUserToUpdate(foundUser);
+        setPassword('');
+        return;
+      }
+
+      onLogin(foundUser, 'credentials');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Erreur lors de la vérification du mot de passe.');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userToUpdate || isChecking) return;
+    setErrorMsg(null);
+
+    const weakness = validatePasswordStrength(newPassword, userToUpdate);
+    if (weakness) {
+      setErrorMsg(weakness);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMsg('Les deux mots de passe ne correspondent pas.');
       return;
     }
 
-    onLogin(foundUser, 'credentials');
+    setIsChecking(true);
+    try {
+      if (await checkUserPassword(userToUpdate, newPassword)) {
+        setErrorMsg("Le nouveau mot de passe doit être différent de l'ancien.");
+        return;
+      }
+      const passwordHash = await hashPassword(newPassword);
+      onPasswordChanged?.(userToUpdate.id, passwordHash);
+      const { password: _legacy, ...rest } = userToUpdate;
+      onLogin({ ...rest, passwordHash, mustChangePassword: false }, 'credentials');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Impossible d\'enregistrer le mot de passe.');
+    } finally {
+      setIsChecking(false);
+    }
   };
 
   const handleQuickDemoLogin = (user: User) => {
+    if (!DEMO_MODE) return;
     setErrorMsg(null);
     if (user.status === 'verrouille' || user.status === 'suspendu') {
       setErrorMsg(`Blocage de sécurité actif : Le compte de ${user.name} est verrouillé (${user.failedAccessAttempts} tentatives non autorisées détectées). Ce compte démontre le dispositif anti-intrusion.`);
@@ -141,7 +223,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
           <div className="mb-6">
             {/* BOUTON PREMIÈRE UTILISATION : CRÉATION D'ORGANISATION */}
-            {onOpenOnboarding && (
+            {DEMO_MODE && onOpenOnboarding && (
               <button
                 type="button"
                 onClick={onOpenOnboarding}
@@ -164,6 +246,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </button>
             )}
 
+            {sessionNotice && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5" role="status">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">{sessionNotice}</div>
+              </div>
+            )}
+
             {/* MESSAGE DE SUCCÈS ONBOARDING */}
             {onboardingSuccessMsg && (
               <div className="mb-4 p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs flex items-start gap-2.5 animate-in fade-in">
@@ -180,10 +269,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <span>Connectivité Obligatoire des Agents via Login</span>
             </div>
             <h1 className="text-2xl font-black text-white tracking-tight">
-              Connexion Sécurisée
+              {userToUpdate ? 'Nouveau mot de passe' : 'Connexion Sécurisée'}
             </h1>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Connectez-vous avec vos identifiants d'entreprise pour accéder à votre espace de travail et habilitations hiérarchiques.
+              {userToUpdate
+                ? `Bonjour ${userToUpdate.name}. Pour sécuriser votre compte, choisissez un mot de passe personnel avant de continuer.`
+                : "Connectez-vous avec vos identifiants d'entreprise pour accéder à votre espace de travail et habilitations hiérarchiques."}
             </p>
 
             {/* SÉLECTEUR D'ORGANISATION SI MULTIPLES */}
@@ -211,23 +302,92 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
 
           {errorMsg && (
-            <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+            <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in" role="alert">
               <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
               <div className="leading-relaxed">{errorMsg}</div>
             </div>
           )}
 
+          {userToUpdate ? (
+            <form onSubmit={handleChangePassword} className="space-y-4 text-xs">
+              <div>
+                <label htmlFor="new-password" className="text-slate-300 font-semibold block mb-1.5">
+                  Nouveau mot de passe
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+                  <input
+                    id="new-password"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    autoComplete="new-password"
+                    autoFocus
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-10 py-2.5 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    className="absolute right-3.5 top-2.5 text-slate-500 hover:text-slate-300"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Au moins {MIN_PASSWORD_LENGTH} caractères, avec au moins une lettre et un chiffre.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="confirm-password" className="text-slate-300 font-semibold block mb-1.5">
+                  Confirmer le mot de passe
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+                  <input
+                    id="confirm-password"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={isChecking}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-60 disabled:cursor-wait text-white font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>{isChecking ? 'Enregistrement…' : 'Enregistrer et continuer'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setUserToUpdate(null); setNewPassword(''); setConfirmPassword(''); setErrorMsg(null); }}
+                className="w-full py-2 text-slate-400 hover:text-white"
+              >
+                Annuler
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleManualLogin} className="space-y-4 text-xs">
             <div>
-              <label className="text-slate-300 font-semibold block mb-1.5 flex items-center justify-between">
+              <label htmlFor="login-identifier" className="text-slate-300 font-semibold mb-1.5 flex items-center justify-between">
                 <span>Email ou Matricule Professionnel</span>
                 <span className="text-[10px] text-slate-500 font-mono">Ex: dg@... ou MAT-001-DG</span>
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
                 <input
+                  id="login-identifier"
                   type="text"
                   required
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
                   placeholder="nom@rhemabusiness.com"
@@ -237,15 +397,17 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
 
             <div>
-              <label className="text-slate-300 font-semibold block mb-1.5 flex items-center justify-between">
+              <label htmlFor="login-password" className="text-slate-300 font-semibold mb-1.5 flex items-center justify-between">
                 <span>Mot de passe</span>
-                <span className="text-[10px] text-indigo-400 font-mono">Démo : rhema2026</span>
+                {DEMO_MODE && <span className="text-[10px] text-indigo-400 font-mono">Démo : {DEMO_PASSWORD}</span>}
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
                 <input
+                  id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="current-password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••••••"
@@ -254,6 +416,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
                   className="absolute right-3.5 top-2.5 text-slate-500 hover:text-slate-300"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -267,21 +430,24 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 Règlement de Sécurité Opérationnelle :
               </div>
               <p>
-                Toute tentative d'accès à des documents financiers ou RH hors de votre périmètre hiérarchique émet une alerte automatique. Deux tentatives successives entraînent le verrouillage immédiat du compte.
+                Toute tentative d'accès à des documents financiers ou RH hors de votre périmètre hiérarchique émet une alerte automatique. Après {MAX_FAILED_ATTEMPTS} mots de passe erronés, le compte est verrouillé.
               </p>
             </div>
 
             <button
               type="submit"
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all transform active:scale-[0.99]"
+              disabled={isChecking}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-60 disabled:cursor-wait text-white font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 transition-all transform active:scale-[0.99]"
             >
               <LogIn className="w-4 h-4" />
-              <span>Ouvrir la Session de Travail</span>
+              <span>{isChecking ? 'Vérification…' : 'Ouvrir la Session de Travail'}</span>
             </button>
           </form>
+          )}
         </div>
 
-        {/* Colonne Droite : Sélecteur d'Agent & Comptes Démo Vérifiables */}
+        {/* Colonne Droite : Sélecteur d'Agent & Comptes Démo Vérifiables (mode démonstration uniquement) */}
+        {DEMO_MODE && (
         <div className="w-full max-w-xl space-y-4">
           <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -328,6 +494,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 return (
                   <button
                     key={u.id}
+                    type="button"
                     onClick={() => handleQuickDemoLogin(u)}
                     className={`p-3 rounded-2xl border text-left flex items-start gap-3 transition group relative ${
                       isLocked
@@ -377,7 +544,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
 
             <div className="pt-2 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-              <span>Mot de passe universel test : <strong className="text-indigo-400 font-mono">rhema2026</strong></span>
+              <span>Mot de passe des comptes de test : <strong className="text-indigo-400 font-mono">{DEMO_PASSWORD}</strong></span>
               <span className="text-slate-500 font-mono">{filteredDemoUsers.length} profils disponibles</span>
             </div>
           </div>
@@ -398,6 +565,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
           </div>
         </div>
+        )}
 
       </main>
 

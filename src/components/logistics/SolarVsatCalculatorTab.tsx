@@ -1,5 +1,6 @@
 // src/components/logistics/SolarVsatCalculatorTab.tsx
 import React, { useState, useMemo } from 'react';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import type { LogisticsItem, PurchaseOrderItem, HubStockItem, LogisticsHub, User, Organization } from '../../types';
 import { 
   Sun, 
@@ -84,7 +85,7 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
   const [safetyMarginPercent, setSafetyMarginPercent] = useState<number>(20); // 20% marge de sécurité
   const [systemVoltage, setSystemVoltage] = useState<48 | 24>(48);
   const [panelWattPeak, setPanelWattPeak] = useState<number>(550); // 550Wc Tier-1
-  const [loads, setLoads] = useState<EquipmentLoad[]>(DEFAULT_LOADS);
+  const [loads, setLoads] = usePersistentState<EquipmentLoad[]>('logistics.solarLoads', DEFAULT_LOADS);
 
   // Nouvel équipement manuel
   const [newLoadName, setNewLoadName] = useState('');

@@ -294,7 +294,7 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
     if (deptFilter === 'all') {
       return currentSnapshot.total - firstSnapshot.total + firstSnapshot.totalPeriod;
     }
-    return currentSnapshot[deptFilter] - firstSnapshot[deptFilter] + firstSnapshot[`${deptFilter}Period` as keyof typeof firstSnapshot];
+    return Number(currentSnapshot[deptFilter]) - Number(firstSnapshot[deptFilter]) + Number(firstSnapshot[`${deptFilter}Period` as keyof typeof firstSnapshot]);
   }, [deptFilter, currentSnapshot, firstSnapshot]);
 
   // Tooltip personnalisé soigné

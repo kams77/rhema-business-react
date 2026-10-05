@@ -59,7 +59,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   tasks = [],
   documents = [],
   contracts = initialContracts,
-  onSelectUser = (_user: User) => {},
+  onSelectUser,
   onOpenLogistics,
   onOpenConnectKey,
   onOpenInviteAgent,
@@ -374,6 +374,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 </span>
               </button>
 
+              {onSelectUser && (
               <button
                 onClick={() => setShowAccountModal(true)}
                 className="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
@@ -381,6 +382,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 <LogOut className="w-3.5 h-3.5 text-slate-500" />
                 <span>Changer de Compte</span>
               </button>
+              )}
 
               {onOpenConnectKey && (
                 <button
@@ -924,7 +926,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
       )}
 
       {/* MODAL 1 : CHANGER DE COMPTE */}
-      {showAccountModal && (
+      {showAccountModal && onSelectUser && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4">
             <div className="flex justify-between items-center border-b pb-3">

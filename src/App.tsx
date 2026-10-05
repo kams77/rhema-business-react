@@ -1,5 +1,21 @@
 // src/App.tsx
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { usePersistentState } from './hooks/usePersistentState';
+import { newId, nowStamp } from './utils/id';
+import { DEMO_MODE, DEMO_PASSWORD } from './config';
+import { STORAGE_ERROR_EVENT } from './lib/storage';
+import { ToastStack } from './components/ToastStack';
+import type { ToastMessage, ToastType } from './components/ToastStack';
+import { DataBackupModal } from './components/DataBackupModal';
+import {
+  MAX_FAILED_ATTEMPTS,
+  clearSession,
+  generateTemporaryPassword,
+  loadSession,
+  migratePlaintextPasswords,
+  saveSession,
+  touchSession,
+} from './lib/auth';
 import type { 
   Organization, 
   HierarchicalEntity,
@@ -119,62 +135,242 @@ type ActiveTab =
   | 'laravel';
 
 export default function App() {
-  const [organizations, setOrganizations] = useState<Organization[]>(initialOrganizations);
-  const [currentOrg, setCurrentOrg] = useState<Organization>(initialOrganizations[0]);
-  const [entities, setEntities] = useState<HierarchicalEntity[]>(initialEntities);
-  const [users, setUsers] = useState<User[]>(initialUsers);
-  const [currentUser, setCurrentUser] = useState<User>(initialUsers[0]);
-  const [contracts, setContracts] = useState<EmployeeContract[]>(initialContracts);
-  const [documents, setDocuments] = useState<DocumentItem[]>(initialDocuments);
-  const [tasks, setTasks] = useState<TaskItem[]>(initialTasks);
+  const [organizations, setOrganizations] = usePersistentState<Organization[]>('organizations', initialOrganizations);
+  const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0]);
+  const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
+  const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
+  const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
+  const [documents, setDocuments] = usePersistentState<DocumentItem[]>('documents', initialDocuments);
+  const [tasks, setTasks] = usePersistentState<TaskItem[]>('tasks', initialTasks);
   
-  const [alerts, setAlerts] = useState<SecurityAlert[]>(initialSecurityAlerts);
-  const [logs, setLogs] = useState<AuditLog[]>(initialAuditLogs);
+  const [alerts, setAlerts] = usePersistentState<SecurityAlert[]>('securityAlerts', initialSecurityAlerts);
+  const [logs, setLogs] = usePersistentState<AuditLog[]>('auditLogs', initialAuditLogs);
 
-  // État d'authentification utilisateur
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  // =========================================================================
+  // AUTHENTIFICATION & SESSION
+  // =========================================================================
+  // La session (onglet en cours) survit au rechargement de la page, mais expire
+  // après 30 min d'inactivité ou 10 h au total (voir src/lib/auth.ts).
+  const [restoredSession] = useState(() => {
+    const session = loadSession();
+    const user = session ? users.find(u => u.id === session.userId) : undefined;
+    if (!session || !user || user.status === 'verrouille' || user.status === 'suspendu') {
+      clearSession();
+      return null;
+    }
+    return { session, user };
+  });
+  const [currentUser, setCurrentUser] = useState<User>(() => restoredSession?.user ?? users[0] ?? initialUsers[0]);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => restoredSession !== null);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState<boolean>(false);
   const [onboardingSuccessMsg, setOnboardingSuccessMsg] = useState<string | null>(null);
+  const [showBackupModal, setShowBackupModal] = useState(false);
 
-  const handleLogin = (user: User, method: 'credentials' | 'demo') => {
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-    setOnboardingSuccessMsg(null);
+  // Notifications (succès, erreurs)
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const dismissToast = useCallback((id: string) => setToasts(prev => prev.filter(t => t.id !== id)), []);
+  const showToast = useCallback((type: ToastType, message: string, duration = 6000) => {
+    setToasts(prev => [...prev.slice(-3), { id: newId('toast'), type, message, duration }]);
+  }, []);
 
-    const ip = `192.168.1.${Math.floor(Math.random() * 150) + 100}`;
+  // Erreurs d'enregistrement (stockage plein…) remontées par src/lib/storage.ts
+  useEffect(() => {
+    let lastShown = 0;
+    const onStorageError = (e: Event) => {
+      if (Date.now() - lastShown < 10_000) return; // évite d'empiler le même message
+      lastShown = Date.now();
+      showToast('error', (e as CustomEvent<string>).detail, 0);
+    };
+    window.addEventListener(STORAGE_ERROR_EVENT, onStorageError);
+    return () => window.removeEventListener(STORAGE_ERROR_EVENT, onStorageError);
+  }, [showToast]);
+
+  /** Ajoute une entrée au journal d'audit. */
+  const addAuditLog = (entry: {
+    action: string;
+    category: AuditLog['category'];
+    details: string;
+    actor?: Pick<User, 'id' | 'name' | 'roleTitle'>;
+  }) => {
+    const actor = entry.actor ?? currentUser;
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        userName: user.name,
-        userRole: user.roleTitle,
-        action: method === 'demo' ? 'Connexion Démo Rapide (1 clic)' : 'Connexion Certifiée (Identifiants)',
-        category: 'auth',
-        details: `Authentification réussie pour ${user.name} (${user.role.toUpperCase()}) - Session SHA-256 scellée sous protocole RBAC.`,
-        ip,
-        hash: `sha256-auth-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+        id: newId('log'),
+        timestamp: nowStamp(),
+        userId: actor.id,
+        userName: actor.name,
+        userRole: actor.roleTitle,
+        action: entry.action,
+        category: entry.category,
+        details: entry.details,
+        ip: 'Poste local',
+        hash: newId('evt')
       },
       ...prev
     ]);
   };
 
-  const handleLogout = () => {
+  // Conversion unique des mots de passe en clair (données de démonstration) en empreintes chiffrées.
+  useEffect(() => {
+    let cancelled = false;
+    migratePlaintextPasswords(users, !DEMO_MODE)
+      .then(migrated => {
+        if (!migrated || cancelled) return;
+        // On ne remplace que les comptes encore en clair, pour ne rien écraser entre-temps.
+        const byId = new Map(migrated.map(u => [u.id, u]));
+        setUsers(prev => prev.map(u => (u.password && !u.passwordHash ? byId.get(u.id) ?? u : u)));
+      })
+      .catch(err => console.warn('[auth] Migration des mots de passe impossible :', err));
+    return () => { cancelled = true; };
+  }, [users, setUsers]);
+
+  // Garde l'utilisateur connecté synchronisé avec l'annuaire (rôle modifié, compte verrouillé…).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fresh = users.find(u => u.id === currentUser.id);
+    if (!fresh) {
+      endSession("Votre compte n'existe plus dans l'annuaire. Session fermée.");
+    } else if (fresh.status === 'verrouille' || fresh.status === 'suspendu') {
+      endSession('Votre compte a été verrouillé. Contactez la Direction Générale.');
+    } else if (fresh !== currentUser) {
+      setCurrentUser(fresh);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, isAuthenticated]);
+
+  // Déconnexion automatique après inactivité.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let lastTouch = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastTouch > 15_000) { // au plus une écriture toutes les 15 s
+        lastTouch = now;
+        touchSession();
+      }
+    };
+    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'] as const;
+    events.forEach(ev => window.addEventListener(ev, onActivity, { passive: true }));
+    const check = window.setInterval(() => {
+      if (!loadSession()) {
+        endSession('Votre session a expiré après une période d\'inactivité. Reconnectez-vous.');
+      }
+    }, 30_000);
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, onActivity));
+      window.clearInterval(check);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, currentUser.id]);
+
+  const handleLogin = (user: User, method: 'credentials' | 'demo') => {
+    const lastLogin = nowStamp();
+    const loggedIn: User = { ...user, failedAccessAttempts: 0, lastLogin };
+    // Mise à jour ciblée : on ne réécrit pas les autres champs (empreinte du mot de passe…).
+    setUsers(prev => prev.map(u => (u.id === user.id ? { ...u, failedAccessAttempts: 0, lastLogin } : u)));
+    setCurrentUser(loggedIn);
+    setIsAuthenticated(true);
+    setOnboardingSuccessMsg(null);
+    setSessionNotice(null);
+    const now = Date.now();
+    saveSession({ userId: user.id, orgId: currentOrg.id, startedAt: now, lastActivityAt: now });
+
+    addAuditLog({
+      actor: user,
+      action: method === 'demo' ? 'Connexion Démo Rapide (1 clic)' : 'Connexion Certifiée (Identifiants)',
+      category: 'auth',
+      details: `Authentification réussie pour ${user.name} (${user.role.toUpperCase()}).`,
+    });
+  };
+
+  /** Ferme la session (déconnexion volontaire ou automatique). */
+  const endSession = (notice: string | null) => {
     const departingUser = currentUser;
+    clearSession();
     setIsAuthenticated(false);
-    setLogs(prev => [
-      {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        userName: departingUser.name,
-        userRole: departingUser.roleTitle,
-        action: 'Clôture de Session (Déconnexion)',
-        category: 'auth',
-        details: `Session de ${departingUser.name} fermée avec succès. Retour à l'écran d'authentification.`,
-        ip: '127.0.0.1',
-        hash: `sha256-logout-${Date.now()}`
-      },
-      ...prev
-    ]);
+    setActiveGuestInvitation(null);
+    setSessionNotice(notice);
+    addAuditLog({
+      actor: departingUser,
+      action: notice ? 'Clôture Automatique de Session' : 'Clôture de Session (Déconnexion)',
+      category: 'auth',
+      details: notice
+        ? `Session de ${departingUser.name} fermée automatiquement : ${notice}`
+        : `Session de ${departingUser.name} fermée avec succès.`,
+    });
+  };
+
+  const handleLogout = () => endSession(null);
+
+  /** Mot de passe erroné : compteur + verrouillage au-delà du seuil + alerte sécurité. */
+  const handleFailedLogin = (user: User) => {
+    const attempts = (user.failedAccessAttempts || 0) + 1;
+    const lock = attempts >= MAX_FAILED_ATTEMPTS;
+    setUsers(prev => prev.map(u =>
+      u.id === user.id ? { ...u, failedAccessAttempts: attempts, status: lock ? 'verrouille' : u.status } : u
+    ));
+    addAuditLog({
+      actor: user,
+      action: lock ? 'VERROUILLAGE COMPTE (MOTS DE PASSE ERRONÉS)' : 'Échec de Connexion',
+      category: 'security',
+      details: `Mot de passe erroné pour ${user.name} (tentative ${attempts}/${MAX_FAILED_ATTEMPTS}).${lock ? ' Compte verrouillé.' : ''}`,
+    });
+    if (lock) {
+      setAlerts(prev => [
+        {
+          id: newId('sec'),
+          timestamp: nowStamp(),
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          userEntityName: user.departmentName || user.roleTitle,
+          targetEntityId: 'auth',
+          targetEntityName: 'Écran de connexion',
+          attemptCount: attempts,
+          status: 'compte_verrouille',
+          severity: 'critique',
+          ipAddress: 'Poste local',
+          reason: `${attempts} mots de passe erronés consécutifs : compte verrouillé automatiquement.`,
+        },
+        ...prev
+      ]);
+    }
+  };
+
+  const handlePasswordChanged = (userId: string, passwordHash: string) => {
+    setUsers(prev => prev.map(u => {
+      if (u.id !== userId) return u;
+      const { password: _legacy, ...rest } = u;
+      return { ...rest, passwordHash, mustChangePassword: false };
+    }));
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      addAuditLog({
+        actor: user,
+        action: 'Changement de Mot de Passe',
+        category: 'security',
+        details: `${user.name} a défini un nouveau mot de passe personnel.`,
+      });
+    }
+  };
+
+  /** Mode démo : bascule d'utilisateur pour tester les droits (journalisé). */
+  const handleDemoSwitchUser = (user: User) => {
+    if (!DEMO_MODE || user.id === currentUser.id) return;
+    if (user.status === 'verrouille' || user.status === 'suspendu') {
+      showToast('error', `Le compte de ${user.name} est verrouillé.`);
+      return;
+    }
+    const now = Date.now();
+    saveSession({ userId: user.id, orgId: currentOrg.id, startedAt: now, lastActivityAt: now });
+    setCurrentUser(user);
+    addAuditLog({
+      actor: user,
+      action: 'Bascule Utilisateur (Mode Démo)',
+      category: 'auth',
+      details: `Session basculée de ${currentUser.name} vers ${user.name} en mode démonstration.`,
+    });
   };
 
   // RÈGLE STRICTE PREMIÈRE UTILISATION : INITIALISATION DE L'ORGANISATION & CONNECTIVITÉ OBLIGATOIRE DES AGENTS VIA LOGIN
@@ -183,6 +379,16 @@ export default function App() {
     entities: HierarchicalEntity[];
     users: User[];
   }) => {
+    // L'assistant remplace l'annuaire et l'organigramme actuels : on demande confirmation.
+    if (
+      users.length > 0 &&
+      !window.confirm(
+        `Créer « ${data.organization.name} » remplacera l'annuaire actuel (${users.length} comptes) et l'organigramme.\n\n` +
+        'Conseil : exportez d\'abord une sauvegarde (menu utilisateur → Sauvegarde des données).\n\nContinuer ?'
+      )
+    ) {
+      return;
+    }
     setOrganizations(prev => [data.organization, ...prev.filter(o => o.id !== data.organization.id)]);
     setCurrentOrg(data.organization);
     setEntities(data.entities);
@@ -195,6 +401,7 @@ export default function App() {
     }));
 
     // Oblige une connectivité de tous les agents de cette organisation à pouvoir se connecter via un login
+    clearSession();
     setIsAuthenticated(false);
     setShowOnboardingWizard(false);
     setOnboardingSuccessMsg(
@@ -203,8 +410,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: data.organization.managerName || 'Direction Générale',
         userRole: 'Directeur Général (DG)',
         action: 'Initialisation Organisation (Première Utilisation)',
@@ -227,8 +434,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: nextVal ? 'Octroi Délégation Visa Service (Règle 6)' : 'Révocation Délégation Visa Service (Règle 6)',
@@ -249,8 +456,8 @@ export default function App() {
     setContracts(prev => [...newContracts, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Massification CSV Employés & Contrats RH',
@@ -268,8 +475,8 @@ export default function App() {
     setDocuments(prev => [...newPayslipDocs, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Massification CSV Historique Paie',
@@ -283,7 +490,7 @@ export default function App() {
   };
 
   // État des configurations de Paie & RH RDC par organisation
-  const [payrollConfigs, setPayrollConfigs] = useState<Record<string, PayrollSystemConfig>>(
+  const [payrollConfigs, setPayrollConfigs] = usePersistentState<Record<string, PayrollSystemConfig>>('payrollConfigs', 
     initialPayrollConfigs || {
       'org-1': createStandardPayrollSystem('org-1', 'RHEMA BUSINESS')
     }
@@ -292,24 +499,24 @@ export default function App() {
   // =========================================================================
   // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT ET ÉNERGIE SOLAIRE (RDC)
   // =========================================================================
-  const [logisticsCatalog, setLogisticsCatalog] = useState<LogisticsItem[]>(initialLogisticsCatalog);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderItem[]>(initialPurchaseOrders);
-  const [deliveryNotes, setDeliveryNotes] = useState<DeliveryNoteItem[]>(initialDeliveryNotes);
-  const [shipments, setShipments] = useState<ShipmentTracking[]>(initialShipments);
-  const [proformas, setProformas] = useState<ProformaInvoiceItem[]>(initialProformas);
-  const [netInvoices, setNetInvoices] = useState<NetToPayInvoiceItem[]>(initialNetToPayInvoices);
+  const [logisticsCatalog, setLogisticsCatalog] = usePersistentState<LogisticsItem[]>('logistics.catalog', initialLogisticsCatalog);
+  const [purchaseOrders, setPurchaseOrders] = usePersistentState<PurchaseOrderItem[]>('logistics.purchaseOrders', initialPurchaseOrders);
+  const [deliveryNotes, setDeliveryNotes] = usePersistentState<DeliveryNoteItem[]>('logistics.deliveryNotes', initialDeliveryNotes);
+  const [shipments, setShipments] = usePersistentState<ShipmentTracking[]>('logistics.shipments', initialShipments);
+  const [proformas, setProformas] = usePersistentState<ProformaInvoiceItem[]>('logistics.proformas', initialProformas);
+  const [netInvoices, setNetInvoices] = usePersistentState<NetToPayInvoiceItem[]>('logistics.netInvoices', initialNetToPayInvoices);
 
   // GESTION DES 6 HUBS PROVINCIAUX & STOCKS DÉCENTRALISÉS
-  const [hubs, setHubs] = useState<LogisticsHub[]>(initialHubs);
-  const [stocks, setStocks] = useState<HubStockItem[]>(initialHubStocks);
-  const [stockMovements, setStockMovements] = useState<StockMovementItem[]>(initialStockMovements);
+  const [hubs, setHubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', initialHubs);
+  const [stocks, setStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
+  const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', initialStockMovements);
 
   const handleAddHub = (newHub: LogisticsHub) => {
     setHubs(prev => [newHub, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Création Hub Provincial',
@@ -436,8 +643,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: `Mouvement de Stock (${mvt.type})`,
@@ -539,8 +746,8 @@ export default function App() {
     setDocuments(prev => [docItem, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Émission Bon de Commande (BC)',
@@ -563,8 +770,8 @@ export default function App() {
     } : o));
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Approbation / Visa Bon de Commande',
@@ -608,8 +815,8 @@ export default function App() {
     setDocuments(prev => [docItem, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Enregistrement Bon de Livraison (BL)',
@@ -639,8 +846,8 @@ export default function App() {
     } : s));
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Mise à Jour Jalon Fret Logistique',
@@ -657,8 +864,8 @@ export default function App() {
     setShipments(prev => [shipment, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Création Expédition Fret',
@@ -702,8 +909,8 @@ export default function App() {
     setDocuments(prev => [docItem, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Émission Facture Proforma',
@@ -722,7 +929,7 @@ export default function App() {
 
     if (target === 'invoice') {
       const newInvoice: NetToPayInvoiceItem = {
-        id: `fac-${Date.now()}`,
+        id: newId('fac'),
         invoiceNumber: `FAC-2026-VSAT-${String(netInvoices.length + 1).padStart(3, '0')}`,
         proformaReference: pro.proformaNumber,
         organizationId: currentOrg.id,
@@ -771,8 +978,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Conversion Facture Proforma',
@@ -816,8 +1023,8 @@ export default function App() {
     setDocuments(prev => [docItem, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Émission Facture Net à Payer',
@@ -844,7 +1051,7 @@ export default function App() {
         paymentRecords: [
           ...inv.paymentRecords,
           {
-            id: `pay-${Date.now()}`,
+            id: newId('pay'),
             date: new Date().toISOString().split('T')[0],
             amountUSD,
             amountCDF: amountUSD * inv.currencyRate,
@@ -857,8 +1064,8 @@ export default function App() {
     }));
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Règlement Facture Net à Payer',
@@ -876,8 +1083,8 @@ export default function App() {
   // =========================================================================
   // GESTION DES INVITATIONS INTER-ENTITÉS & CLÉS 10 CHIFFRES
   // =========================================================================
-  const [invitations, setInvitations] = useState<EntityInvitation[]>(initialEntityInvitations);
-  const [invitationNotifications, setInvitationNotifications] = useState<EntityInvitationNotification[]>(initialInvitationNotifications);
+  const [invitations, setInvitations] = usePersistentState<EntityInvitation[]>('invitations', initialEntityInvitations);
+  const [invitationNotifications, setInvitationNotifications] = usePersistentState<EntityInvitationNotification[]>('invitationNotifications', initialInvitationNotifications);
   const [activeGuestInvitation, setActiveGuestInvitation] = useState<EntityInvitation | null>(null);
 
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
@@ -890,12 +1097,12 @@ export default function App() {
     setInvitationNotifications(prev => [notification, ...prev]);
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Émission Invitation Inter-Entités',
-        category: 'securite',
+        category: 'security',
         details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
         ip: '192.168.1.100',
         hash: `sha256-inv-${Date.now()}`
@@ -909,8 +1116,8 @@ export default function App() {
     setInvitations(prev => prev.map(inv => inv.id === invitation.id ? { ...inv, status: 'en_session', connectedAt: new Date().toISOString() } : inv));
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Connexion Inter-Entités par Clé Unique',
@@ -927,8 +1134,8 @@ export default function App() {
     if (activeGuestInvitation) {
       setLogs(prev => [
         {
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
+          id: newId('log'),
+          timestamp: nowStamp(),
           userName: currentUser.name,
           userRole: currentUser.roleTitle,
           action: 'Clôture Session Invité',
@@ -1015,8 +1222,8 @@ export default function App() {
     if (auditNote) {
       setLogs(prev => [
         {
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
+          id: newId('log'),
+          timestamp: nowStamp(),
           userName: currentUser.name,
           userRole: currentUser.roleTitle,
           action: 'Mise à jour Paie RH',
@@ -1039,8 +1246,8 @@ export default function App() {
     }));
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Réinitialisation Barème RDC',
@@ -1061,8 +1268,8 @@ export default function App() {
     const shouldLock = breachCount >= 2;
 
     const newAlert: SecurityAlert = {
-      id: `sec-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
+      id: newId('sec'),
+      timestamp: nowStamp(),
       userId: targetAgent.id,
       userName: targetAgent.name,
       userRole: targetAgent.role,
@@ -1093,8 +1300,8 @@ export default function App() {
     // Inscription au journal d'audit
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: targetAgent.name,
         userRole: targetAgent.roleTitle,
         action: shouldLock ? 'VERROUILLAGE SÉCURITÉ RÉCIDIVE' : 'ALERTE INTRUSION DÉTECTÉE',
@@ -1130,8 +1337,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Mise à jour Identité Entreprise',
@@ -1149,9 +1356,9 @@ export default function App() {
     e.preventDefault();
     if (!newOrgForm.name.trim()) return;
 
-    const newId = `org-${Date.now()}`;
+    const newOrgId = newId('org');
     const newOrg: Organization = {
-      id: newId,
+      id: newOrgId,
       name: newOrgForm.name.trim(),
       type: newOrgForm.type,
       registrationNumber: newOrgForm.registrationNumber.trim(),
@@ -1174,7 +1381,7 @@ export default function App() {
     // Initialiser le système de paie pour cette nouvelle organisation
     setPayrollConfigs(prev => ({
       ...prev,
-      [newId]: createStandardPayrollSystem(newId, newOrg.name)
+      [newOrgId]: createStandardPayrollSystem(newOrgId, newOrg.name)
     }));
 
     setShowNewOrgModal(false);
@@ -1191,8 +1398,8 @@ export default function App() {
 
     setLogs(prev => [
       {
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        id: newId('log'),
+        timestamp: nowStamp(),
         userName: currentUser.name,
         userRole: currentUser.roleTitle,
         action: 'Création Organisation',
@@ -1221,14 +1428,18 @@ export default function App() {
           onSelectOrg={(org) => setCurrentOrg(org)}
           users={users}
           onLogin={handleLogin}
+          onFailedAttempt={handleFailedLogin}
+          onPasswordChanged={handlePasswordChanged}
           onOpenOnboarding={() => setShowOnboardingWizard(true)}
           onboardingSuccessMsg={onboardingSuccessMsg}
+          sessionNotice={sessionNotice}
         />
         <OrganizationOnboardingWizard
           isOpen={showOnboardingWizard}
           onClose={() => setShowOnboardingWizard(false)}
           onCompleteOnboarding={handleCompleteOnboarding}
         />
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </>
     );
   }
@@ -1255,7 +1466,8 @@ export default function App() {
         }}
         users={users}
         currentUser={currentUser}
-        onSelectUser={setCurrentUser}
+        // Changement d'utilisateur sans mot de passe : réservé au mode démonstration.
+        onSelectUser={DEMO_MODE ? handleDemoSwitchUser : undefined}
         securityAlerts={alerts}
         unreadNotificationsCount={invitationNotifications.filter(n => {
           const uMat = (currentUser.matricule || currentUser.employeeCode || '').toUpperCase().trim();
@@ -1283,8 +1495,9 @@ export default function App() {
           });
           setShowOrgIdentityModal(true);
         }}
-        onOpenNewAccount={() => setShowOnboardingWizard(true)}
+        onOpenNewAccount={currentUser.role === 'dg' ? () => setShowOnboardingWizard(true) : undefined}
         onOpenHelp={() => setShowHelpModal(true)}
+        onOpenBackup={() => setShowBackupModal(true)}
       />
 
       {/* BANNIÈRE DE SESSION INVITÉ INTER-ENTITÉS ACTIVE */}
@@ -1314,7 +1527,7 @@ export default function App() {
               tasks={tasks}
               documents={documents}
               contracts={contracts}
-              onSelectUser={setCurrentUser}
+              onSelectUser={DEMO_MODE ? handleDemoSwitchUser : undefined}
               onOpenLogistics={() => setCurrentTab('logistics')}
               onOpenConnectKey={() => setShowConnectKeyModal(true)}
               onOpenInviteAgent={() => setShowInviteModal(true)}
@@ -1347,12 +1560,12 @@ export default function App() {
                 setShowOrgIdentityModal(true);
               }}
               onAddEntity={newEnt => {
-                const entWithId = { ...newEnt, id: `ent-${Date.now()}` };
+                const entWithId = { ...newEnt, id: newId('ent') };
                 setEntities(prev => [...prev, entWithId]);
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Création Entité Hiérarchique',
@@ -1370,8 +1583,8 @@ export default function App() {
                 if (target) {
                   setLogs(prev => [
                     {
-                      id: `log-${Date.now()}`,
-                      timestamp: new Date().toLocaleTimeString(),
+                      id: newId('log'),
+                      timestamp: nowStamp(),
                       userName: currentUser.name,
                       userRole: currentUser.roleTitle,
                       action: 'Suppression Entité',
@@ -1407,8 +1620,8 @@ export default function App() {
               onLogAction={(act, det, cat) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: act,
@@ -1430,12 +1643,12 @@ export default function App() {
               currentUser={currentUser}
               entities={entities}
               onAddDocument={newDoc => {
-                const docWithId = { ...newDoc, id: `doc-${Date.now()}` };
+                const docWithId = { ...newDoc, id: newId('doc') };
                 setDocuments(prev => [docWithId, ...prev]);
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Publication Document',
@@ -1456,8 +1669,8 @@ export default function App() {
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action,
@@ -1487,12 +1700,12 @@ export default function App() {
                 } : t));
               }}
               onAddTask={newTask => {
-                const createdTask = { ...newTask, id: `task-${Date.now()}` };
+                const createdTask = { ...newTask, id: newId('task') };
                 setTasks(prev => [createdTask, ...prev]);
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Création Tâche Workflow',
@@ -1510,8 +1723,8 @@ export default function App() {
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action,
@@ -1580,8 +1793,8 @@ export default function App() {
                 onLogAction={(action, details, category) => {
                   setLogs(prev => [
                     {
-                      id: `log-${Date.now()}`,
-                      timestamp: new Date().toLocaleTimeString(),
+                      id: newId('log'),
+                      timestamp: nowStamp(),
                       userName: currentUser.name,
                       userRole: currentUser.roleTitle,
                       action,
@@ -1606,11 +1819,14 @@ export default function App() {
               payrollConfig={payrollConfigs[currentOrg.id] || createStandardPayrollSystem(currentOrg.id, currentOrg.name)}
               onUpdatePayrollConfig={handleUpdatePayrollConfig}
               onResetToStandard={handleResetPayrollToStandard}
+              contracts={contracts}
+              onContractsChange={setContracts}
+              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev.filter(d => d.id !== doc.id)])}
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action,
@@ -1638,8 +1854,8 @@ export default function App() {
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action,
@@ -1668,8 +1884,8 @@ export default function App() {
               onLogAction={(action, details, category) => {
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action,
@@ -1696,8 +1912,8 @@ export default function App() {
                 const target = users.find(u => u.id === id);
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Verrouillage Forcé Utilisateur',
@@ -1714,8 +1930,8 @@ export default function App() {
                 const target = users.find(u => u.id === id);
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Déverrouillage Utilisateur',
@@ -1731,8 +1947,8 @@ export default function App() {
                 setAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'resolue' } : a));
                 setLogs(prev => [
                   {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
+                    id: newId('log'),
+                    timestamp: nowStamp(),
                     userName: currentUser.name,
                     userRole: currentUser.roleTitle,
                     action: 'Résolution Alerte Sécurité',
@@ -1756,70 +1972,62 @@ export default function App() {
               organization={currentOrg}
               onToggleDelegation={handleToggleDelegation}
               onCreateUser={newUser => {
+                // Mot de passe provisoire : affiché une seule fois au créateur, à changer à la 1re connexion.
+                const tempPassword = DEMO_MODE ? DEMO_PASSWORD : generateTemporaryPassword();
                 const createdUser: User = {
                   ...newUser,
-                  id: `usr-${Date.now()}`,
+                  id: newId('usr'),
+                  password: tempPassword,
+                  mustChangePassword: !DEMO_MODE,
                   failedAccessAttempts: 0,
                   status: 'actif'
                 };
                 setUsers(prev => [...prev, createdUser]);
-                setLogs(prev => [
-                  {
-                    id: `log-${Date.now()}`,
-                    timestamp: new Date().toLocaleTimeString(),
-                    userName: currentUser.name,
-                    userRole: currentUser.roleTitle,
-                    action: 'Création Compte Collaborateur',
-                    category: 'admin',
-                    details: `Création du compte ${createdUser.name} (${createdUser.roleTitle})`,
-                    ip: '127.0.0.1',
-                    hash: `sha256-usr-${Date.now()}`
-                  },
-                  ...prev
-                ]);
+                addAuditLog({
+                  action: 'Création Compte Collaborateur',
+                  category: 'admin',
+                  details: `Création du compte ${createdUser.name} (${createdUser.roleTitle})`,
+                });
+                showToast(
+                  'success',
+                  `Compte créé pour ${createdUser.name}. Identifiant : ${createdUser.email} — mot de passe ${DEMO_MODE ? 'de démonstration' : 'provisoire'} : ${tempPassword}. Notez-le : il ne sera plus affiché.`,
+                  0
+                );
               }}
               onRevokeUser={id => {
                 const target = users.find(u => u.id === id);
+                if (target?.id === currentUser.id) {
+                  showToast('error', 'Vous ne pouvez pas révoquer votre propre compte.');
+                  return;
+                }
                 setUsers(prev => prev.filter(u => u.id !== id));
                 if (target) {
-                  setLogs(prev => [
-                    {
-                      id: `log-${Date.now()}`,
-                      timestamp: new Date().toLocaleTimeString(),
-                      userName: currentUser.name,
-                      userRole: currentUser.roleTitle,
-                      action: 'Révocation Compte Collaborateur',
-                      category: 'admin',
-                      details: `Révocation définitive des accès de ${target.name} (${target.email})`,
-                      ip: '127.0.0.1',
-                      hash: `sha256-rev-${Date.now()}`
-                    },
-                    ...prev
-                  ]);
+                  addAuditLog({
+                    action: 'Révocation Compte Collaborateur',
+                    category: 'admin',
+                    details: `Révocation définitive des accès de ${target.name} (${target.email})`,
+                  });
                 }
               }}
               onToggleUserStatus={id => {
-                setUsers(prev => prev.map(u => {
-                  if (u.id === id) {
-                    const nextStatus = u.status === 'actif' ? 'suspendu' : 'actif';
-                    setLogs(l => [
-                      {
-                        id: `log-${Date.now()}`,
-                        timestamp: new Date().toLocaleTimeString(),
-                        userName: currentUser.name,
-                        userRole: currentUser.roleTitle,
-                        action: 'Changement Statut Compte',
-                        category: 'admin',
-                        details: `Passage du statut de ${u.name} à: ${nextStatus.toUpperCase()}`,
-                        ip: '127.0.0.1',
-                        hash: `sha256-stat-${Date.now()}`
-                      },
-                      ...l
-                    ]);
-                    return { ...u, status: nextStatus };
-                  }
-                  return u;
-                }));
+                const target = users.find(u => u.id === id);
+                if (!target) return;
+                if (target.id === currentUser.id) {
+                  showToast('error', 'Vous ne pouvez pas suspendre votre propre compte.');
+                  return;
+                }
+                const nextStatus: User['status'] = target.status === 'actif' ? 'suspendu' : 'actif';
+                // Réactivation : on remet aussi à zéro le compteur d'échecs de connexion.
+                setUsers(prev => prev.map(u =>
+                  u.id === id
+                    ? { ...u, status: nextStatus, failedAccessAttempts: nextStatus === 'actif' ? 0 : u.failedAccessAttempts }
+                    : u
+                ));
+                addAuditLog({
+                  action: 'Changement Statut Compte',
+                  category: 'admin',
+                  details: `Passage du statut de ${target.name} à : ${nextStatus.toUpperCase()}`,
+                });
               }}
             />
           )}
@@ -2433,8 +2641,8 @@ class DocumentPolicy
           onLogAction={(act, det, cat) => {
             setLogs(prev => [
               {
-                id: `log-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString(),
+                id: newId('log'),
+                timestamp: nowStamp(),
                 userName: currentUser.name,
                 userRole: currentUser.roleTitle,
                 action: act,
@@ -2460,8 +2668,8 @@ class DocumentPolicy
           onLogAction={(act, det, cat) => {
             setLogs(prev => [
               {
-                id: `log-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString(),
+                id: newId('log'),
+                timestamp: nowStamp(),
                 userName: currentUser.name,
                 userRole: currentUser.roleTitle,
                 action: act,
@@ -2491,8 +2699,8 @@ class DocumentPolicy
           onLogAction={(act, det, cat) => {
             setLogs(prev => [
               {
-                id: `log-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString(),
+                id: newId('log'),
+                timestamp: nowStamp(),
                 userName: currentUser.name,
                 userRole: currentUser.roleTitle,
                 action: act,
@@ -2528,6 +2736,15 @@ class DocumentPolicy
         onClose={() => setShowOnboardingWizard(false)}
         onCompleteOnboarding={handleCompleteOnboarding}
       />
+
+      <DataBackupModal
+        isOpen={showBackupModal}
+        canManage={currentUser.role === 'dg'}
+        onClose={() => setShowBackupModal(false)}
+        onAudit={(action, details) => addAuditLog({ action, category: 'admin', details })}
+      />
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

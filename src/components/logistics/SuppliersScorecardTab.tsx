@@ -1,5 +1,6 @@
 // src/components/logistics/SuppliersScorecardTab.tsx
 import React, { useState } from 'react';
+import { usePersistentState } from '../../hooks/usePersistentState';
 import type { PurchaseOrderItem, ShipmentTracking, User } from '../../types';
 import { 
   Building2, 
@@ -193,7 +194,7 @@ export const SuppliersScorecardTab: React.FC<Props> = ({
   onSelectSupplierForOrder,
   onLogAction
 }) => {
-  const [partners, setPartners] = useState<SupplierPartner[]>(INITIAL_PARTNERS);
+  const [partners, setPartners] = usePersistentState<SupplierPartner[]>('logistics.suppliers', INITIAL_PARTNERS);
   const [filterType, setFilterType] = useState<'all' | 'fournisseur_materiel' | 'transitaire_fret' | 'transporteur_national'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPartner, setSelectedPartner] = useState<SupplierPartner | null>(null);

@@ -1,6 +1,11 @@
 // src/components/OrganizationOnboardingWizard.tsx
 import React, { useState } from 'react';
 import type { Organization, HierarchicalEntity, User, UserRole } from '../types';
+import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import { generateTemporaryPassword, validatePasswordStrength } from '../lib/auth';
+
+/** Mot de passe initial d'un compte : celui de la démo, ou un mot de passe provisoire aléatoire. */
+const initialPassword = () => (DEMO_MODE ? DEMO_PASSWORD : generateTemporaryPassword());
 import { 
   Building2, 
   CheckCircle2, 
@@ -59,7 +64,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
     dgName: 'Junior Monya',
     dgEmail: 'dg@rhemabusiness.com',
     dgMatricule: 'MAT-2026-001',
-    dgPassword: 'rhema2026',
+    dgPassword: initialPassword(),
   });
 
   // Étape 2 : Préconfiguration de l'Arborescence Hiérarchique
@@ -106,7 +111,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'Junior Monya',
       matricule: 'MAT-2026-001',
       email: 'dg@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'dg',
       roleTitle: 'Directeur Général (DG)',
       entityName: 'Direction Générale',
@@ -117,7 +122,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'M. Ibrahima Sarr',
       matricule: 'MAT-2026-002',
       email: 'daf@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'chef_departement',
       roleTitle: 'Chef de Département DAF',
       departementId: 'dept-daf',
@@ -129,7 +134,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'M. Alain Boni',
       matricule: 'MAT-2026-003',
       email: 'operations@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'chef_departement',
       roleTitle: 'Chef de Département DOP',
       departementId: 'dept-ops',
@@ -141,7 +146,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'M. Jean-Paul Kouassi',
       matricule: 'MAT-2026-004',
       email: 'drh@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'directeur',
       roleTitle: 'Directeur des Ressources Humaines (DRH)',
       departementId: 'dept-daf',
@@ -154,7 +159,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'Mme Sophie Traoré',
       matricule: 'MAT-2026-005',
       email: 'compta@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'chef_service',
       roleTitle: 'Chef de Service Comptabilité & Trésorerie',
       departementId: 'dept-daf',
@@ -167,7 +172,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'M. Eric Ndong',
       matricule: 'MAT-2026-006',
       email: 'vsat@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'agent',
       roleTitle: 'Ingénieur Terrain VSAT & Faisceaux',
       departementId: 'dept-ops',
@@ -181,7 +186,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       name: 'Mlle Claire Mwamba',
       matricule: 'MAT-2026-007',
       email: 'support@rhemabusiness.com',
-      password: 'rhema2026',
+      password: initialPassword(),
       role: 'agent',
       roleTitle: 'Agent Support Opérationnel',
       departementId: 'dept-ops',
@@ -196,7 +201,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
 
   const copyAllCredentials = () => {
     const text = agentsList.map(a => 
-      `• ${a.name} (${getRoleTitleFr(a.role)})\n  Matricule : ${a.matricule} | Email / Login : ${a.email} | Mot de passe : ${a.password} | Périmètre : ${a.entityName}`
+      `• ${a.name} (${getRoleTitleFr(a.role)})\n  Matricule : ${a.matricule} | Email / Login : ${a.email} | Mot de passe : ${a.role === 'dg' ? orgForm.dgPassword : a.password} | Périmètre : ${a.entityName}`
     ).join('\n\n');
 
     navigator.clipboard.writeText(
@@ -287,7 +292,10 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       email: a.email,
       matricule: a.matricule,
       employeeCode: a.matricule,
-      password: a.password,
+      // Le compte DG reçoit le mot de passe saisi à l'étape 1.
+      password: a.role === 'dg' ? orgForm.dgPassword : a.password,
+      // En production, tout mot de passe provisoire ou faible doit être changé à la 1re connexion.
+      mustChangePassword: !DEMO_MODE && (a.role !== 'dg' || validatePasswordStrength(orgForm.dgPassword) !== null),
       role: a.role,
       roleTitle: a.roleTitle,
       organizationId: orgId,
@@ -613,7 +621,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                         </td>
                         <td className="p-3 text-slate-200">{a.email}</td>
                         <td className="p-3 text-amber-300 font-bold bg-slate-900/40 px-2 rounded">
-                          {a.password}
+                          {a.role === 'dg' ? orgForm.dgPassword : a.password}
                         </td>
                         <td className="p-3 font-sans">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border inline-block ${getRoleBadgeClass(a.role)}`}>

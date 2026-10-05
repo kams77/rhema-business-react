@@ -14,7 +14,8 @@ import {
   Briefcase,
   LogOut,
   Bell,
-  KeyRound
+  KeyRound,
+  Database
 } from 'lucide-react';
 import { getRoleBadgeClass } from '../utils/rbac';
 
@@ -37,6 +38,7 @@ interface NavbarProps {
   onOpenOrgIdentity?: () => void;
   onOpenWorkspace?: () => void;
   onLogout?: () => void;
+  onOpenBackup?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -45,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectOrg = (_org: Organization) => {},
   users = [],
   currentUser,
-  onSelectUser = (_user: User) => {},
+  onSelectUser,
   securityAlerts = [],
   unreadNotificationsCount = 0,
   onOpenNotifications,
@@ -53,18 +55,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenInviteAgent,
   isEntityManagerUser = false,
   onOpenSecurity = () => {},
-  onOpenNewAccount = () => {},
+  onOpenNewAccount,
   onOpenHelp = () => {},
   onOpenOrgIdentity = () => {},
   onOpenWorkspace = () => {},
   onLogout,
+  onOpenBackup,
 }) => {
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const activeAlertCount = (securityAlerts || []).filter(a => a && a.status !== 'resolue').length;
 
-  const activeOrg = currentOrg || organizations[0] || {
+  const activeOrg: Pick<Organization, 'id' | 'name' | 'type' | 'logo'> = currentOrg || organizations[0] || {
     id: 'org-1',
     name: 'RHEMA BUSINESS',
     type: 'entreprise' as const,
@@ -153,6 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         Gérer le Nom & Logo ({activeUser.role === 'dg' ? 'Droit DG' : 'Consultation'})
                       </button>
 
+                      {onOpenNewAccount && (
                       <button
                         onClick={() => {
                           setShowOrgDropdown(false);
@@ -163,6 +167,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <PlusCircle className="w-3.5 h-3.5" />
                         Créer une nouvelle organisation
                       </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -267,6 +272,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {showUserDropdown && (
               <div className="absolute right-0 mt-2 w-80 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2.5 z-50">
+                {onSelectUser ? (
+                  <>
                 <div className="px-2 pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400">
                   Changer d'utilisateur pour tester les privilèges :
                 </div>
@@ -295,6 +302,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   ))}
                 </div>
+                  </>
+                ) : (
+                  <div className="px-2 pb-1 text-[11px] text-slate-400">
+                    <div className="font-semibold text-slate-100 text-xs">{activeUser.name}</div>
+                    <div className="truncate">{activeUser.roleTitle}</div>
+                    {'email' in activeUser && <div className="font-mono truncate mt-0.5">{activeUser.email}</div>}
+                  </div>
+                )}
+
+                {onOpenBackup && (
+                  <div className="pt-2 mt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        onOpenBackup();
+                      }}
+                      className="w-full p-2 rounded-lg text-xs flex items-center gap-2 text-slate-200 hover:bg-slate-800 transition font-semibold"
+                    >
+                      <Database className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Sauvegarde des données</span>
+                    </button>
+                  </div>
+                )}
 
                 {onLogout && (
                   <div className="pt-2 mt-2 border-t border-slate-800">
