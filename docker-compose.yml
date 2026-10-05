@@ -1,0 +1,13 @@
+# Démarrage avec Docker Compose (Synology Container Manager → Projet, ou `docker compose up -d`).
+# Le site est servi sur le port 8080 ; placez devant un reverse proxy HTTPS.
+services:
+  rhema:
+    build:
+      context: .
+      args:
+        VITE_DEMO_MODE: "false"   # "true" pour la version de démonstration
+    image: rhema-business:latest
+    container_name: rhema-business
+    ports:
+      - "8080:80"
+    restart: unless-stopped

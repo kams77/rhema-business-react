@@ -67,6 +67,9 @@ jobs:
       - name: Construction de l'image Docker
         run: docker build -t rhema-business .
 
+      - name: Vérification du fichier docker-compose
+        run: docker compose config -q
+
       - name: Démarrage et contrôle du site
         run: |
           docker run -d -p 8080:80 --name rhema rhema-business
