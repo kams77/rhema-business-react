@@ -33,7 +33,11 @@ import {
   Barcode,
   Warehouse,
   Boxes,
-  Activity
+  Activity,
+  Calculator,
+  Scan,
+  Award,
+  FileSpreadsheet
 } from 'lucide-react';
 import { LogisticsSummaryCards } from './logistics/LogisticsSummaryCards';
 import { PurchaseOrdersTab } from './logistics/PurchaseOrdersTab';
@@ -42,6 +46,10 @@ import { ShipmentTrackingTab } from './logistics/ShipmentTrackingTab';
 import { InvoicesTab } from './logistics/InvoicesTab';
 import { HubsStockManagementTab } from './logistics/HubsStockManagementTab';
 import { HubsStockChartDashboard } from './logistics/HubsStockChartDashboard';
+import { SolarVsatCalculatorTab } from './logistics/SolarVsatCalculatorTab';
+import { UniversalSerialTrackerTab } from './logistics/UniversalSerialTrackerTab';
+import { SuppliersScorecardTab } from './logistics/SuppliersScorecardTab';
+import { LogisticsReportsAndExportsTab } from './logistics/LogisticsReportsAndExportsTab';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 
 interface LogisticsModuleViewProps {
@@ -103,7 +111,9 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   onRegisterPayment,
   onLogAction,
 }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'hubs' | 'orders' | 'delivery' | 'shipments' | 'invoices'>('dashboard');
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'hubs' | 'calculator' | 'serial_tracker' | 'orders' | 'delivery' | 'shipments' | 'invoices' | 'suppliers' | 'export_center'
+  >('dashboard');
   
   // Alertes de stock calculées en temps réel
   const stockAlertsCount = React.useMemo(() => {
@@ -119,6 +129,46 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
 
   const isAgent = currentUser.role === 'agent';
   const roleTitle = currentUser.roleTitle || (isAgent ? 'Agent Opérationnel' : 'Superviseur / Direction');
+
+  // Convertit une demande de rapport technique en DocumentItem imprimable
+  const handlePrintCustomDoc = (title: string, desc: string, refNum: string, amount: number) => {
+    const docItem: DocumentItem = {
+      id: `doc-log-${Date.now()}`,
+      title,
+      referenceNumber: refNum,
+      category: 'chaine_logistique_commerciale',
+      subtype: 'bon_livraison',
+      organizationId: organization.id,
+      authorId: currentUser.id,
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      authorEntity: currentUser.departmentName || 'Département Logistique & Opérations',
+      createdAt: new Date().toISOString().split('T')[0],
+      status: 'signe',
+      size: '320 KB',
+      fileType: 'PDF',
+      amount,
+      currency: 'USD',
+      description: desc,
+      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      permissions: {
+        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
+        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
+        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
+      },
+      electronicSignature: {
+        signedBy: currentUser.name,
+        signedAt: new Date().toISOString(),
+        role: currentUser.roleTitle,
+        certificateHash: `sha256-cert-log-rdc-${Date.now()}`
+      }
+    };
+    setPrintableDoc(docItem);
+    if (onLogAction) {
+      onLogAction('Émission Rapport Logistique Certifié', `Document ${refNum} (${title}) imprimé.`, 'document');
+    }
+  };
 
   // Convertit un objet logistique en DocumentItem compatible avec RhemaOfficialDocument
   const handlePrintItem = (
@@ -249,7 +299,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2.5 transition shadow-lg ${
+              className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition shadow-lg ${
                 activeTab === 'dashboard'
                   ? 'bg-amber-500 text-slate-950 border-amber-400 font-extrabold shadow-amber-500/25'
                   : 'bg-slate-950/80 hover:bg-slate-900 text-slate-200 border-slate-800'
@@ -259,27 +309,53 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
                 <Activity className="w-4 h-4" />
               </div>
               <div className="text-left">
-                <div className="text-[10px] uppercase font-bold text-slate-400">Supervision Visuelle</div>
-                <div className="text-xs font-black flex items-center gap-1.5">
-                  <span>Graphiques Recharts</span>
+                <div className="text-[10px] uppercase font-bold text-slate-400">Supervision</div>
+                <div className="text-xs font-black flex items-center gap-1">
+                  <span>Recharts</span>
                   {immediateRupturesCount > 0 ? (
-                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[10px] animate-pulse">
-                      {immediateRupturesCount} Rupture{immediateRupturesCount > 1 ? 's' : ''}
+                    <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[9px] animate-pulse">
+                      {immediateRupturesCount} Rupt.
                     </span>
-                  ) : stockAlertsCount > 0 ? (
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-mono text-[10px]">
-                      {stockAlertsCount} Alertes
-                    </span>
-                  ) : (
-                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
-                      Temps Réel
-                    </span>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </button>
 
-            <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-xs shrink-0 flex items-center gap-3">
+            <button
+              onClick={() => setActiveTab('calculator')}
+              className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition shadow-lg ${
+                activeTab === 'calculator'
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-extrabold shadow-amber-500/25'
+                  : 'bg-slate-950/80 hover:bg-slate-900 text-slate-200 border-slate-800'
+              }`}
+            >
+              <div className="p-1.5 rounded-lg bg-orange-500/20 text-orange-400">
+                <Calculator className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Ingénierie</div>
+                <div className="text-xs font-black">Dimensionneur</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('serial_tracker')}
+              className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 transition shadow-lg ${
+                activeTab === 'serial_tracker'
+                  ? 'bg-sky-500 text-slate-950 border-sky-400 font-extrabold shadow-sky-500/25'
+                  : 'bg-slate-950/80 hover:bg-slate-900 text-slate-200 border-slate-800'
+              }`}
+            >
+              <div className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400">
+                <Scan className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Scanner</div>
+                <div className="text-xs font-black">S/N & Codes</div>
+              </div>
+            </button>
+
+            <div className="p-2.5 bg-slate-950/80 rounded-xl border border-slate-800 text-xs shrink-0 flex items-center gap-2.5">
               <div className={`p-2 rounded-xl ${isAgent ? 'bg-emerald-500/15 text-emerald-400' : 'bg-sky-500/15 text-sky-400'}`}>
                 <ShieldCheck className="w-5 h-5" />
               </div>
@@ -294,9 +370,6 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
                   }`}>
                     {isAgent ? 'AGENT EXÉCUTANT' : currentUser.role.toUpperCase()}
                   </span>
-                </div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
-                  {currentUser.departmentName || 'Service Opérationnel'} — Saisie & certification active
                 </div>
               </div>
             </div>
@@ -332,14 +405,14 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto select-none">
         <button
           onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'dashboard'
               ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-extrabold'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Activity className="w-4 h-4" />
-          <span>1. Graphiques Stocks & Alertes Recharts</span>
+          <span>1. Graphiques Stocks & Ruptures</span>
           {immediateRupturesCount > 0 ? (
             <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white font-mono text-[10px] font-black animate-pulse">
               {immediateRupturesCount} Rupture{immediateRupturesCount > 1 ? 's' : ''}
@@ -357,62 +430,110 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
 
         <button
           onClick={() => setActiveTab('hubs')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'hubs'
               ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 font-extrabold'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Warehouse className="w-4 h-4" />
-          2. Stocks & Hubs Provinciaux ({hubs.length} Hubs)
+          <span>2. Stocks & Hubs Provinciaux ({hubs.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('calculator')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'calculator'
+              ? 'bg-orange-500 text-slate-950 shadow-md shadow-orange-500/25 font-extrabold'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Calculator className="w-4 h-4 text-orange-400" />
+          <span>3. Dimensionneur Solaire & Kits VSAT</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('serial_tracker')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'serial_tracker'
+              ? 'bg-sky-500 text-slate-950 shadow-md shadow-sky-500/25 font-extrabold'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Scan className="w-4 h-4 text-sky-400" />
+          <span>4. Traçabilité S/N & Scanner Codes</span>
         </button>
 
         <button
           onClick={() => setActiveTab('orders')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'orders'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Package className="w-4 h-4" />
-          3. Bons de Commande ({orders.length})
+          <span>5. Bons de Commande ({orders.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab('delivery')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'delivery'
               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <CheckCircle2 className="w-4 h-4" />
-          4. Bons de Livraison & S/N ({deliveryNotes.length})
+          <span>6. Bons de Livraison & S/N ({deliveryNotes.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab('shipments')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'shipments'
               ? 'bg-sky-600 text-white shadow-md shadow-sky-600/25'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Truck className="w-4 h-4" />
-          5. Suivi Expéditions Fret ({shipments.length})
+          <span>7. Suivi Fret & DGDA ({shipments.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab('invoices')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
             activeTab === 'invoices'
               ? 'bg-amber-600 text-white shadow-md shadow-amber-600/25'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <DollarSign className="w-4 h-4" />
-          6. Factures Proforma & Net à Payer ({invoices.length + proformas.length})
+          <span>8. Factures Proforma & Net ({invoices.length + proformas.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('suppliers')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'suppliers'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Award className="w-4 h-4 text-indigo-400" />
+          <span>9. Fournisseurs & Transporteurs</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('export_center')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition shrink-0 ${
+            activeTab === 'export_center'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+          <span>10. Exports & Rapports DGDA</span>
         </button>
       </div>
 
@@ -443,6 +564,32 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           onApproveMovement={onApproveMovement}
           onReceiveTransfer={onReceiveTransfer}
           onPrintDocument={(mvt, type) => handlePrintItem(mvt, type)}
+          onLogAction={onLogAction}
+        />
+      )}
+
+      {activeTab === 'calculator' && (
+        <SolarVsatCalculatorTab
+          currentUser={currentUser}
+          organization={organization}
+          catalog={catalog}
+          hubs={hubs}
+          stocks={stocks}
+          onCreateOrder={onCreateOrder}
+          onNavigateToTab={(target) => setActiveTab(target)}
+          onPrintOfficialDoc={(title, desc, ref, amount) => handlePrintCustomDoc(title, desc, ref, amount)}
+          onLogAction={onLogAction}
+        />
+      )}
+
+      {activeTab === 'serial_tracker' && (
+        <UniversalSerialTrackerTab
+          stocks={stocks}
+          hubs={hubs}
+          deliveryNotes={deliveryNotes}
+          orders={orders}
+          currentUser={currentUser}
+          onNavigateToTab={(target) => setActiveTab(target)}
           onLogAction={onLogAction}
         />
       )}
@@ -492,6 +639,32 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           onCreateNetInvoice={onCreateNetInvoice}
           onRegisterPayment={onRegisterPayment}
           onPrintInvoice={(item, type) => handlePrintItem(item as any, type)}
+        />
+      )}
+
+      {activeTab === 'suppliers' && (
+        <SuppliersScorecardTab
+          currentUser={currentUser}
+          orders={orders}
+          shipments={shipments}
+          onSelectSupplierForOrder={(supplierName) => {
+            setActiveTab('orders');
+          }}
+          onLogAction={onLogAction}
+        />
+      )}
+
+      {activeTab === 'export_center' && (
+        <LogisticsReportsAndExportsTab
+          currentUser={currentUser}
+          organization={organization}
+          hubs={hubs}
+          stocks={stocks}
+          movements={movements}
+          orders={orders}
+          deliveryNotes={deliveryNotes}
+          onPrintOfficialDoc={(title, desc, ref, amount) => handlePrintCustomDoc(title, desc, ref, amount)}
+          onLogAction={onLogAction}
         />
       )}
 
