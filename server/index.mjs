@@ -42,6 +42,13 @@ async function createDb() {
   });
 }
 
+// Refuse de démarrer avec les valeurs d'exemple du fichier docker-compose.yml.
+const placeholders = ['DB_PASSWORD', 'SETUP_CODE'].filter(k => String(env[k] || '').includes('CHANGEZ_MOI'));
+if (placeholders.length) {
+  console.error(`[rhema] Modifiez d'abord ${placeholders.join(' et ')} dans docker-compose.yml (valeurs « CHANGEZ_MOI »).`);
+  process.exit(1);
+}
+
 const db = await createDb();
 await db.migrate();
 if (!config.setupCode && (await db.countUsers()) === 0) {

@@ -1,13 +1,67 @@
-# Démarrage avec Docker Compose (Synology Container Manager → Projet, ou `docker compose up -d`).
-# Le site est servi sur le port 8080 ; placez devant un reverse proxy HTTPS.
+# RHEMA Business — application + serveur + base MariaDB.
+# Synology : Container Manager → Projet → Créer → choisir ce dossier (voir docs/SYNOLOGY.md).
+# Ailleurs : `docker compose up -d --build`.
+#
+# ⚠️ AVANT LE PREMIER DÉMARRAGE, remplacez les trois valeurs « CHANGEZ_MOI » ci-dessous
+#    (ou définissez-les dans un fichier .env placé à côté de ce fichier).
+#    Le serveur refuse de démarrer tant qu'elles n'ont pas été changées.
+
 services:
-  rhema:
+  db:
+    image: mariadb:11.4
+    container_name: rhema-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: rhema
+      MARIADB_USER: rhema
+      MARIADB_PASSWORD: ${DB_PASSWORD:-CHANGEZ_MOI_mot_de_passe_base}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-CHANGEZ_MOI_mot_de_passe_root}
+      TZ: Africa/Kinshasa
+    # Refuse de démarrer tant que les mots de passe d'exemple n'ont pas été changés
+    # (MariaDB les enregistrerait définitivement au premier démarrage).
+    entrypoint:
+      - sh
+      - -c
+      - |
+        case "$$MARIADB_PASSWORD $$MARIADB_ROOT_PASSWORD" in
+          *CHANGEZ_MOI*) echo "Modifiez DB_PASSWORD et DB_ROOT_PASSWORD dans docker-compose.yml avant de démarrer."; exit 1;;
+        esac
+        exec docker-entrypoint.sh "$$@"
+      - mariadb-entrypoint
+    command:
+      - mariadbd
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-allowed-packet=64M
+    volumes:
+      # Les données restent dans ce dossier du NAS (inclus dans vos sauvegardes Hyper Backup).
+      - ./mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  app:
     build:
       context: .
-      args:
-        VITE_DEMO_MODE: "false"   # "true" pour la version de démonstration
-    image: rhema-business:latest
-    container_name: rhema-business
-    ports:
-      - "8080:80"
+      dockerfile: server/Dockerfile
+    image: rhema-business-serveur:latest
+    container_name: rhema-app
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: rhema
+      DB_USER: rhema
+      DB_PASSWORD: ${DB_PASSWORD:-CHANGEZ_MOI_mot_de_passe_base}
+      # Code demandé une seule fois, lors de l'installation (écran « Installation du serveur »).
+      SETUP_CODE: ${SETUP_CODE:-CHANGEZ_MOI_code_installation}
+      TRUST_PROXY: "true"
+      TZ: Africa/Kinshasa
+    ports:
+      # Port du NAS : http://IP-DU-NAS:8080 (à placer derrière le reverse proxy HTTPS de DSM).
+      - "8080:8080"
