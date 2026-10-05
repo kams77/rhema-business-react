@@ -1,0 +1,31 @@
+# Vérifie automatiquement que le projet s'installe, passe la vérification TypeScript et se compile.
+name: Vérification
+
+on:
+  push:
+    branches: [main, 'amelioration/**']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installation des dépendances
+        run: npm install --no-audit --no-fund
+
+      - name: Vérification TypeScript
+        run: npm run lint
+
+      - name: Compilation (mode production)
+        run: npm run build
+        env:
+          VITE_DEMO_MODE: 'false'
+
+      - name: Compilation (mode démo)
+        run: npm run build
