@@ -106,7 +106,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
         return;
       }
 
-      if (foundUser.mustChangePassword && !DEMO_MODE) {
+      // En production, un compte encore protégé par un mot de passe en clair (données initiales)
+      // ou marqué « à changer » doit choisir un mot de passe personnel avant d'entrer.
+      const mustChange = foundUser.mustChangePassword || (!foundUser.passwordHash && !!foundUser.password);
+      if (mustChange && !DEMO_MODE) {
         setUserToUpdate(foundUser);
         setPassword('');
         return;

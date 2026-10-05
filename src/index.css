@@ -1,6 +1,84 @@
 @import "tailwindcss";
 
-/* Custom scrollbars and styling for Rhema Business ERP */
+/* ========================================================================== */
+/* Thème RHEMA Business                                                        */
+/* ========================================================================== */
+@theme {
+  /* Polices chargées dans index.html */
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Animations utilisées par les composants (animate-in, fade-in, animate-fadeIn…) */
+  --animate-spin-slow: spin 3s linear infinite;
+  --animate-fadeIn: rhema-fade-in 0.25s ease-out both;
+}
+
+@keyframes rhema-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes rhema-slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Équivalents légers des classes « animate-in fade-in slide-in-from-top-* » */
+.animate-in.fade-in {
+  animation: rhema-fade-in 0.2s ease-out both;
+}
+.animate-in[class*="slide-in-from-top"] {
+  animation: rhema-slide-down 0.25s ease-out both;
+}
+
+/* ========================================================================== */
+/* Base                                                                        */
+/* ========================================================================== */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Contour de focus visible au clavier (accessibilité), discret à la souris */
+  :focus-visible {
+    outline: 2px solid #818cf8;
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
+/* Respecte le réglage « réduire les animations » du système */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ========================================================================== */
+/* Barres de défilement                                                        */
+/* ========================================================================== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #020617;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -19,10 +97,13 @@
   background: #334155;
 }
 
-@layer base {
+/* ========================================================================== */
+/* Impression (bulletins, bons, factures)                                      */
+/* ========================================================================== */
+@media print {
+  html,
   body {
-    background-color: #020617;
-    color: #f8fafc;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: #fff !important;
+    color: #000 !important;
   }
 }

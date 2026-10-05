@@ -13,9 +13,12 @@ import {
   LogOut,
   Bell,
   KeyRound,
-  Database
+  Database,
+  Menu,
+  X
 } from 'lucide-react';
 import { getRoleBadgeClass } from '../utils/rbac';
+import { DEMO_MODE } from '../config';
 
 interface NavbarProps {
   organizations?: Organization[];
@@ -37,6 +40,9 @@ interface NavbarProps {
   onOpenWorkspace?: () => void;
   onLogout?: () => void;
   onOpenBackup?: () => void;
+  /** Mobile : ouvre / ferme le menu latéral. */
+  onToggleMobileNav?: () => void;
+  isMobileNavOpen?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -59,6 +65,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenWorkspace = () => {},
   onLogout,
   onOpenBackup,
+  onToggleMobileNav,
+  isMobileNavOpen = false,
 }) => {
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -81,10 +89,21 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-4 lg:px-6 py-2.5 shadow-md">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
         
         {/* Logo & Nom Organisation */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {onToggleMobileNav && (
+            <button
+              onClick={onToggleMobileNav}
+              aria-label={isMobileNavOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+              aria-expanded={isMobileNavOpen}
+              aria-controls="main-navigation"
+              className="lg:hidden p-2 -ml-1 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 shrink-0"
+            >
+              {isMobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          )}
           <button
             onClick={onOpenOrgIdentity}
             title={activeUser.role === 'dg' ? "Modifier le Logo & Nom de l'entreprise (DG)" : "Logo officiel scellé"}
@@ -99,26 +118,36 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="hidden sm:flex items-center gap-2">
               <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">Plateforme Hiérarchique</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono border border-emerald-500/30 font-semibold">
                 Laravel Eloquent Ready
               </span>
+              {DEMO_MODE && (
+                <span
+                  title="Mode démonstration : connexion rapide et changement d'utilisateur activés (VITE_DEMO_MODE)"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold"
+                >
+                  Mode démo
+                </span>
+              )}
             </div>
             
-            <div className="flex items-center gap-2">
-              <div className="relative">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="relative min-w-0">
                 <button
                   onClick={() => setShowOrgDropdown(!showOrgDropdown)}
-                  className="flex items-center gap-1.5 text-sm font-bold text-white hover:text-indigo-300 transition py-0.5"
+                  aria-expanded={showOrgDropdown}
+                  aria-haspopup="menu"
+                  className="flex items-center gap-1.5 text-sm font-bold text-white hover:text-indigo-300 transition py-0.5 max-w-full min-w-0"
                 >
-                  <span className="truncate max-w-[170px] sm:max-w-xs">{activeOrg.name}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="truncate max-w-[34vw] sm:max-w-xs">{activeOrg.name}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 </button>
 
                 {showOrgDropdown && (
-                  <div className="absolute left-0 mt-2 w-80 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2 z-50">
+                  <div className="absolute left-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2 z-50">
                     <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                       Sélectionner l'Organisation
                     </div>
@@ -175,13 +204,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               {activeUser.role === 'dg' ? (
                 <button
                   onClick={onOpenOrgIdentity}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-[10px] font-semibold text-indigo-300 transition shrink-0"
+                  className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-[10px] font-semibold text-indigo-300 transition shrink-0"
                 >
                   <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
                   <span>Logo & Nom (DG)</span>
                 </button>
               ) : (
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[10px] font-medium text-slate-400 shrink-0">
+                <span className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[10px] font-medium text-slate-400 shrink-0">
                   <Lock className="w-2.5 h-2.5" />
                   <span>Logo scellé</span>
                 </span>
@@ -191,7 +220,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Boutons d'Action & Sélecteur de Rôles */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Bouton Notifications Invitations & Clés */}
           {onOpenNotifications && (
             <button
@@ -223,7 +252,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Bouton Espace Employé (Travail) */}
           <button
             onClick={onOpenWorkspace}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/40 text-xs font-semibold text-sky-200 transition shadow-sm"
+            title="Espace Employé"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/40 text-xs font-semibold text-sky-200 transition shadow-sm"
           >
             <Briefcase className="w-3.5 h-3.5 text-sky-400" />
             <span className="hidden sm:inline">Espace Employé</span>
@@ -252,7 +282,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="relative">
             <button
               onClick={() => setShowUserDropdown(!showUserDropdown)}
-              className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 hover:border-slate-600 text-left transition"
+              aria-expanded={showUserDropdown}
+              aria-haspopup="menu"
+              aria-label="Menu utilisateur"
+              className="flex items-center gap-2.5 px-2 sm:px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 hover:border-slate-600 text-left transition"
             >
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-inner">
                 {activeUser.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
@@ -269,7 +302,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             {showUserDropdown && (
-              <div className="absolute right-0 mt-2 w-80 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2.5 z-50">
+              <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-2.5 z-50">
                 {onSelectUser ? (
                   <>
                 <div className="px-2 pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400">
@@ -310,7 +343,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
 
                 {onOpenBackup && (
-                  <div className="pt-2 mt-2 border-t border-slate-800">
+                  <div className="pt-2 mt-2 border-t border-slate-800 space-y-1">
+                    <button
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        onOpenHelp();
+                      }}
+                      className="sm:hidden w-full p-2 rounded-lg text-xs flex items-center gap-2 text-slate-200 hover:bg-slate-800 transition font-semibold"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Guide des règles</span>
+                    </button>
                     <button
                       onClick={() => {
                         setShowUserDropdown(false);
@@ -346,7 +389,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={onOpenHelp}
             title="Guide des règles & logique hiérarchique"
-            className="p-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition"
+            aria-label="Guide des règles"
+            className="hidden sm:block p-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition"
           >
             <HelpCircle className="w-4 h-4" />
           </button>
@@ -356,7 +400,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onLogout}
               title="Fermer la session de travail"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition"
+              aria-label="Déconnexion"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition"
             >
               <LogOut className="w-3.5 h-3.5 text-rose-400" />
               <span className="hidden xl:inline">Déconnexion</span>

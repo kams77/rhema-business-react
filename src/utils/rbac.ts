@@ -300,6 +300,15 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
       return true; // Tâches opérationnelles
     case 'hierarchy':
       return true; // Consultation de l'organigramme (avec actions restreintes)
+    case 'invitations':
+      return true; // Chacun gère ses invitations ; les actions sont filtrées dans le module
+    case 'logistics':
+      return canAccessLogistics(user);
+    case 'bulk_import':
+      // Imports massifs : Direction Générale, chefs de département et directeurs
+      return user.role === 'chef_departement' || user.role === 'directeur';
+    case 'attendance_dispatch':
+      return user.role !== 'agent';
     case 'agents':
       // Chefs de service, division, direction, département et DG peuvent administrer leurs agents
       return user.role !== 'agent';
@@ -314,7 +323,7 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
     case 'security':
     case 'audit':
       // Réservé DG (géré en amont), chefs de département et directeurs
-      return user.role === 'chef_departement';
+      return user.role === 'chef_departement' || user.role === 'directeur';
     case 'laravel':
       return false;
     default:

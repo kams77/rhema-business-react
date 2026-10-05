@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
 import { DEMO_MODE, DEMO_PASSWORD } from './config';
@@ -74,7 +74,6 @@ import { ConnectViaKeyModal } from './components/invitations/ConnectViaKeyModal'
 import { EntityInvitationsManagerModal } from './components/invitations/EntityInvitationsManagerModal';
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
-import { EntityInvitationsView } from './components/EntityInvitationsView';
 import { 
   createStandardPayrollSystem, 
   initialPayrollConfigs 
@@ -83,37 +82,28 @@ import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { LoginView } from './components/LoginView';
 import { EmployeeWorkspaceView } from './components/EmployeeWorkspaceView';
-import { HierarchyView } from './components/HierarchyView';
-import { DocumentsView } from './components/DocumentsView';
-import { WorkflowsView } from './components/WorkflowsView';
-import { PayrollSystemView } from './components/PayrollSystemView';
-import { SecurityView } from './components/SecurityView';
-import { AgentCrudView } from './components/AgentCrudView';
-import { AuditView } from './components/AuditView';
 import { OrganizationOnboardingWizard } from './components/OrganizationOnboardingWizard';
-import { BulkImportView } from './components/BulkImportView';
-import { LogisticsModuleView } from './components/LogisticsModuleView';
-import { LaravelIntegrationView } from './components/LaravelIntegrationView';
 import { RegulationGuideModal } from './components/RegulationGuideModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import type { ActiveTab } from './components/Sidebar';
+import { canUserAccessTab } from './utils/rbac';
 import { OrganizationIdentityModal } from './components/OrganizationIdentityModal';
 import {
   ShieldAlert
 } from 'lucide-react';
 
-type ActiveTab = 
-  | 'workspace' 
-  | 'hierarchy' 
-  | 'invitations'
-  | 'documents' 
-  | 'workflows' 
-  | 'logistics'
-  | 'payroll' 
-  | 'bulk_import'
-  | 'attendance_dispatch'
-  | 'security' 
-  | 'agents' 
-  | 'audit' 
-  | 'laravel';
+// Modules chargés à la demande : la page de connexion s'affiche plus vite.
+const HierarchyView = lazy(() => import('./components/HierarchyView').then(m => ({ default: m.HierarchyView })));
+const DocumentsView = lazy(() => import('./components/DocumentsView').then(m => ({ default: m.DocumentsView })));
+const WorkflowsView = lazy(() => import('./components/WorkflowsView').then(m => ({ default: m.WorkflowsView })));
+const PayrollSystemView = lazy(() => import('./components/PayrollSystemView').then(m => ({ default: m.PayrollSystemView })));
+const SecurityView = lazy(() => import('./components/SecurityView').then(m => ({ default: m.SecurityView })));
+const AgentCrudView = lazy(() => import('./components/AgentCrudView').then(m => ({ default: m.AgentCrudView })));
+const AuditView = lazy(() => import('./components/AuditView').then(m => ({ default: m.AuditView })));
+const BulkImportView = lazy(() => import('./components/BulkImportView').then(m => ({ default: m.BulkImportView })));
+const LogisticsModuleView = lazy(() => import('./components/LogisticsModuleView').then(m => ({ default: m.LogisticsModuleView })));
+const LaravelIntegrationView = lazy(() => import('./components/LaravelIntegrationView').then(m => ({ default: m.LaravelIntegrationView })));
+const EntityInvitationsView = lazy(() => import('./components/EntityInvitationsView').then(m => ({ default: m.EntityInvitationsView })));
 
 export default function App() {
   const [organizations, setOrganizations] = usePersistentState<Organization[]>('organizations', initialOrganizations);
@@ -927,6 +917,13 @@ export default function App() {
   };
 
   const [currentTab, setCurrentTab] = useState<ActiveTab>('workspace');
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // Changement d'utilisateur : retour à l'espace employé si l'onglet ouvert ne lui est pas autorisé.
+  useEffect(() => {
+    if (!canUserAccessTab(currentUser, currentTab)) setCurrentTab('workspace');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.id, currentUser.role]);
 
   // =========================================================================
   // GESTION DES INVITATIONS INTER-ENTITÉS & CLÉS 10 CHIFFRES
@@ -1154,6 +1151,8 @@ export default function App() {
         onOpenNewAccount={currentUser.role === 'dg' ? () => setShowOnboardingWizard(true) : undefined}
         onOpenHelp={() => setShowHelpModal(true)}
         onOpenBackup={() => setShowBackupModal(true)}
+        onToggleMobileNav={() => setIsMobileNavOpen(open => !open)}
+        isMobileNavOpen={isMobileNavOpen}
       />
 
       {/* BANNIÈRE DE SESSION INVITÉ INTER-ENTITÉS ACTIVE */}
@@ -1171,9 +1170,17 @@ export default function App() {
           onTabChange={setCurrentTab}
           currentUser={currentUser}
           unreadAlertsCount={alerts.filter(a => a.status !== 'resolue').length}
+          isMobileOpen={isMobileNavOpen}
+          onMobileClose={() => setIsMobileNavOpen(false)}
         />
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main id="main-content" className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 overflow-y-auto">
+          <ErrorBoundary scope="section" resetKey={currentTab}>
+          <Suspense fallback={<ModuleLoading />}>
+          {!canUserAccessTab(currentUser, currentTab) ? (
+            <AccessDenied onBack={() => setCurrentTab('workspace')} />
+          ) : (
+          <>
           {currentTab === 'workspace' && (
             <EmployeeWorkspaceView
               currentUser={currentUser}
@@ -1557,6 +1564,10 @@ export default function App() {
           {currentTab === 'laravel' && (
             <LaravelIntegrationView />
           )}
+          </>
+          )}
+          </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -1668,6 +1679,34 @@ export default function App() {
       />
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+/** Indicateur affiché pendant le chargement d'un module. */
+function ModuleLoading() {
+  return (
+    <div className="flex items-center justify-center py-24 text-slate-400 text-sm gap-3" role="status">
+      <span className="w-5 h-5 rounded-full border-2 border-slate-700 border-t-indigo-400 animate-spin" />
+      Chargement du module…
+    </div>
+  );
+}
+
+/** Écran affiché quand l'utilisateur n'a pas les droits sur un module. */
+function AccessDenied({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="max-w-md mx-auto mt-16 bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center space-y-3">
+      <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-500/15 text-rose-400 flex items-center justify-center">
+        <ShieldAlert className="w-6 h-6" />
+      </div>
+      <h2 className="font-bold text-white">Accès non autorisé</h2>
+      <p className="text-sm text-slate-400">
+        Ce module est réservé à d'autres fonctions de l'organigramme. Contactez votre responsable si vous pensez devoir y accéder.
+      </p>
+      <button onClick={onBack} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold">
+        Retour à mon espace
+      </button>
     </div>
   );
 }

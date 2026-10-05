@@ -16,9 +16,10 @@ import {
   UploadCloud,
   Clock,
   Truck,
-  KeyRound
+  KeyRound,
+  X
 } from 'lucide-react';
-import { canAccessLogistics } from '../utils/rbac';
+import { canUserAccessTab } from '../utils/rbac';
 
 export type ActiveTab = 
   | 'workspace'
@@ -40,13 +41,18 @@ interface SidebarProps {
   onTabChange: (tab: ActiveTab) => void;
   currentUser?: User;
   unreadAlertsCount?: number;
+  /** Mobile : le menu s'ouvre en tiroir par-dessus le contenu. */
+  isMobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentTab,
   onTabChange,
   currentUser,
-  unreadAlertsCount = 2,
+  unreadAlertsCount = 0,
+  isMobileOpen = false,
+  onMobileClose = () => {},
 }) => {
   const activeUser: User = currentUser || {
     id: 'default-user',
@@ -59,8 +65,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     failedAccessAttempts: 0,
     canCreateSubAgents: true,
   };
-
-  const isDGOrManager = activeUser.role === 'dg' || activeUser.role === 'chef_departement' || activeUser.role === 'directeur';
 
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string | number; badgeColor?: string; isVisible?: boolean }[] = [
     {
@@ -100,7 +104,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Truck className="w-4 h-4 text-amber-400" />,
       badge: 'VSAT & Hubs',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-semibold',
-      isVisible: canAccessLogistics(activeUser),
     },
     {
       id: 'payroll',
@@ -115,7 +118,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <UploadCloud className="w-4 h-4 text-emerald-400" />,
       badge: 'Direction DG',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 font-bold',
-      isVisible: isDGOrManager,
     },
     {
       id: 'attendance_dispatch',
@@ -123,7 +125,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Clock className="w-4 h-4 text-cyan-400" />,
       badge: '28j Ouvrables',
       badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-      isVisible: activeUser.role !== 'agent',
     },
     {
       id: 'security',
@@ -152,7 +153,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 min-h-[calc(100vh-61px)] select-none">
+    <>
+    {/* Voile sombre derrière le menu sur mobile */}
+    <div
+      className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden transition-opacity ${isMobileOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      onClick={onMobileClose}
+      aria-hidden="true"
+    />
+    <aside
+      id="main-navigation"
+      aria-label="Menu principal"
+      className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto transform transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:max-w-none lg:translate-x-0 lg:min-h-[calc(100vh-61px)] ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'} bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 select-none`}
+    >
+      <div className="flex items-center justify-between px-4 pt-3 lg:hidden">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Menu</span>
+        <button onClick={onMobileClose} aria-label="Fermer le menu" className="p-2 -mr-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
       {/* Carte Session Active (Fidèle à la Capture) */}
       <div className="p-3.5 border-b border-slate-800/80 bg-slate-950/40 m-2 rounded-xl">
         <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
@@ -179,21 +197,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
           Modules Principaux
         </div>
-        {navItems.filter(item => item.isVisible !== false).map((item) => {
+        {navItems.filter(item => item.isVisible !== false && canUserAccessTab(activeUser, item.id)).map((item) => {
           const isActive = currentTab === item.id;
           return (
             <button
               key={item.id}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => { onTabChange(item.id); onMobileClose(); }}
+              aria-current={isActive ? 'page' : undefined}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 font-semibold'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
             >
-              <div className="flex items-center gap-2.5">
-                <span className={isActive ? 'text-white' : 'text-slate-400'}>{item.icon}</span>
-                <span>{item.label}</span>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}>{item.icon}</span>
+                <span className="text-left">{item.label}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 {item.badge !== undefined && (
@@ -219,5 +238,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </p>
       </div>
     </aside>
+    </>
   );
 };
