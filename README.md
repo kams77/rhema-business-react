@@ -25,6 +25,9 @@ npm run dev            # http://localhost:3000
 | `npm run preview` | Prévisualise la version de production             |
 | `npm run lint`    | Vérification TypeScript (`tsc --noEmit`)          |
 
+Chaque envoi sur GitHub est vérifié automatiquement (onglet **Actions**) : installation,
+TypeScript, compilation et image Docker.
+
 ## Modules
 
 | Module                 | Contenu                                                                  |
@@ -102,9 +105,13 @@ src/
 
 ## Déploiement
 
-`npm run build` produit un site statique dans `dist/`, déployable sur n'importe quel
-hébergeur statique (Cloud Run, Netlify, Vercel, Nginx…). Pensez à définir
-`VITE_DEMO_MODE=false` **avant** la compilation pour une mise en production.
+Guide pas à pas (installation locale, Cloudflare Pages, Netlify, Docker) :
+**[docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md)**
+
+En bref : `npm run build` produit un site statique dans `dist/`. Hébergement recommandé :
+**Cloudflare Pages** (gratuit, HTTPS, en-têtes de sécurité de `public/_headers` appliqués).
+Définissez `VITE_DEMO_MODE=false` **avant** la compilation pour une mise en production.
+Pour un serveur interne : `docker build -t rhema-business .` puis `docker run -d -p 8080:80 rhema-business`.
 
 ---
 
