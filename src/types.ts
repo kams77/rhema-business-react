@@ -865,3 +865,52 @@ export interface StockMovementItem {
   electronicSealHash: string;
   notes: string;
 }
+
+// =============================================================
+// GESTION DES INVITATIONS INTER-ENTITÉS & CLÉ D'AUTHENTIFICATION 10 CHIFFRES
+// =============================================================
+
+export interface EntityInvitation {
+  id: string;
+  invitationCode: string; // Ex: "INV-2026-001"
+  authKey10Digits: string; // Clé d'authentification Unique de 10 chiffres (ex: "8492017365")
+  hostEntityId: string; // Entité vers laquelle l'agent est invité
+  hostEntityName: string;
+  hostEntityCode: string;
+  inviterUserId: string;
+  inviterUserName: string;
+  inviterRoleTitle: string;
+  invitedAgentMatricule: string;
+  invitedAgentId?: string;
+  invitedAgentName: string;
+  invitedAgentEmail?: string;
+  invitedAgentHomeEntity?: string;
+  purpose: string; // Motif de l'invitation (Mission, audit, dépannage...)
+  accessScope: 'lecture' | 'operant_delegue' | 'superviseur_temporaire';
+  validityDurationHours: number; // Délai émis en heures (ex: 24, 48, 72, 168...)
+  expiresAt: string; // Date/heure d'expiration émise par le responsable
+  createdAt: string;
+  status: 'active' | 'en_session' | 'terminee' | 'expiree' | 'revoquee';
+  connectedAt?: string;
+  lastAccessAt?: string;
+  notes?: string;
+}
+
+export interface EntityInvitationNotification {
+  id: string;
+  recipientUserId: string;
+  recipientMatricule: string;
+  title: string;
+  message: string;
+  authKey10Digits: string; // Clé Unique de 10 chiffres
+  hostEntityId: string;
+  hostEntityName: string;
+  inviterName: string;
+  inviterRole: string;
+  expiresAt: string;
+  validityHours: number;
+  purpose: string;
+  isRead: boolean;
+  createdAt: string;
+  invitationId: string;
+}

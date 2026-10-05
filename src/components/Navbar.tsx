@@ -12,7 +12,9 @@ import {
   HelpCircle,
   Sparkles,
   Briefcase,
-  LogOut
+  LogOut,
+  Bell,
+  KeyRound
 } from 'lucide-react';
 import { getRoleBadgeClass } from '../utils/rbac';
 
@@ -24,6 +26,11 @@ interface NavbarProps {
   currentUser?: User;
   onSelectUser?: (user: User) => void;
   securityAlerts?: SecurityAlert[];
+  unreadNotificationsCount?: number;
+  onOpenNotifications?: () => void;
+  onOpenConnectKey?: () => void;
+  onOpenInviteAgent?: () => void;
+  isEntityManagerUser?: boolean;
   onOpenSecurity?: () => void;
   onOpenNewAccount?: () => void;
   onOpenHelp?: () => void;
@@ -40,6 +47,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onSelectUser = (_user: User) => {},
   securityAlerts = [],
+  unreadNotificationsCount = 0,
+  onOpenNotifications,
+  onOpenConnectKey,
+  onOpenInviteAgent,
+  isEntityManagerUser = false,
   onOpenSecurity = () => {},
   onOpenNewAccount = () => {},
   onOpenHelp = () => {},
@@ -52,7 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const activeAlertCount = (securityAlerts || []).filter(a => a && a.status !== 'resolue').length;
 
-  const activeOrg: Partial<Organization> & { id: string; name: string } = currentOrg || organizations[0] || {
+  const activeOrg = currentOrg || organizations[0] || {
     id: 'org-1',
     name: 'RHEMA BUSINESS',
     type: 'entreprise' as const,
@@ -176,14 +188,42 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Boutons d'Action & Sélecteur de Rôles */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
+          {/* Bouton Notifications Invitations & Clés */}
+          {onOpenNotifications && (
+            <button
+              onClick={onOpenNotifications}
+              className="relative p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 transition"
+              title="Notifications d'Invitations Inter-Entités"
+            >
+              <Bell className="w-4 h-4 text-indigo-400" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white font-mono text-[9px] font-black flex items-center justify-center animate-pulse">
+                  {unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Bouton Connexion via Clé Unique 10 Chiffres */}
+          {onOpenConnectKey && (
+            <button
+              onClick={onOpenConnectKey}
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-xs font-bold text-amber-300 transition shadow-sm"
+              title="Se connecter à une entité avec une clé à 10 chiffres"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span>Clé 10 Chiffres</span>
+            </button>
+          )}
+
           {/* Bouton Espace Employé (Travail) */}
           <button
             onClick={onOpenWorkspace}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500/20 to-blue-600/20 hover:from-sky-500/30 hover:to-blue-600/30 border border-sky-400/40 text-xs font-semibold text-sky-200 transition shadow-sm"
           >
             <Briefcase className="w-3.5 h-3.5 text-sky-400" />
-            <span className="hidden sm:inline">Espace Employé (Travail)</span>
+            <span className="hidden sm:inline">Espace Employé</span>
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           </button>
 

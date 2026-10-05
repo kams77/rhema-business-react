@@ -15,13 +15,15 @@ import {
   Coins,
   UploadCloud,
   Clock,
-  Truck
+  Truck,
+  KeyRound
 } from 'lucide-react';
 import { canAccessLogistics } from '../utils/rbac';
 
 export type ActiveTab = 
   | 'workspace'
   | 'hierarchy' 
+  | 'invitations'
   | 'documents' 
   | 'workflows' 
   | 'logistics'
@@ -72,6 +74,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'hierarchy',
       label: 'Organigramme & Entités',
       icon: <Network className="w-4 h-4" />,
+    },
+    {
+      id: 'invitations',
+      label: 'Invitations & Clés 10 Chiffres',
+      icon: <KeyRound className="w-4 h-4 text-amber-400" />,
+      badge: 'Inter-Entités',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-semibold',
     },
     {
       id: 'documents',

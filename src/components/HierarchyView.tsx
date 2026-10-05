@@ -11,7 +11,8 @@ import {
   SlidersHorizontal, 
   ShieldAlert,
   ChevronRight,
-  FolderTree
+  FolderTree,
+  KeyRound
 } from 'lucide-react';
 import { isEntityInUserScope } from '../utils/rbac';
 
@@ -23,6 +24,9 @@ interface HierarchyViewProps {
   onAddEntity?: (entity: Omit<HierarchicalEntity, 'id'>) => void;
   onDeleteEntity?: (id: string) => void;
   onOpenOrgIdentity?: () => void;
+  onOpenInvitationsManager?: () => void;
+  onOpenInviteAgent?: () => void;
+  activeInvitationsCount?: number;
 }
 
 export const HierarchyView: React.FC<HierarchyViewProps> = ({
@@ -31,6 +35,9 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
   currentUser,
   onAddEntity = (_entity: Omit<HierarchicalEntity, 'id'>) => {},
   onOpenOrgIdentity = () => {},
+  onOpenInvitationsManager,
+  onOpenInviteAgent,
+  activeInvitationsCount = 0,
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -110,6 +117,22 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
 
         {/* Boutons d'Action Droite */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          {onOpenInvitationsManager && (
+            <button
+              onClick={onOpenInvitationsManager}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-bold transition shadow-sm"
+              title="Gérer les invitations inter-entités et clés uniques à 10 chiffres"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span>Invitations Inter-Entités</span>
+              {activeInvitationsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 font-mono text-[10px] font-black">
+                  {activeInvitationsCount}
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             onClick={onOpenOrgIdentity}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600/20 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/30 transition"

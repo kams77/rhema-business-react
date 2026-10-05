@@ -25,12 +25,14 @@ import {
   BarChart3,
   CreditCard,
   Sparkles,
-  Truck
+  Truck,
+  KeyRound
 } from 'lucide-react';
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { initialContracts } from '../data/initialData';
 import { canAccessLogistics } from '../utils/rbac';
+import { isEntityManager } from '../utils/invitationUtils';
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -42,6 +44,9 @@ interface EmployeeWorkspaceViewProps {
   contracts?: EmployeeContract[];
   onSelectUser?: (user: User) => void;
   onOpenLogistics?: () => void;
+  onOpenConnectKey?: () => void;
+  onOpenInviteAgent?: () => void;
+  onOpenInvitationsManager?: () => void;
 }
 
 export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
@@ -54,6 +59,9 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   contracts = initialContracts,
   onSelectUser = (_user: User) => {},
   onOpenLogistics,
+  onOpenConnectKey,
+  onOpenInviteAgent,
+  onOpenInvitationsManager,
 }) => {
   // Chronomètre de travail en direct (démarre à 01:20:10)
   const [seconds, setSeconds] = useState<number>(4810);
@@ -370,6 +378,28 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 <LogOut className="w-3.5 h-3.5 text-slate-500" />
                 <span>Changer de Compte</span>
               </button>
+
+              {onOpenConnectKey && (
+                <button
+                  onClick={onOpenConnectKey}
+                  className="px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+                  title="Se connecter à une entité invitée avec votre clé à 10 chiffres"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Clé Inter-Entités</span>
+                </button>
+              )}
+
+              {onOpenInviteAgent && isEntityManager(currentUser, entities) && (
+                <button
+                  onClick={onOpenInviteAgent}
+                  className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center gap-1.5 transition"
+                  title="Inviter un agent d'une autre entité via son matricule"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>+ Inviter un Agent (Matricule)</span>
+                </button>
+              )}
 
               {onOpenLogistics && canAccessLogistics(currentUser) && (
                 <button

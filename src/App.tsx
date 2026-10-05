@@ -41,7 +41,24 @@ import {
   initialStockMovements
 } from './data/initialLogisticsData';
 import { canAccessLogistics, canViewHubActivities } from './utils/rbac';
-import type { LogisticsHub, HubStockItem, StockMovementItem } from './types';
+import type { 
+  LogisticsHub, 
+  HubStockItem, 
+  StockMovementItem,
+  EntityInvitation,
+  EntityInvitationNotification
+} from './types';
+import { 
+  initialEntityInvitations, 
+  initialInvitationNotifications 
+} from './data/initialInvitationData';
+import { isEntityManager } from './utils/invitationUtils';
+import { InviteAgentModal } from './components/invitations/InviteAgentModal';
+import { ConnectViaKeyModal } from './components/invitations/ConnectViaKeyModal';
+import { EntityInvitationsManagerModal } from './components/invitations/EntityInvitationsManagerModal';
+import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
+import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
+import { EntityInvitationsView } from './components/EntityInvitationsView';
 import { 
   createStandardPayrollSystem, 
   initialPayrollConfigs 
@@ -82,12 +99,14 @@ import {
   FileCheck2,
   Cpu,
   RefreshCw,
-  Truck
+  Truck,
+  KeyRound
 } from 'lucide-react';
 
 type ActiveTab = 
   | 'workspace' 
   | 'hierarchy' 
+  | 'invitations'
   | 'documents' 
   | 'workflows' 
   | 'logistics'
@@ -854,6 +873,106 @@ export default function App() {
 
   const [currentTab, setCurrentTab] = useState<ActiveTab>('workspace');
 
+  // =========================================================================
+  // GESTION DES INVITATIONS INTER-ENTITÉS & CLÉS 10 CHIFFRES
+  // =========================================================================
+  const [invitations, setInvitations] = useState<EntityInvitation[]>(initialEntityInvitations);
+  const [invitationNotifications, setInvitationNotifications] = useState<EntityInvitationNotification[]>(initialInvitationNotifications);
+  const [activeGuestInvitation, setActiveGuestInvitation] = useState<EntityInvitation | null>(null);
+
+  const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
+  const [showConnectKeyModal, setShowConnectKeyModal] = useState<boolean>(false);
+  const [showInvitationsManagerModal, setShowInvitationsManagerModal] = useState<boolean>(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState<boolean>(false);
+
+  const handleSendInvitation = (invitation: EntityInvitation, notification: EntityInvitationNotification) => {
+    setInvitations(prev => [invitation, ...prev]);
+    setInvitationNotifications(prev => [notification, ...prev]);
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Émission Invitation Inter-Entités',
+        category: 'securite',
+        details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
+        ip: '192.168.1.100',
+        hash: `sha256-inv-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleConnectWithKey = (invitation: EntityInvitation) => {
+    setActiveGuestInvitation(invitation);
+    setInvitations(prev => prev.map(inv => inv.id === invitation.id ? { ...inv, status: 'en_session', connectedAt: new Date().toISOString() } : inv));
+    setLogs(prev => [
+      {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        userName: currentUser.name,
+        userRole: currentUser.roleTitle,
+        action: 'Connexion Inter-Entités par Clé Unique',
+        category: 'auth',
+        details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${invitation.authKey10Digits}.`,
+        ip: '192.168.1.100',
+        hash: `sha256-conn-${Date.now()}`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleExitGuestSession = () => {
+    if (activeGuestInvitation) {
+      setLogs(prev => [
+        {
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          userName: currentUser.name,
+          userRole: currentUser.roleTitle,
+          action: 'Clôture Session Invité',
+          category: 'auth',
+          details: `L'agent ${currentUser.name} a quitté sa session invité sur l'entité "${activeGuestInvitation.hostEntityName}".`,
+          ip: '192.168.1.100',
+          hash: `sha256-exit-${Date.now()}`
+        },
+        ...prev
+      ]);
+      setInvitations(prev => prev.map(inv => inv.id === activeGuestInvitation.id ? { ...inv, status: 'terminee' } : inv));
+      setActiveGuestInvitation(null);
+    }
+  };
+
+  const handleRevokeInvitation = (invitationId: string) => {
+    setInvitations(prev => prev.map(inv => inv.id === invitationId ? { ...inv, status: 'revoquee' } : inv));
+    if (activeGuestInvitation?.id === invitationId) {
+      setActiveGuestInvitation(null);
+    }
+  };
+
+  const handleExtendInvitation = (invitationId: string, hoursToAdd: number) => {
+    setInvitations(prev => prev.map(inv => {
+      if (inv.id !== invitationId) return inv;
+      const currentExpiry = new Date(inv.expiresAt).getTime();
+      const newExpiry = new Date(currentExpiry + hoursToAdd * 3600 * 1000).toISOString();
+      return {
+        ...inv,
+        expiresAt: newExpiry,
+        validityDurationHours: inv.validityDurationHours + hoursToAdd,
+        status: 'active'
+      };
+    }));
+  };
+
+  const handleMarkNotificationAsRead = (notifId: string) => {
+    setInvitationNotifications(prev => prev.map(n => n.id === notifId ? { ...n, isRead: true } : n));
+  };
+
+  const handleMarkAllNotificationsAsRead = () => {
+    setInvitationNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
   // Modales d'administration
   const [showOrgIdentityModal, setShowOrgIdentityModal] = useState(false);
   const [showNewOrgModal, setShowNewOrgModal] = useState(false);
@@ -1138,6 +1257,14 @@ export default function App() {
         currentUser={currentUser}
         onSelectUser={setCurrentUser}
         securityAlerts={alerts}
+        unreadNotificationsCount={invitationNotifications.filter(n => {
+          const uMat = (currentUser.matricule || currentUser.employeeCode || '').toUpperCase().trim();
+          return ((n.recipientMatricule || '').toUpperCase().trim() === uMat || n.recipientUserId === currentUser.id) && !n.isRead;
+        }).length}
+        onOpenNotifications={() => setShowNotificationsModal(true)}
+        onOpenConnectKey={() => setShowConnectKeyModal(true)}
+        onOpenInviteAgent={() => setShowInviteModal(true)}
+        isEntityManagerUser={isEntityManager(currentUser, entities)}
         onOpenSecurity={() => setCurrentTab('security')}
         onOpenWorkspace={() => setCurrentTab('workspace')}
         onLogout={handleLogout}
@@ -1160,6 +1287,15 @@ export default function App() {
         onOpenHelp={() => setShowHelpModal(true)}
       />
 
+      {/* BANNIÈRE DE SESSION INVITÉ INTER-ENTITÉS ACTIVE */}
+      {activeGuestInvitation && (
+        <ActiveGuestSessionBanner
+          guestInvitation={activeGuestInvitation}
+          currentUser={currentUser}
+          onExitGuestSession={handleExitGuestSession}
+        />
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           currentTab={currentTab}
@@ -1180,6 +1316,9 @@ export default function App() {
               contracts={contracts}
               onSelectUser={setCurrentUser}
               onOpenLogistics={() => setCurrentTab('logistics')}
+              onOpenConnectKey={() => setShowConnectKeyModal(true)}
+              onOpenInviteAgent={() => setShowInviteModal(true)}
+              onOpenInvitationsManager={() => setShowInvitationsManagerModal(true)}
             />
           )}
 
@@ -1189,6 +1328,9 @@ export default function App() {
               entities={entities}
               currentUser={currentUser}
               users={users}
+              onOpenInvitationsManager={() => setShowInvitationsManagerModal(true)}
+              onOpenInviteAgent={() => setShowInviteModal(true)}
+              activeInvitationsCount={invitations.filter(i => i.status === 'active').length}
               onOpenOrgIdentity={() => {
                 setOrgEditForm({
                   name: currentOrg.name,
@@ -1241,6 +1383,42 @@ export default function App() {
                     ...prev
                   ]);
                 }
+              }}
+            />
+          )}
+
+          {/* MODULE INVITATIONS & CLÉS D'AUTHENTIFICATION INTER-ENTITÉS (10 CHIFFRES) */}
+          {currentTab === 'invitations' && (
+            <EntityInvitationsView
+              currentUser={currentUser}
+              entities={entities}
+              users={users}
+              invitations={invitations}
+              notifications={invitationNotifications}
+              onOpenInviteModal={() => setShowInviteModal(true)}
+              onOpenConnectModal={() => setShowConnectKeyModal(true)}
+              onOpenNotificationsModal={() => setShowNotificationsModal(true)}
+              onRevokeInvitation={handleRevokeInvitation}
+              onExtendInvitation={handleExtendInvitation}
+              onConnectWithKey={(key) => {
+                const found = invitations.find(i => i.authKey10Digits.replace(/\D/g, '') === key.replace(/\D/g, ''));
+                if (found) handleConnectWithKey(found);
+              }}
+              onLogAction={(act, det, cat) => {
+                setLogs(prev => [
+                  {
+                    id: `log-${Date.now()}`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    userName: currentUser.name,
+                    userRole: currentUser.roleTitle,
+                    action: act,
+                    category: cat as any,
+                    details: det,
+                    ip: '192.168.1.100',
+                    hash: `sha256-inv-log-${Date.now()}`
+                  },
+                  ...prev
+                ]);
               }}
             />
           )}
@@ -2242,6 +2420,106 @@ class DocumentPolicy
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODALE D'INVITATION D'AGENT PAR MATRICULE AVEC CLÉ 10 CHIFFRES */}
+      {showInviteModal && (
+        <InviteAgentModal
+          currentUser={currentUser}
+          entities={entities}
+          users={users}
+          onClose={() => setShowInviteModal(false)}
+          onSendInvitation={handleSendInvitation}
+          onLogAction={(act, det, cat) => {
+            setLogs(prev => [
+              {
+                id: `log-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                userName: currentUser.name,
+                userRole: currentUser.roleTitle,
+                action: act,
+                category: cat as any,
+                details: det,
+                ip: '192.168.1.100',
+                hash: `sha256-inv-log-${Date.now()}`
+              },
+              ...prev
+            ]);
+          }}
+        />
+      )}
+
+      {/* MODALE DE CONNEXION VIA CLÉ UNIQUE 10 CHIFFRES */}
+      {showConnectKeyModal && (
+        <ConnectViaKeyModal
+          currentUser={currentUser}
+          invitations={invitations}
+          entities={entities}
+          onClose={() => setShowConnectKeyModal(false)}
+          onConnectToEntity={handleConnectWithKey}
+          onLogAction={(act, det, cat) => {
+            setLogs(prev => [
+              {
+                id: `log-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                userName: currentUser.name,
+                userRole: currentUser.roleTitle,
+                action: act,
+                category: cat as any,
+                details: det,
+                ip: '192.168.1.100',
+                hash: `sha256-conn-log-${Date.now()}`
+              },
+              ...prev
+            ]);
+          }}
+        />
+      )}
+
+      {/* MODALE DE GESTION DES INVITATIONS & CLÉS POUR LES RESPONSABLES */}
+      {showInvitationsManagerModal && (
+        <EntityInvitationsManagerModal
+          currentUser={currentUser}
+          entities={entities}
+          users={users}
+          invitations={invitations}
+          onClose={() => setShowInvitationsManagerModal(false)}
+          onOpenInviteModal={() => setShowInviteModal(true)}
+          onOpenConnectModal={() => setShowConnectKeyModal(true)}
+          onRevokeInvitation={handleRevokeInvitation}
+          onExtendInvitation={handleExtendInvitation}
+          onLogAction={(act, det, cat) => {
+            setLogs(prev => [
+              {
+                id: `log-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                userName: currentUser.name,
+                userRole: currentUser.roleTitle,
+                action: act,
+                category: cat as any,
+                details: det,
+                ip: '192.168.1.100',
+                hash: `sha256-mgr-log-${Date.now()}`
+              },
+              ...prev
+            ]);
+          }}
+        />
+      )}
+
+      {/* MODALE / TIROIR DES NOTIFICATIONS D'INVITATION REÇUES */}
+      {showNotificationsModal && (
+        <NotificationsDrawerModal
+          currentUser={currentUser}
+          notifications={invitationNotifications}
+          onClose={() => setShowNotificationsModal(false)}
+          onConnectWithKey={(key) => {
+            const found = invitations.find(i => i.authKey10Digits.replace(/\D/g, '') === key.replace(/\D/g, ''));
+            if (found) handleConnectWithKey(found);
+          }}
+          onMarkAsRead={handleMarkNotificationAsRead}
+          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+        />
       )}
 
       {/* ASSISTANT INITIAL DE CRÉATION D'ORGANISATION (ONBOARDING) */}
