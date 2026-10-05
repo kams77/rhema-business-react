@@ -58,3 +58,26 @@ jobs:
       - name: Échec si erreurs TypeScript
         if: steps.tsc.outcome == 'failure'
         run: exit 1
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construction de l'image Docker
+        run: docker build -t rhema-business .
+
+      - name: Démarrage et contrôle du site
+        run: |
+          docker run -d -p 8080:80 --name rhema rhema-business
+          sleep 3
+          docker exec rhema nginx -t
+          curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+          headers=$(curl -fsSI http://localhost:8080/)
+          echo "$headers"
+          for h in X-Frame-Options Content-Security-Policy X-Content-Type-Options Cache-Control; do
+            echo "$headers" | grep -qi "^$h:" || { echo "En-tête manquant : $h"; exit 1; }
+          done
+          asset=$(curl -fsS http://localhost:8080/ | grep -oE '/assets/[^"]+\.js' | head -1)
+          curl -fsSI "http://localhost:8080$asset" | grep -qi 'immutable'
+          echo "Site servi correctement avec les en-têtes de sécurité."
