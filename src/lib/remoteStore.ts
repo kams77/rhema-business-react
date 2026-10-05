@@ -80,7 +80,9 @@ export const remoteStore = {
   subscribe(key: string, cb: Listener) {
     if (!listeners.has(key)) listeners.set(key, new Set());
     listeners.get(key)!.add(cb);
-    return () => listeners.get(key)?.delete(cb);
+    return () => {
+      listeners.get(key)?.delete(cb);
+    };
   },
 
   /** Modification locale : sera envoyée au serveur. */
