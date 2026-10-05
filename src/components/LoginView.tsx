@@ -1,26 +1,20 @@
 // src/components/LoginView.tsx
 import React, { useState } from 'react';
 import type { User, Organization } from '../types';
-import { 
-  Building2, 
-  Lock, 
-  Mail, 
-  Eye, 
-  EyeOff, 
-  LogIn, 
-  ShieldAlert, 
-  ShieldCheck, 
-  CheckCircle2, 
-  Sparkles, 
-  Fingerprint, 
+import {
+  Lock,
+  Mail,
+  Eye,
+  EyeOff,
+  LogIn,
+  ShieldAlert,
+  ShieldCheck,
+  CheckCircle2,
+  Sparkles,
+  Fingerprint,
   ArrowRight,
-  Briefcase,
-  Layers,
-  Scale,
-  UserX,
   AlertTriangle
 } from 'lucide-react';
-import { getRoleBadgeClass } from '../utils/rbac';
 import { DEMO_MODE, DEMO_PASSWORD } from '../config';
 import {
   MAX_FAILED_ATTEMPTS,

@@ -1,14 +1,12 @@
 // src/components/Navbar.tsx
 import React, { useState } from 'react';
 import type { User, Organization, SecurityAlert } from '../types';
-import { 
-  Building2, 
-  ShieldAlert, 
-  UserCheck, 
-  ChevronDown, 
-  PlusCircle, 
-  Lock, 
-  AlertTriangle,
+import {
+  ShieldAlert,
+  UserCheck,
+  ChevronDown,
+  PlusCircle,
+  Lock,
   HelpCircle,
   Sparkles,
   Briefcase,
