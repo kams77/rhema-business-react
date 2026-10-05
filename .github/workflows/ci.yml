@@ -131,6 +131,17 @@ jobs:
           curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
           echo "Base conservée après redémarrage."
 
+      - name: Commandes du guide Synology (sauvegarde, restauration, déblocage)
+        run: |
+          set -e
+          docker exec rhema-db sh -c 'mariadb-dump -u root -p"$MARIADB_ROOT_PASSWORD" --single-transaction rhema' | gzip > sauvegarde.sql.gz
+          gunzip -c sauvegarde.sql.gz | grep -q 'CREATE TABLE `users`'
+          gunzip -c sauvegarde.sql.gz | docker exec -i rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema'
+          docker exec rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema -e \
+            "UPDATE users SET status=\"actif\", failed_attempts=0 WHERE login_email=\"dg@test.cd\""'
+          curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
+          echo "Sauvegarde, restauration et déblocage : OK"
+
       - name: Refus des mots de passe d'exemple
         run: |
           set +e
