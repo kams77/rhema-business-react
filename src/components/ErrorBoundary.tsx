@@ -18,10 +18,6 @@ interface ErrorBoundaryState {
 
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
-  // Déclarations explicites : le projet n'installe pas @types/react,
-  // TypeScript ne connaît donc pas ces membres hérités de React.Component.
-  declare readonly props: Readonly<ErrorBoundaryProps>;
-  declare setState: (state: Partial<ErrorBoundaryState>) => void;
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
