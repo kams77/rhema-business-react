@@ -7,13 +7,17 @@ import {
   MAX_FAILED_ATTEMPTS,
   SESSION_IDLE_MS,
   SESSION_MAX_MS,
+  AUDIT_GENESIS,
   burnTime,
+  chainHash,
   hashPassword,
+  rechain,
   hashToken,
   isPasswordHash,
   newSessionToken,
   safeEqualStrings,
   validatePasswordStrength,
+  verifyChain,
   verifyPassword,
 } from './auth.mjs';
 import {
@@ -224,8 +228,32 @@ export function createApp({ db, config }) {
   }
 
   // --- journal & alertes ---------------------------------------------------
+  // Journal chaîné : chaque entrée contient l'empreinte de la précédente. Modifier ou supprimer
+  // une entrée en base casse la chaîne, ce que détecte /api/audit/verify.
+  let auditQueue = Promise.resolve();
+  function appendAudit(entries) {
+    const run = auditQueue.then(async () => {
+      // Les entrées déjà enregistrées (ou en double) sont écartées AVANT le chaînage,
+      // sinon la chaîne pointerait vers une empreinte jamais stockée.
+      const existing = await db.existingAuditIds(entries.map(e => e.id));
+      const seen = new Set();
+      const fresh = entries.filter(e => !existing.has(e.id) && !seen.has(e.id) && seen.add(e.id));
+      if (!fresh.length) return;
+      let prev = (await db.lastAuditHash()) || AUDIT_GENESIS;
+      const chained = fresh.map(e => {
+        const out = { ...e, prevHash: prev };
+        out.hash = chainHash(prev, out);
+        prev = out.hash;
+        return out;
+      });
+      await db.addAuditLogs(chained);
+    });
+    auditQueue = run.catch(() => {});
+    return run;
+  }
+
   async function audit(actor, action, category, details) {
-    await db.addAuditLogs([{
+    await appendAudit([{
       id: newId('log'),
       timestamp: nowStamp(),
       userId: actor?.id,
@@ -235,7 +263,6 @@ export function createApp({ db, config }) {
       category,
       details,
       ip: 'Serveur',
-      hash: newId('evt'),
     }]);
   }
 
@@ -507,9 +534,68 @@ export function createApp({ db, config }) {
     return entries;
   }
 
+  /** Entrées de journal d'une sauvegarde, rechaînées dans l'ordre chronologique. */
   function prepareAudit(list) {
     if (!Array.isArray(list)) return [];
-    return list.filter(e => e && typeof e === 'object' && typeof e.id === 'string').slice(0, AUDIT_LIMIT).reverse();
+    const entries = list.filter(e => e && typeof e === 'object' && typeof e.id === 'string').slice(0, AUDIT_LIMIT).reverse();
+    return rechain(entries);
+  }
+
+  // --- échecs de mot de passe et verrouillage -------------------------------
+  // Comptes ordinaires : verrouillage après 5 erreurs, déblocage par un responsable.
+  // Comptes DG : blocage TEMPORAIRE de 15 minutes (sinon n'importe qui pourrait bloquer la Direction).
+  const TEMP_LOCK_MS = 15 * 60 * 1000;
+
+  /** Minutes restantes d'un blocage temporaire (0 si aucun). */
+  const tempLockMinutes = user => {
+    const until = Number(user.profile?.lockedUntil || 0);
+    return until > Date.now() ? Math.ceil((until - Date.now()) / 60000) : 0;
+  };
+
+  /** Message si le compte ne peut pas se connecter actuellement, sinon null. */
+  function lockMessage(user) {
+    if (user.status === 'verrouille' || user.status === 'suspendu') {
+      return 'Accès refusé : ce compte est verrouillé. Contactez la Direction Générale pour le débloquer.';
+    }
+    const minutes = tempLockMinutes(user);
+    return minutes ? `Compte temporairement bloqué après plusieurs erreurs. Réessayez dans ${minutes} minute${minutes > 1 ? 's' : ''}.` : null;
+  }
+
+  /**
+   * Enregistre un mot de passe erroné. Renvoie l'erreur HTTP à renvoyer.
+   * @param {string} context  « connexion » ou « signature »
+   */
+  async function registerFailedAttempt(user, context, ip) {
+    const attempts = (user.failedAttempts ?? 0) + 1;
+    const lock = attempts >= MAX_FAILED_ATTEMPTS;
+    const temporary = lock && user.role === 'dg';
+    if (temporary) {
+      await db.updateUser(user.id, { failedAttempts: 0, profile: { ...user.profile, lockedUntil: Date.now() + TEMP_LOCK_MS } });
+    } else {
+      await db.updateUser(user.id, { failedAttempts: attempts, status: lock ? 'verrouille' : user.status });
+    }
+    await db.bump(USERS_VERSION_KEY);
+    await audit(user,
+      lock ? (temporary ? 'BLOCAGE TEMPORAIRE COMPTE DG (15 MIN)' : 'VERROUILLAGE COMPTE (MOTS DE PASSE ERRONÉS)') : `Échec de ${context}`,
+      'security',
+      `Mot de passe erroné (${context}) pour ${user.name} (tentative ${attempts}/${MAX_FAILED_ATTEMPTS}).${lock ? (temporary ? ' Blocage de 15 minutes.' : ' Compte verrouillé.') : ''}`);
+    if (lock) {
+      await prependToData('securityAlerts', {
+        id: newId('sec'), timestamp: nowStamp(), userId: user.id, userName: user.name, userRole: user.role,
+        userEntityName: user.profile?.departmentName || user.profile?.roleTitle || '', targetEntityId: 'auth',
+        targetEntityName: context === 'signature' ? 'Signature électronique' : 'Écran de connexion', attemptCount: attempts,
+        status: temporary ? 'alerte_emise' : 'compte_verrouille', severity: 'critique', ipAddress: ip,
+        reason: temporary
+          ? `${attempts} mots de passe erronés sur le compte DG : blocage temporaire de 15 minutes.`
+          : `${attempts} mots de passe erronés consécutifs : compte verrouillé automatiquement.`,
+      });
+      if (!temporary) await db.deleteUserSessions(user.id, '');
+      return new HttpError(423, temporary
+        ? 'Trop de tentatives : compte bloqué pendant 15 minutes.'
+        : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.');
+    }
+    const remaining = MAX_FAILED_ATTEMPTS - attempts;
+    return new HttpError(401, `${context === 'signature' ? 'Mot de passe incorrect.' : 'Identifiant ou mot de passe incorrect.'} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${user.role === 'dg' ? 'blocage temporaire' : 'verrouillage'} du compte.`);
   }
 
   // --- routes API ----------------------------------------------------------
@@ -572,31 +658,15 @@ export function createApp({ db, config }) {
         await burnTime(password);
         throw new HttpError(401, generic);
       }
-      if (user.status === 'verrouille' || user.status === 'suspendu') {
-        throw new HttpError(423, 'Accès refusé : ce compte est verrouillé. Contactez la Direction Générale pour le débloquer.');
-      }
+      const blocked = lockMessage(user);
+      if (blocked) throw new HttpError(423, blocked);
       if (!(await verifyPassword(password, user.passwordHash))) {
-        const attempts = (user.failedAttempts ?? 0) + 1;
-        const lock = attempts >= MAX_FAILED_ATTEMPTS;
-        await db.updateUser(user.id, { failedAttempts: attempts, status: lock ? 'verrouille' : user.status });
-        await db.bump(USERS_VERSION_KEY);
-        await audit(user, lock ? 'VERROUILLAGE COMPTE (MOTS DE PASSE ERRONÉS)' : 'Échec de Connexion', 'security',
-          `Mot de passe erroné pour ${user.name} (tentative ${attempts}/${MAX_FAILED_ATTEMPTS}).${lock ? ' Compte verrouillé.' : ''}`);
-        if (lock) {
-          await prependToData('securityAlerts', {
-            id: newId('sec'), timestamp: nowStamp(), userId: user.id, userName: user.name, userRole: user.role,
-            userEntityName: user.profile?.departmentName || user.profile?.roleTitle || '', targetEntityId: 'auth',
-            targetEntityName: 'Écran de connexion', attemptCount: attempts, status: 'compte_verrouille',
-            severity: 'critique', ipAddress: ip, reason: `${attempts} mots de passe erronés consécutifs : compte verrouillé automatiquement.`,
-          });
-          throw new HttpError(423, 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.');
-        }
-        const remaining = MAX_FAILED_ATTEMPTS - attempts;
-        throw new HttpError(401, `${generic} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le verrouillage du compte.`);
+        throw await registerFailedAttempt(user, 'connexion', ip);
       }
 
       const lastLogin = nowStamp();
-      await db.updateUser(user.id, { failedAttempts: 0, lastLogin });
+      const { lockedUntil: _expired, ...profile } = user.profile || {};
+      await db.updateUser(user.id, { failedAttempts: 0, lastLogin, profile });
       await db.bump(USERS_VERSION_KEY);
       const token = newSessionToken();
       await db.createSession({
@@ -634,6 +704,24 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, { user: toClientUser({ ...s.user, mustChangePassword: false }) });
     }
 
+    // Confirmation d'identité avant une action sensible (signature électronique).
+    // Les échecs comptent comme des tentatives de connexion : 5 erreurs verrouillent le compte.
+    if (p === '/api/auth/verify-password' && method === 'POST') {
+      const s = await requireSession(req);
+      const body = await readJson(req);
+      const fresh = await db.getUser(s.user.id);
+      const blocked = lockMessage(fresh);
+      if (blocked) throw new HttpError(423, blocked);
+      if (await verifyPassword(String(body.password ?? ''), fresh.passwordHash)) {
+        if (fresh.failedAttempts) {
+          await db.updateUser(fresh.id, { failedAttempts: 0 });
+          await db.bump(USERS_VERSION_KEY);
+        }
+        return sendJson(req, res, 200, { ok: true, serverTime: nowStamp() });
+      }
+      throw await registerFailedAttempt(fresh, 'signature', clientIp(req));
+    }
+
     if (p === '/api/auth/logout' && method === 'POST') {
       const s = await loadSession(req);
       if (s) {
@@ -666,6 +754,20 @@ export function createApp({ db, config }) {
     if (p === '/api/data/versions' && method === 'GET') {
       await requireSession(req);
       return sendJson(req, res, 200, { versions: await allVersions() });
+    }
+
+    // Vérification de l'intégrité du journal (chaîne d'empreintes).
+    if (p === '/api/audit/verify' && method === 'GET') {
+      const s = await requireSession(req);
+      if (!isSecurityStaff(accessUser(s.user))) throw new HttpError(403, 'Réservé à la Direction et aux responsables de sécurité.');
+      await auditQueue;
+      const entries = await db.listAuditLogsAsc();
+      const r = verifyChain(entries);
+      if (!r.ok) {
+        const e = entries[r.brokenAt];
+        r.entry = { id: e.id, timestamp: e.timestamp, action: e.action };
+      }
+      return sendJson(req, res, 200, r);
     }
 
     if (p === '/api/data/export' && method === 'GET') {
@@ -730,9 +832,8 @@ export function createApp({ db, config }) {
               category: ['auth', 'document', 'task', 'security', 'hierarchy', 'admin'].includes(e.category) ? e.category : 'admin',
               details: String(e.details ?? '').slice(0, 2000),
               ip: clientIp(req) || 'inconnue',
-              hash: '',
             }));
-          await db.addAuditLogs(entries.reverse());
+          await appendAudit(entries.reverse());
           return sendJson(req, res, 200, { version: await db.auditVersion() });
         }
 

@@ -102,6 +102,12 @@ export function createMemoryDb() {
       }
     },
     async listAuditLogs(limit) { return audit.slice(-limit).reverse().map(a => clone(a.entry)); },
+    async existingAuditIds(ids) {
+      const all = new Set(audit.map(a => a.entry.id));
+      return new Set(ids.filter(id => all.has(id)));
+    },
+    async lastAuditHash() { return audit.length ? audit[audit.length - 1].entry.hash || null : null; },
+    async listAuditLogsAsc() { return audit.map(a => clone(a.entry)); },
     async auditVersion() { return seq; },
   };
 }

@@ -173,4 +173,59 @@ assert(r.json.value.length === 3, 'comptable habilité : voit tous les contrats'
 r = await cpt('GET', '/api/data/documents');
 assert(r.json.value.some(d => d.id === 'doc-pay-ag1'), 'comptable habilité : voit les bulletins');
 
+// ---------------------------------------------------------------------------
+// Signature : confirmation du mot de passe par le serveur
+// ---------------------------------------------------------------------------
+r = await tech('POST', '/api/auth/verify-password', { password: 'Technicien-VSAT-2026' });
+assert(r.status === 200 && r.json.ok && typeof r.json.serverTime === 'string', 'signature : bon mot de passe confirmé, heure fournie par le serveur');
+r = await tech('POST', '/api/auth/verify-password', { password: 'mauvais-mot-2026' });
+assert(r.status === 401, 'signature : mauvais mot de passe refusé');
+r = await tech('POST', '/api/auth/verify-password', { password: 'Technicien-VSAT-2026' });
+assert(r.status === 200, 'signature : un succès remet le compteur d\'échecs à zéro');
+
+// ---------------------------------------------------------------------------
+// Journal d'audit : auteur imposé par le serveur, chaîne vérifiable
+// ---------------------------------------------------------------------------
+const fakeId = `log-forge-${Date.now()}`;
+r = await tech('PUT', '/api/data/auditLogs', { value: [{ id: fakeId, userName: 'Directeur Général', userRole: 'DG', ip: '1.2.3.4', timestamp: '2020-01-01 00:00:00', action: 'Action test', category: 'admin', details: 'essai' }], version: 0 });
+assert(r.status === 200, 'agent : peut ajouter une entrée au journal');
+let logs = (await boss('GET', '/api/data/auditLogs')).json.value;
+const forgedLog = logs.find(l => l.id === fakeId);
+assert(forgedLog && forgedLog.userName === 'Technicien Un' && forgedLog.ip !== '1.2.3.4' && !forgedLog.timestamp.startsWith('2020'), 'journal : auteur, heure et IP fixés par le serveur (pas d\'usurpation)');
+// Renvoyer tout le journal (comme le fait l'application) ne doit ni dupliquer ni casser la chaîne
+r = await boss('PUT', '/api/data/auditLogs', { value: logs, version: 0 });
+assert(r.status === 200, 'journal : renvoi des entrées existantes accepté');
+const logs2 = (await boss('GET', '/api/data/auditLogs')).json.value;
+assert(logs2.length === logs.length, 'journal : entrées existantes non dupliquées');
+r = await boss('GET', '/api/audit/verify');
+assert(r.status === 200 && r.json.ok === true && r.json.count > 0, `journal : chaîne d'empreintes intacte (${r.json.count} entrées)`);
+r = await tech('GET', '/api/audit/verify');
+assert(r.status === 403, 'agent : vérification du journal réservée à la Direction');
+
+// ---------------------------------------------------------------------------
+// Verrouillage : agent verrouillé ; DG bloqué 15 minutes seulement
+// ---------------------------------------------------------------------------
+const anon = client();
+for (let i = 0; i < 4; i++) await anon('POST', '/api/auth/login', { identifier: 'tech1@perm.cd', password: 'Faux-mot-2026' });
+r = await anon('POST', '/api/auth/login', { identifier: 'tech1@perm.cd', password: 'Faux-mot-2026' });
+assert(r.status === 423, 'agent : verrouillé après 5 échecs');
+r = await anon('POST', '/api/auth/login', { identifier: 'tech1@perm.cd', password: 'Technicien-VSAT-2026' });
+assert(r.status === 423, 'agent verrouillé : même le bon mot de passe est refusé');
+let me = (await boss('GET', '/api/data/users')).json.value.find(x => x.id === 'p-ag1');
+assert(me.status === 'verrouille', 'agent : statut « verrouillé » (réactivation par la Direction)');
+
+// En dernier : le DG se bloque lui-même (temporairement).
+for (let i = 0; i < 4; i++) {
+  r = await anon('POST', '/api/auth/login', { identifier: DG.identifier, password: 'Faux-mot-DG-2026' });
+}
+assert(r.status === 401 && /blocage temporaire/.test(r.json.error), 'DG : message d\'avertissement « blocage temporaire »');
+r = await anon('POST', '/api/auth/login', { identifier: DG.identifier, password: 'Faux-mot-DG-2026' });
+assert(r.status === 423 && /15 minutes/.test(r.json.error), 'DG : bloqué 15 minutes après 5 échecs');
+r = await anon('POST', '/api/auth/login', { identifier: DG.identifier, password: DG.password });
+assert(r.status === 423, 'DG bloqué : connexion refusée pendant le blocage');
+const dgRow = (await boss('GET', '/api/data/users')).json.value.find(x => x.role === 'dg' && x.email === DG.identifier);
+assert(dgRow && dgRow.status === 'actif', 'DG : compte resté actif (pas de verrouillage définitif)');
+r = await boss('GET', '/api/data/securityAlerts');
+assert(Array.isArray(r.json.value) && r.json.value.some(a => /blocage temporaire/.test(a.reason)), 'DG : alerte de sécurité émise');
+
 console.log(`\n${passed} vérifications de droits réussies.`);

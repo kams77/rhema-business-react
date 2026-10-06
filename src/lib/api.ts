@@ -65,6 +65,12 @@ export const api = {
   changePassword: (newPassword: string, currentPassword?: string) =>
     apiFetch<{ user: User }>('POST', '/api/auth/change-password', { newPassword, currentPassword }),
   logout: () => apiFetch('POST', '/api/auth/logout', {}, { signalExpired: false }),
+  /** Confirme l'identité de l'utilisateur connecté (signature électronique). */
+  verifyPassword: (password: string) =>
+    apiFetch<{ ok: boolean; serverTime: string }>('POST', '/api/auth/verify-password', { password }, { signalExpired: false }),
+  /** Recalcule côté serveur la chaîne d'empreintes du journal d'audit. */
+  verifyAudit: () =>
+    apiFetch<{ ok: boolean; count: number; legacy?: number; brokenAt?: number; lastHash?: string; entry?: { id: string; timestamp: string; action: string } }>('GET', '/api/audit/verify'),
   setup: (payload: { setupCode: string; users: unknown[]; data: Record<string, unknown> }) =>
     apiFetch<{ ok: boolean }>('POST', '/api/setup', payload),
   exportBackup: () => apiFetch<any>('GET', '/api/data/export'),

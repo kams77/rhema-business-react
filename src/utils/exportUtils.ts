@@ -117,12 +117,12 @@ export function exportAuditLogsToPDF(
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.text(orgName.toUpperCase() + ' - JOURNAL OFFICIEL D\'AUDIT IMMUABLE SHA-256', margin + 6, currentY + 9);
+  doc.text(orgName.toUpperCase() + ' - JOURNAL D\'AUDIT (EMPREINTES SHA-256 CHAÎNÉES)', margin + 6, currentY + 9);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(203, 213, 225); // slate-300
-  doc.text(`Traçabilité réglementaire & conformité légale RDC • Généré le ${new Date().toLocaleString('fr-FR')} • Événements archivés : ${logs.length}`, margin + 6, currentY + 16);
+  doc.text(`Extrait du journal d\'audit • Généré le ${new Date().toLocaleString('fr-FR')} • Événements archivés : ${logs.length}`, margin + 6, currentY + 16);
 
   currentY += 28;
 

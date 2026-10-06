@@ -26,6 +26,9 @@ jobs:
       - name: Tests du moteur de paie
         run: npx --yes esbuild src/lib/__tests__/payroll.test.ts --bundle --platform=node --format=esm --outfile=/tmp/payroll.test.mjs --log-level=error && node /tmp/payroll.test.mjs
 
+      - name: Tests des empreintes SHA-256
+        run: npx --yes esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=/tmp/integrity.test.mjs --log-level=error && node /tmp/integrity.test.mjs
+
       - name: Vérification TypeScript
         id: tsc
         run: |
@@ -104,6 +107,9 @@ jobs:
           BASE_URL=http://localhost:8090 SETUP_CODE=ci-memoire node server/tests/api.test.mjs
           BASE_URL=http://localhost:8090 node server/tests/permissions.test.mjs
 
+      - name: Tests de la chaîne d'audit
+        run: node server/tests/audit-chain.test.mjs
+
       - name: Démarrage de la pile complète (application + MariaDB)
         env:
           DB_PASSWORD: ci-base-${{ github.run_id }}
@@ -144,7 +150,11 @@ jobs:
           gunzip -c sauvegarde.sql.gz | grep -q 'CREATE TABLE `users`'
           gunzip -c sauvegarde.sql.gz | docker exec -i rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema'
           docker exec rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema -e \
-            "UPDATE users SET status=\"actif\", failed_attempts=0 WHERE login_email=\"dg@test.cd\""'
+            "UPDATE users SET status=\"actif\", failed_attempts=0, profile=JSON_REMOVE(profile, \"$.lockedUntil\") WHERE login_email=\"dg@test.cd\""'
+          # Le DG, bloqué 15 minutes par les tests, doit pouvoir se reconnecter immédiatement.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+            -d '{"identifier":"dg@test.cd","password":"Kinshasa-Gombe-2026"}' http://localhost:8080/api/auth/login)
+          test "$code" = "200" || { echo "Connexion DG après déblocage : HTTP $code"; exit 1; }
           curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
           echo "Sauvegarde, restauration et déblocage : OK"
 

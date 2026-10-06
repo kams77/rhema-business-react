@@ -14,6 +14,23 @@ export const MAX_FAILED_ATTEMPTS = 5;
 export const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min d'inactivité
 export const SESSION_MAX_DURATION_MS = 10 * 60 * 60 * 1000; // 10 h maximum
 export const MIN_PASSWORD_LENGTH = 10;
+/** Comptes DG : blocage temporaire au lieu d'un verrouillage définitif. */
+export const TEMP_LOCK_MS = 15 * 60 * 1000;
+
+/** Minutes restantes d'un blocage temporaire (0 si aucun). */
+export function tempLockMinutes(user: Pick<User, 'lockedUntil'>): number {
+  const until = Number(user.lockedUntil || 0);
+  return until > Date.now() ? Math.ceil((until - Date.now()) / 60000) : 0;
+}
+
+/** Message si le compte ne peut pas se connecter maintenant, sinon null. */
+export function lockMessage(user: Pick<User, 'status' | 'lockedUntil'>): string | null {
+  if (user.status === 'verrouille' || user.status === 'suspendu') {
+    return 'Accès refusé : ce compte est verrouillé. Contactez la Direction Générale pour le débloquer.';
+  }
+  const m = tempLockMinutes(user);
+  return m ? `Compte temporairement bloqué après plusieurs erreurs. Réessayez dans ${m} minute${m > 1 ? 's' : ''}.` : null;
+}
 
 const SESSION_KEY = 'rhema:session';
 

@@ -21,6 +21,7 @@ import {
   MIN_PASSWORD_LENGTH,
   checkUserPassword,
   hashPassword,
+  lockMessage,
   validatePasswordStrength,
 } from '../lib/auth';
 
@@ -74,8 +75,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'logistics' | 'security'>('all');
 
-  const isLocked = (u: User) => u.status === 'verrouille' || u.status === 'suspendu';
-
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isChecking) return;
@@ -115,8 +114,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
       return;
     }
 
-    if (isLocked(foundUser)) {
-      setErrorMsg(`Accès refusé : ce compte est verrouillé. Contactez la Direction Générale pour le débloquer.`);
+    const blocked = lockMessage(foundUser);
+    if (blocked) {
+      setErrorMsg(blocked);
       return;
     }
 
@@ -126,10 +126,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
       if (!ok) {
         onFailedAttempt?.(foundUser);
         const remaining = MAX_FAILED_ATTEMPTS - (foundUser.failedAccessAttempts + 1);
+        const isDG = foundUser.role === 'dg';
         setErrorMsg(
           remaining > 0
-            ? `${genericError} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le verrouillage du compte.`
-            : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.'
+            ? `${genericError} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${isDG ? 'blocage temporaire' : 'verrouillage'} du compte.`
+            : isDG
+              ? 'Trop de tentatives : compte bloqué pendant 15 minutes.'
+              : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.'
         );
         return;
       }
@@ -235,7 +238,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
         <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl">
           <Fingerprint className="w-3.5 h-3.5" />
-          <span>Authentification Scellée SHA-256</span>
+          <span>Mots de passe chiffrés</span>
         </div>
       </header>
 
@@ -602,14 +605,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Pied de page officiel */}
       <footer className="px-6 py-3 border-t border-slate-800/80 bg-slate-950/80 text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div>
-          © 2026 <strong>RHEMA BUSINESS</strong> — Télécoms, VSAT, Réseaux & Intégration Technologique en République Démocratique du Congo.
+          © {new Date().getFullYear()} <strong>{organization.name}</strong>
         </div>
         <div className="flex items-center gap-3 font-mono">
-          <span>RCCM/20-A-01120</span>
-          <span>•</span>
-          <span>BCC Conforme (USD & CDF)</span>
-          <span>•</span>
-          <span>Code du Travail RDC</span>
+          {(organization.rccm || organization.registrationNumber) && <span>RCCM : {organization.rccm || organization.registrationNumber}</span>}
         </div>
       </footer>
     </div>
