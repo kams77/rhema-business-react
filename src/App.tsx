@@ -1069,49 +1069,37 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   };
 
   // Déclenchement d'un test de tentative d'intrusion
+  /**
+   * Exercice de sécurité : crée une alerte de TEST clairement identifiée.
+   * Ne modifie JAMAIS un compte réel (aucun compteur d'échecs, aucun verrouillage).
+   */
   const handleTriggerTestBreach = () => {
-    const testAgents = users.filter(u => u.role === 'agent' || u.role === 'chef_service');
-    const targetAgent = testAgents[Math.floor(Math.random() * testAgents.length)] || users[users.length - 1];
-    const breachCount = (targetAgent.failedAccessAttempts || 0) + 1;
-    const shouldLock = breachCount >= 2;
-
-    const newAlert: SecurityAlert = {
-      id: newId('sec'),
+    if (currentUser.role !== 'dg') {
+      showToast('error', 'Seule la Direction Générale peut lancer un exercice de sécurité.');
+      return;
+    }
+    const testAlert: SecurityAlert = {
+      id: newId('sec-test'),
       timestamp: nowStamp(),
-      userId: targetAgent.id,
-      userName: targetAgent.name,
-      userRole: targetAgent.role,
-      userEntityName: targetAgent.roleTitle,
-      targetEntityId: 'dept-daf',
-      targetEntityName: 'Département Administration & Finances (DAF - Coffre Fort RH)',
-      attemptCount: breachCount,
-      status: shouldLock ? 'compte_verrouille' : 'alerte_emise',
-      severity: shouldLock ? 'critique' : 'haute',
-      ipAddress: 'Simulation',
-      reason: `[Test] Tentative d'accès illicite aux livres de paie & comptes confidentiels (Tentative #${breachCount}).`,
+      userId: 'exercice',
+      userName: 'Exercice de sécurité (fictif)',
+      userRole: 'agent',
+      userEntityName: 'Aucun compte réel',
+      targetEntityId: 'exercice',
+      targetEntityName: 'Exercice — Département Administration & Finances',
+      attemptCount: 1,
+      status: 'alerte_emise',
+      severity: 'haute',
+      ipAddress: 'Exercice',
+      reason: '[EXERCICE] Alerte de test déclenchée par la Direction Générale. Aucun compte n\'a été modifié.',
     };
-
-    setAlerts(prev => [newAlert, ...prev]);
-
-    // Mettre à jour l'utilisateur si récidive
-    setUsers(prev => prev.map(u => {
-      if (u.id === targetAgent.id) {
-        return {
-          ...u,
-          failedAccessAttempts: breachCount,
-          status: shouldLock ? 'verrouille' : u.status
-        };
-      }
-      return u;
-    }));
-
-    // Inscription au journal d'audit
+    setAlerts(prev => [testAlert, ...prev]);
     addAuditLog({
-      actor: targetAgent,
-      action: shouldLock ? 'VERROUILLAGE SÉCURITÉ RÉCIDIVE' : 'ALERTE INTRUSION DÉTECTÉE',
+      action: 'Exercice de Sécurité',
       category: 'security',
-      details: `[Simulation] Tentative illégitime d'accès au périmètre DAF. Statut : ${shouldLock ? 'Compte bloqué & Alerte DG' : 'Avertissement émis'}.`,
+      details: 'Alerte de test créée pour vérifier le circuit d\'alerte. Aucun compte réel modifié.',
     });
+    showToast('info', 'Alerte de test créée. Aucun compte réel n\'a été modifié.');
   };
 
   // Mise à jour de l'identité de l'entreprise
