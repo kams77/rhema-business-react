@@ -2,6 +2,10 @@
 import { invoiceBankDetails, orgBankAccounts } from '../../lib/bank';
 import { contentHashSync } from '../../lib/integrity';
 import React, { useState } from 'react';
+import { useRate } from '../../lib/exchangeRate';
+import { addDaysLocal, todayLocal } from '../../lib/dates';
+import { formatCDF, round2, usdToCdf } from '../../lib/money';
+import { nextReference } from '../../lib/sequence';
 import type { ProformaInvoiceItem, NetToPayInvoiceItem, User, Organization, PurchaseOrderItem } from '../../types';
 import { 
   FileText, 
@@ -45,6 +49,7 @@ export const InvoicesTab: React.FC<Props> = ({
   onRegisterPayment,
   onPrintInvoice
 }) => {
+  const rate = useRate();
   const [activeSubTab, setActiveSubTab] = useState<'proforma' | 'net_to_pay'>('net_to_pay');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProforma, setSelectedProforma] = useState<ProformaInvoiceItem | null>(null);
@@ -59,15 +64,16 @@ export const InvoicesTab: React.FC<Props> = ({
   // Modal création Proforma
   const [showCreateProformaModal, setShowCreateProformaModal] = useState(false);
   const [proformaClient, setProformaClient] = useState('');
-  const [proformaProject, setProformaProject] = useState('Projet Minier Katanga');
+  const [proformaProject, setProformaProject] = useState('');
   const [proformaTerms, setProformaTerms] = useState('50% à la commande, 50% après recette');
 
   // Modal création Facture Net à Payer
   const [showCreateInvoiceModal, setShowCreateInvoiceModal] = useState(false);
   const [invClient, setInvClient] = useState('');
-  const [invClientTax, setInvClientTax] = useState('RCCM: CD/KN/RCCM/20-B-001 | IdNat: 01-83-N44100');
-  const [invSubtotal, setInvSubtotal] = useState<number>(10000);
-  const [invAdvance, setInvAdvance] = useState<number>(2000);
+  const [invClientTax, setInvClientTax] = useState('');
+  const [invSubtotal, setInvSubtotal] = useState<number>(0);
+  const [invAdvance, setInvAdvance] = useState<number>(0);
+  const [invDueDate, setInvDueDate] = useState<string>(() => addDaysLocal(30));
   const bankAccounts = orgBankAccounts(organization);
   const [invBank, setInvBank] = useState<string>(bankAccounts[0]?.id || '');
 
@@ -94,10 +100,10 @@ export const InvoicesTab: React.FC<Props> = ({
     e.preventDefault();
     const newProforma: ProformaInvoiceItem = {
       id: `pro-${Date.now()}`,
-      proformaNumber: `PRO-2026-VSAT-${String(proformas.length + 1).padStart(3, '0')}`,
+      proformaNumber: nextReference('PRO-VSAT', proformas.map(p => p.proformaNumber)),
       organizationId: organization.id,
-      date: new Date().toISOString().split('T')[0],
-      validityDate: '2026-11-15',
+      date: todayLocal(),
+      validityDate: addDaysLocal(30),
       clientOrSupplierName: proformaClient || 'Client Entreprise RDC',
       clientType: 'projet_minier',
       contactPerson: 'Direction Commerciale & Approvisionnements',
@@ -133,15 +139,16 @@ export const InvoicesTab: React.FC<Props> = ({
 
   const handleCreateInvoiceSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const vat = invSubtotal * 0.16;
-    const netUSD = invSubtotal + vat - invAdvance;
+    const vat = round2(invSubtotal * 0.16);
+    const netUSD = round2(invSubtotal + vat - invAdvance);
+    if (netUSD < 0) return;
     const newInv: NetToPayInvoiceItem = {
       id: `fac-${Date.now()}`,
-      invoiceNumber: `FAC-2026-VSAT-${String(invoices.length + 1).padStart(3, '0')}`,
+      invoiceNumber: nextReference('FAC-VSAT', invoices.map(i => i.invoiceNumber)),
       organizationId: organization.id,
-      date: new Date().toISOString().split('T')[0],
-      dueDate: '2026-11-15',
-      clientName: invClient || 'Entreprise Minière & Télécoms RDC',
+      date: todayLocal(),
+      dueDate: invDueDate,
+      clientName: invClient.trim(),
       clientTaxId: invClientTax,
       clientAddress: 'Kinshasa / Lubumbashi - RD CONGO',
       category: 'vsat',
@@ -161,8 +168,8 @@ export const InvoicesTab: React.FC<Props> = ({
       withholdingTaxDeduction_USD: 0,
       otherDeductions_USD: 0,
       netToPayUSD: netUSD,
-      netToPayCDF: netUSD * 2850,
-      currencyRate: 2850,
+      netToPayCDF: usdToCdf(netUSD, rate),
+      currencyRate: rate,
       bankDetails: invoiceBankDetails(organization, invBank),
       paymentStatus: invAdvance > 0 ? 'partiellement_payee' : 'en_attente',
       paidAmountUSD: invAdvance,
@@ -170,9 +177,9 @@ export const InvoicesTab: React.FC<Props> = ({
       paymentRecords: invAdvance > 0 ? [
         {
           id: `pay-${Date.now()}`,
-          date: new Date().toISOString().split('T')[0],
+          date: todayLocal(),
           amountUSD: invAdvance,
-          amountCDF: invAdvance * 2850,
+          amountCDF: usdToCdf(invAdvance, rate),
           paymentMethod: 'virement_rawbank',
           reference: 'VIR-ACOMPTE-INITIAL',
           registeredByAgent: currentUser.name
@@ -305,7 +312,7 @@ export const InvoicesTab: React.FC<Props> = ({
                           ${inv.remainingBalanceUSD.toLocaleString()} USD
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          ~ {(inv.remainingBalanceUSD * 2850).toLocaleString()} CDF
+                          ~ {formatCDF(usdToCdf(inv.remainingBalanceUSD, inv.currencyRate || rate))}
                         </div>
                       </td>
                       <td className="py-3 px-4">
@@ -709,6 +716,27 @@ export const InvoicesTab: React.FC<Props> = ({
                 />
               </div>
               <div>
+                <label className="text-[11px] text-slate-300 font-semibold block mb-1">Identifiants du client (RCCM, Id. Nat., NIF)</label>
+                <input
+                  type="text"
+                  placeholder="Facultatif — tels qu'ils figurent sur les documents du client"
+                  value={invClientTax}
+                  onChange={(e) => setInvClientTax(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-slate-300 font-semibold block mb-1">Échéance de paiement</label>
+                <input
+                  type="date"
+                  required
+                  value={invDueDate}
+                  min={todayLocal()}
+                  onChange={(e) => setInvDueDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+              <div>
                 <label className="text-[11px] text-slate-300 font-semibold block mb-1">Montant Brut HT ($)</label>
                 <input 
                   type="number"
@@ -724,6 +752,7 @@ export const InvoicesTab: React.FC<Props> = ({
                 <input 
                   type="number"
                   min="0"
+                  max={round2(invSubtotal * 1.16)}
                   value={invAdvance}
                   onChange={(e) => setInvAdvance(Number(e.target.value))}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-amber-400 font-mono"

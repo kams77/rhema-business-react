@@ -2,8 +2,8 @@
 // Module Intégral Paie & RH RDC - Conforme Code du Travail RDC, CNSS, INPP, ONEM, IPR
 // 100% Autonome et Identique à l'IMAGE 1 (Dark Theme Slate-900 / Slate-950, Devises $ USD et CDF, Taux BCC)
 
-import React, { useState, useMemo } from 'react';
-import { usePersistentState } from '../hooks/usePersistentState';
+import React, { useState, useMemo, useEffect } from 'react';
+import { demoSeed, usePersistentState } from '../hooks/usePersistentState';
 import { isPayrollStaff } from '../utils/rbac';
 import type { 
   PayrollSystemConfig, 
@@ -21,8 +21,7 @@ import type {
 } from '../types';
 import { 
   calculatePayslipSimulation, 
-  createStandardPayrollSystem,
-  DEFAULT_EXCHANGE_RATE_USD_CDF
+  createStandardPayrollSystem
 } from '../data/standardPayroll';
 import { 
   initialContracts,
@@ -56,6 +55,10 @@ import { buildPayslipExport, withIntegrityHash } from '../lib/payslipDocument';
 import { contentHash, shortHash } from '../lib/integrity';
 import { PayslipTable, formatPayslipMoney } from './payroll/PayslipTable';
 import { DEMO_MODE } from '../config';
+import { isValidRate, rateStatusLabel, useExchangeRate } from '../lib/exchangeRate';
+import { addDaysLocal, todayLocal, workingDaysBetween } from '../lib/dates';
+import { newId } from '../utils/id';
+import { cdfToUsd, formatCDF, formatUSD, parseAmount, usdToCdf } from '../lib/money';
 
 import { 
   Coins, 
@@ -169,19 +172,35 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [activeTab, setActiveTab] = useState<PayrollTabType>('overview');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
-  const [exchangeRate, setExchangeRate] = usePersistentState<number>('payroll.exchangeRate', DEFAULT_EXCHANGE_RATE_USD_CDF);
+  // Taux USD/CDF partagé par toute l'application (paie, factures, bons de commande, rapports).
+  const [rateSetting, setRateSetting] = useExchangeRate();
+  const exchangeRate = rateSetting.rate;
+  const [rateDraft, setRateDraft] = useState<string>(String(rateSetting.rate));
+  useEffect(() => setRateDraft(String(rateSetting.rate)), [rateSetting.rate]);
+  // Reprise de l'ancien réglage (« payroll.exchangeRate », un nombre seul) s'il avait été modifié.
+  const [legacyRate] = usePersistentState<number | null>('payroll.exchangeRate', null);
+  useEffect(() => {
+    if (isHR && rateSetting.date === null && isValidRate(legacyRate) && legacyRate !== rateSetting.rate) {
+      setRateSetting({ rate: legacyRate, date: todayLocal(), updatedBy: 'Reprise du réglage de paie' });
+    }
+  }, [legacyRate]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveRate = () => {
+    const n = parseAmount(rateDraft);
+    if (!isValidRate(n)) { setRateDraft(String(rateSetting.rate)); return; }
+    setRateSetting({ rate: n, date: todayLocal(), updatedBy: currentUser.name });
+  };
   const [expandedPayrollRunId, setExpandedPayrollRunId] = useState<string | null>(null);
 
   // =========================================================================
   // DONNÉES DU PERSONNEL & HISTORIQUE DES ACTIONS RH
   // =========================================================================
-  const [localContracts, setLocalContracts] = usePersistentState<EmployeeContract[]>('payroll.contracts', initialContracts);
+  const [localContracts, setLocalContracts] = usePersistentState<EmployeeContract[]>('payroll.contracts', () => demoSeed(initialContracts));
   const contracts = sharedContracts ?? localContracts;
   const setContracts = onContractsChange ?? setLocalContracts;
-  const [leaves, setLeaves] = usePersistentState<LeaveRequest[]>('payroll.leaves', initialLeaves);
-  const [advances, setAdvances] = usePersistentState<SalaryAdvanceRequest[]>('payroll.advances', initialAdvances);
-  const [overtimeRecords, setOvertimeRecords] = usePersistentState<OvertimeRecord[]>('payroll.overtime', initialOvertimes);
-  const [disciplinaryActions, setDisciplinaryActions] = usePersistentState<DisciplinaryAction[]>('payroll.disciplinary', initialDisciplinaryActions);
+  const [leaves, setLeaves] = usePersistentState<LeaveRequest[]>('payroll.leaves', () => demoSeed(initialLeaves));
+  const [advances, setAdvances] = usePersistentState<SalaryAdvanceRequest[]>('payroll.advances', () => demoSeed(initialAdvances));
+  const [overtimeRecords, setOvertimeRecords] = usePersistentState<OvertimeRecord[]>('payroll.overtime', () => demoSeed(initialOvertimes));
+  const [disciplinaryActions, setDisciplinaryActions] = usePersistentState<DisciplinaryAction[]>('payroll.disciplinary', () => demoSeed(initialDisciplinaryActions));
 
   // Périodes de paie (vide au départ en mode réel ; une période de démonstration sinon).
   const [payrollRuns, setPayrollRuns] = usePersistentState<PayrollRunPeriod[]>('payroll.runs', () =>
@@ -191,7 +210,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
           month: currentPayMonth(),
           title: `Paie ${payMonthLabel(currentPayMonth())}`,
           currency: 'USD',
-          exchangeRateUSD_CDF: DEFAULT_EXCHANGE_RATE_USD_CDF,
+          exchangeRateUSD_CDF: exchangeRate,
           status: 'brouillon',
           totalGross: 0,
           totalNet: 0,
@@ -211,7 +230,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   // Formulaire Étape 1 : Paramétrage du Paiement Mensuel
   const [paymentParamForm, setPaymentParamForm] = useState({
     month: currentPayMonth(),
-    exchangeRateUSD_CDF: DEFAULT_EXCHANGE_RATE_USD_CDF,
+    exchangeRateUSD_CDF: exchangeRate,
     bankName: '',
     bankAccount: '',
     valueDate: lastDayOfMonth(currentPayMonth()),
@@ -224,7 +243,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [bankConfirmForm, setBankConfirmForm] = useState({
     bankName: '',
     transactionRef: '',
-    confirmedDate: new Date().toISOString().slice(0, 10),
+    confirmedDate: todayLocal(),
     debitAccount: '',
     bankReceiptNote: ''
   });
@@ -268,11 +287,12 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [leaveForm, setLeaveForm] = useState({
     userId: users[0]?.id || '',
     type: 'conge_annuel' as const,
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-    durationDays: 7,
+    startDate: todayLocal(),
+    endDate: addDaysLocal(7),
     reason: 'Congé annuel payé au titre de l\'exercice'
   });
+
+  const leaveDays = workingDaysBetween(leaveForm.startDate, leaveForm.endDate);
 
   const [advanceForm, setAdvanceForm] = useState({
     userId: users[0]?.id || '',
@@ -390,7 +410,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       ...config,
       isStandardTemplate: false,
       lastModifiedBy: `${currentUser?.name || 'Dr. Amadou Diallo'} (${currentUser?.roleTitle || 'PDG'})`,
-      lastModifiedAt: new Date().toISOString().slice(0, 10),
+      lastModifiedAt: todayLocal(),
     };
     setConfig(updated);
     if (onUpdatePayrollConfig) {
@@ -511,7 +531,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     setBankConfirmForm({
       bankName: run.bankName || '',
       transactionRef: '',
-      confirmedDate: new Date().toISOString().slice(0, 10),
+      confirmedDate: todayLocal(),
       debitAccount: '',
       bankReceiptNote: ''
     });
@@ -530,7 +550,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       return;
     }
     const dateStr = new Date().toLocaleString('fr-FR');
-    const dateOnly = new Date().toISOString().slice(0, 10);
+    const dateOnly = todayLocal();
 
     // Bulletins calculés avec la configuration, les heures sup et les avances du mois de la période.
     const rows = computeRunRows(run);
@@ -695,7 +715,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       {/* 2. ONGLETS DE NAVIGATION FONCTIONNELLE DU MODULE RH (IDENTIQUE IMAGE 1) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-800">
         {[
-          { id: 'overview', label: '1. Paramètres & Taux BCC', icon: Sliders },
+          { id: 'overview', label: '1. Paramètres & Taux', icon: Sliders },
           { id: 'payroll_run', label: `2. Clôture & Journal de Paie (${payrollRuns.length})`, icon: Calendar },
           { id: 'contracts', label: `3. Contrats & Fiches Salariés (${contracts.length})`, icon: Briefcase },
           { id: 'overtime', label: `4. Heures Sup (+30%/+50%/+100%) (${overtimeRecords.length})`, icon: Clock },
@@ -769,18 +789,35 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
               <div>
                 <label className="block font-semibold text-slate-300 mb-1">
-                  Taux de Change Légal BCC (1 USD en CDF)
+                  Taux de change (1 USD en CDF)
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={exchangeRate}
-                    onChange={(e) => setExchangeRate(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono font-bold"
-                  />
-                  <span className="absolute right-3 top-2 text-slate-400 text-xs font-mono">CDF</span>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={rateDraft}
+                      disabled={!isHR}
+                      onChange={(e) => setRateDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveRate(); }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono font-bold disabled:opacity-60"
+                    />
+                    <span className="absolute right-3 top-2 text-slate-400 text-xs font-mono">CDF</span>
+                  </div>
+                  {isHR && (
+                    <button
+                      type="button"
+                      onClick={saveRate}
+                      className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
+                    >
+                      Enregistrer
+                    </button>
+                  )}
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Utilisé pour les conversions contractuelles et déclarations.</p>
+                <p className={`text-[10px] mt-1 ${rateSetting.date ? 'text-slate-400' : 'text-amber-300'}`}>
+                  {rateStatusLabel(rateSetting)}{rateSetting.updatedBy ? ` • saisi par ${rateSetting.updatedBy}` : ''}. Utilisé partout : paie, factures, bons de commande et rapports.
+                  Reportez le taux du jour publié par la Banque Centrale du Congo.
+                </p>
               </div>
 
               <div>
@@ -939,7 +976,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl text-xs space-y-2">
               <span className="text-slate-400 block font-medium">Dernière révision RH :</span>
               <p className="text-white font-semibold">{currentUser?.name || 'Dr. Amadou Diallo'} ({currentUser?.roleTitle || 'PDG'})</p>
-              <p className="text-[11px] text-slate-400 font-mono">Horodatage : {new Date().toISOString().slice(0, 10)}</p>
+              <p className="text-[11px] text-slate-400 font-mono">Horodatage : {todayLocal()}</p>
             </div>
           </div>
         </div>
@@ -1117,7 +1154,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                           {run.status !== 'brouillon' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
                         </div>
                         <div className="text-[10px] text-slate-400 mt-1">
-                          Taux BCC: {run.exchangeRateUSD_CDF} CDF • {run.currency}
+                          Taux : 1 $ = {run.exchangeRateUSD_CDF} CDF • {run.currency}
                         </div>
                         {run.status === 'brouillon' && (
                           <button
@@ -1943,7 +1980,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 {formatMoney(simulation.netSalary)}
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                ≈ {config.currency === 'USD' ? `${(simulation.netSalary * exchangeRate).toLocaleString()} CDF` : `${(simulation.netSalary / exchangeRate).toFixed(2)} $`}
+                ≈ {config.currency === 'USD' ? formatCDF(usdToCdf(simulation.netSalary, exchangeRate)) : formatUSD(cdfToUsd(simulation.netSalary, exchangeRate))}
               </span>
             </div>
           </div>
@@ -2028,7 +2065,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     employeeCode: `RH-${Date.now().toString().slice(-3)}`,
                     matricule: contractForm.matricule,
                     contractType: contractForm.contractType,
-                    startDate: new Date().toISOString().slice(0, 10),
+                    startDate: todayLocal(),
                     baseSalary: contractForm.baseSalary,
                     salaryCurrency: contractForm.salaryCurrency,
                     categoryPro: contractForm.categoryPro,
@@ -2089,6 +2126,11 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   />
                 </div>
               </div>
+              <p className={leaveDays > 0 ? 'text-slate-400' : 'text-rose-300'}>
+                {leaveDays > 0
+                  ? `Durée : ${leaveDays} jour(s) ouvrable(s) (dimanches exclus).`
+                  : 'La date de fin doit être postérieure ou égale à la date de début.'}
+              </p>
               <div>
                 <label className="text-slate-400 block mb-1">Motif</label>
                 <input
@@ -2102,16 +2144,18 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
               <button onClick={() => setModalAction(null)} className="px-3 py-1.5 bg-slate-800 rounded-lg">Annuler</button>
               <button
+                disabled={leaveDays <= 0 || !leaveForm.userId}
                 onClick={() => {
+                  if (leaveDays <= 0) return;
                   const u = users.find(usr => usr.id === leaveForm.userId);
                   setLeaves(prev => [{
-                    id: `lv-${Date.now()}`,
+                    id: newId('lv'),
                     userId: leaveForm.userId,
                     userName: u?.name || 'Agent',
                     type: leaveForm.type,
                     startDate: leaveForm.startDate,
                     endDate: leaveForm.endDate,
-                    durationDays: leaveForm.durationDays,
+                    durationDays: leaveDays,
                     reason: leaveForm.reason,
                     status: 'en_attente'
                   }, ...prev]);
@@ -2172,7 +2216,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     userName: u?.name || 'Agent',
                     amount: advanceForm.amount,
                     currency: advanceForm.currency,
-                    requestDate: new Date().toISOString().slice(0, 10),
+                    requestDate: todayLocal(),
                     repaymentMonth: advanceForm.repaymentMonth,
                     reason: advanceForm.reason,
                     status: 'valide_rh',
@@ -2320,7 +2364,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     userName: u?.name || 'Agent',
                     type: disciplineForm.type,
                     title: disciplineForm.title,
-                    date: new Date().toISOString().slice(0, 10),
+                    date: todayLocal(),
                     reason: disciplineForm.reason,
                     status: 'notifie',
                     issuedBy: 'Direction Générale (Junior Monya)',

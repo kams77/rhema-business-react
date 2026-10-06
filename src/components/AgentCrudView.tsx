@@ -1,5 +1,6 @@
 // src/components/AgentCrudView.tsx
 import React, { useState } from 'react';
+import { nextReference } from '../lib/sequence';
 import type { User, HierarchicalEntity, UserRole, Organization } from '../types';
 import { 
   Users, 
@@ -58,10 +59,12 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   // Formulaire nouvel agent
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [matricule, setMatricule] = useState(`MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+  const nextMatricule = () => nextReference('MAT', users.map(u => u.matricule));
+  const [matricule, setMatricule] = useState(nextMatricule);
   const [role, setRole] = useState<UserRole>('agent');
   const [roleTitle, setRoleTitle] = useState('Agent Opérationnel');
-  const [phone, setPhone] = useState('+243 81 279 1228');
+  const [phone, setPhone] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
   const [entityId, setEntityId] = useState(scopedEntities[0]?.id || '');
   const [canApproveServiceDocuments, setCanApproveServiceDocuments] = useState(false);
 
@@ -97,6 +100,16 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
+    const mail = email.trim().toLowerCase();
+    if (users.some(u => u.email.trim().toLowerCase() === mail)) {
+      setCreateError('Cet email est déjà utilisé par un autre compte.');
+      return;
+    }
+    if (matricule.trim() && users.some(u => (u.matricule || '').toLowerCase() === matricule.trim().toLowerCase())) {
+      setCreateError('Ce matricule est déjà attribué.');
+      return;
+    }
+    setCreateError(null);
 
     const targetEnt = entities.find(e => e.id === entityId);
 
@@ -121,7 +134,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
 
     setName('');
     setEmail('');
-    setMatricule(`MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+    setMatricule(nextReference('MAT', [...users.map(u => u.matricule), matricule]));
     setShowModal(false);
   };
 
@@ -467,6 +480,9 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                 </div>
               )}
 
+              {createError && (
+                <p role="alert" className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">{createError}</p>
+              )}
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"

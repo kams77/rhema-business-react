@@ -1,19 +1,14 @@
 // src/utils/invitationUtils.ts
 import type { User, HierarchicalEntity, EntityInvitation, EntityInvitationNotification } from '../types';
+import { secureDigits } from '../lib/sequence';
 
 /**
  * Génère une clé d'authentification unique de 10 chiffres (format strict: 10 chiffres décimaux)
  * Exemple: "7492018365"
  */
 export function generate10DigitAuthKey(): string {
-  // Premier chiffre entre 1 et 9 pour éviter les zéros en tête ambigus
-  const firstDigit = Math.floor(Math.random() * 9) + 1;
-  // Les 9 chiffres suivants entre 0 et 9
-  let remainingDigits = '';
-  for (let i = 0; i < 9; i++) {
-    remainingDigits += Math.floor(Math.random() * 10).toString();
-  }
-  return `${firstDigit}${remainingDigits}`;
+  // Générateur cryptographique (Math.random est prévisible) ; premier chiffre non nul.
+  return secureDigits(10);
 }
 
 /**

@@ -3,6 +3,7 @@
 // Devises autorisées : USD ($) et CDF (Franc Congolais) uniquement
 
 import { computePayslip } from '../lib/payroll';
+import { todayLocal } from '../lib/dates';
 import type { 
   PayrollSystemConfig, 
   PayrollAllowance, 
@@ -192,7 +193,7 @@ export function createStandardPayrollSystem(organizationId: string, orgName: str
     },
     seniorityBonusPerTwoYearsPercent: 3, // 3% tous les 2 ans
     lastModifiedBy: 'Système RH RDC (Code du Travail)',
-    lastModifiedAt: new Date().toISOString().slice(0, 10),
+    lastModifiedAt: todayLocal(),
     notes: 'Système conforme au Code du Travail de la République Démocratique du Congo (RDC). Seules les devises USD ($) et Franc Congolais (CDF) sont autorisées. Cotisations CNSS (5% employé, 13% patronal), INPP (3%), ONEM (0.2%) et barème progressif d\'IPR.'
   };
 }

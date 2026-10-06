@@ -2,6 +2,8 @@
 import { contentHashSync, shortHash } from '../lib/integrity';
 import React, { useState, useEffect } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { DEMO_MODE } from '../config';
+import { addDaysLocal } from '../lib/dates';
 import type { TaskItem, User, HierarchicalEntity, DocumentItem, Organization } from '../types';
 import { 
   GitBranch, 
@@ -168,41 +170,32 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
   // État du formulaire d'ajout
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('approbation');
   const [taskTitle, setTaskTitle] = useState(taskTemplates['approbation'].defaultTitle);
-  const [targetEntityId, setTargetEntityId] = useState(entities[0]?.id || 'dept-daf');
+  const [targetEntityId, setTargetEntityId] = useState(entities[0]?.id || '');
   const [searchCollaborator, setSearchCollaborator] = useState('');
   const [collaboratorScope, setCollaboratorScope] = useState<'entity' | 'company'>('company');
-  const [assignedRoles, setAssignedRoles] = useState<Record<string, 'Responsable' | 'Exécutant' | 'Validateur'>>({
-    'u-1': 'Validateur'
-  });
+  const [assignedRoles, setAssignedRoles] = useState<Record<string, 'Responsable' | 'Exécutant' | 'Validateur'>>({});
   const [priority, setPriority] = useState<'Normale' | 'Haute' | 'Critique'>('Haute');
-  const [dueDate, setDueDate] = useState('2026-10-15');
+  const [dueDate, setDueDate] = useState(() => addDaysLocal(7));
   const [attachedDocId, setAttachedDocId] = useState(documents[0]?.id || '');
   const [instructions, setInstructions] = useState('Vérifier la conformité de chaque pièce avant la signature hiérarchique.');
   const [customSteps, setCustomSteps] = useState<string[]>(taskTemplates['approbation'].steps);
   const [newStepText, setNewStepText] = useState('');
 
   // Collaborateurs
-  const allCollaborators = users.length > 0 ? users : [
-    { id: 'u-1', name: 'Dr. Amadou Diallo', roleTitle: 'Directeur Général (DG)', role: 'dg', entityId: 'dept-daf' },
-    { id: 'u-2', name: 'Junior Monya', roleTitle: 'Directeur Général Adjoint (DGA)', role: 'dg', entityId: 'dept-daf' },
-    { id: 'u-3', name: 'M. Ibrahima Sarr', roleTitle: 'Chef Département Administratif & Financier (DAF)', role: 'chef_departement', entityId: 'dept-daf' },
-    { id: 'u-4', name: 'M. Alain Boni', roleTitle: 'Chef Département Opérations (DOP)', role: 'chef_departement', entityId: 'dept-ops' },
-    { id: 'u-5', name: 'M. Jean-Paul Kouassi', roleTitle: 'Directeur des Ressources Humaines (DRH)', role: 'directeur', entityId: 'dir-rh' },
-    { id: 'u-6', name: 'Mme Sophie Traoré', roleTitle: 'Directrice Financière & Comptable', role: 'directeur', entityId: 'dir-finance' },
-    { id: 'u-7', name: 'Moussa Diop', roleTitle: 'Gestionnaire Paie & Cotisations', role: 'agent', entityId: 'div-paie' },
-  ];
+  // Uniquement les vrais comptes de l'annuaire (jamais de personnes fictives).
+  const allCollaborators = users;
 
   const availableCollaborators = allCollaborators.filter(u => {
     const matchSearch = u.name.toLowerCase().includes(searchCollaborator.toLowerCase()) ||
                         u.roleTitle.toLowerCase().includes(searchCollaborator.toLowerCase());
     if (collaboratorScope === 'entity' && targetEntityId) {
-      return matchSearch && (u as any).entityId === targetEntityId;
+      return matchSearch && [u.serviceId, u.divisionId, u.directionId, u.departementId].includes(targetEntityId);
     }
     return matchSearch;
   });
 
   // Liste interne des tâches
-  const [localTasks, setLocalTasks] = usePersistentState<WorkflowTask[]>('workflows.tasks', [
+  const [localTasks, setLocalTasks] = usePersistentState<WorkflowTask[]>('workflows.tasks', !DEMO_MODE ? [] : [
     {
       id: 'task-1',
       category: 'jalons',

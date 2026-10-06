@@ -1,5 +1,8 @@
 // src/components/DocumentsView.tsx
 import React, { useState } from 'react';
+import { todayLocal } from '../lib/dates';
+import { parseAmount } from '../lib/money';
+import { nextReference } from '../lib/sequence';
 import { shortHash } from '../lib/integrity';
 import type { 
   DocumentItem, 
@@ -276,16 +279,20 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
 
     const matchedEntity = entities.find(e => e.id === selectedEntityId);
-    const numAmount = (includeFinancialAmount && amount.trim()) 
-      ? parseFloat(amount.replace(/\s/g, '')) 
+    const numAmount = (includeFinancialAmount && amount.trim())
+      ? parseAmount(amount) ?? undefined
       : undefined;
+    if (includeFinancialAmount && amount.trim() && numAmount === undefined) {
+      setFormError('Montant illisible. Exemple : 1 200,50');
+      return;
+    }
     const isPayslip = selectedSubtype === 'bulletin_de_paie' || accreditationLevel === 'strict_confidentiel';
     const acc = getRolesByAccreditation(accreditationLevel);
 
 
     onAddDocument({
       title: title.trim(),
-      referenceNumber: `DOC-2026-${Math.floor(100 + Math.random() * 900)}`,
+      referenceNumber: nextReference('DOC', documents.map(d => d.referenceNumber)),
       category: selectedCategory,
       subtype: selectedSubtype,
       organizationId: organization.id,
@@ -295,7 +302,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       authorEntity: currentUser.roleTitle,
       targetEntityId: selectedEntityId || undefined,
       targetEntityName: matchedEntity?.name,
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: todayLocal(),
       status: initialStatus,
       size: '1.4 Mo',
       fileType: 'PDF',

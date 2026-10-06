@@ -1,5 +1,9 @@
 // src/components/logistics/LogisticsReportsAndExportsTab.tsx
 import React, { useState, useMemo } from 'react';
+import { todayLocal } from '../../lib/dates';
+import { downloadTextFile } from '../../lib/csv';
+import { rateStatusLabel, useExchangeRate } from '../../lib/exchangeRate';
+import { round2, usdToCdf } from '../../lib/money';
 import type { LogisticsHub, HubStockItem, StockMovementItem, PurchaseOrderItem, DeliveryNoteItem, User, Organization } from '../../types';
 import { 
   FileSpreadsheet, 
@@ -41,6 +45,8 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
   onPrintOfficialDoc,
   onLogAction
 }) => {
+  const [rateSetting] = useExchangeRate();
+  const rate = rateSetting.rate;
   const [selectedHubId, setSelectedHubId] = useState<string>('all');
   const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
   const [reportType, setReportType] = useState<'inventory' | 'valuation' | 'movements' | 'customs_dgda'>('inventory');
@@ -49,8 +55,8 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
   const summaryMetrics = useMemo(() => {
     const relevantStocks = selectedHubId === 'all' ? stocks : stocks.filter(s => s.hubId === selectedHubId);
     const totalItemsCount = relevantStocks.reduce((sum, s) => sum + s.quantityAvailable, 0);
-    const totalValuationUSD = relevantStocks.reduce((sum, s) => sum + s.totalValueUSD, 0);
-    const totalValuationCDF = totalValuationUSD * 2850;
+    const totalValuationUSD = round2(relevantStocks.reduce((sum, s) => sum + s.totalValueUSD, 0));
+    const totalValuationCDF = usdToCdf(totalValuationUSD, rate);
     const alertItemsCount = relevantStocks.filter(s => s.quantityAvailable <= s.minAlertThreshold).length;
 
     return {
@@ -59,7 +65,7 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
       totalValuationCDF,
       alertItemsCount
     };
-  }, [stocks, selectedHubId]);
+  }, [stocks, selectedHubId, rate]);
 
   // Génération de CSV pour l'inventaire
   const handleExportStockCSV = () => {
@@ -101,15 +107,8 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
       ];
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    const fileName = `inventaire_logistique_rhema_${selectedHubId}_${new Date().toISOString().split('T')[0]}.csv`;
-    link.setAttribute('download', fileName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const fileName = `inventaire_logistique_rhema_${selectedHubId}_${todayLocal()}.csv`;
+    downloadTextFile(fileName, [headers.join(','), ...rows.map(e => e.join(','))].join('\n'));
 
     if (onLogAction) {
       onLogAction('Export Fichier CSV Inventaire', `Extraction de ${relevantStocks.length} articles pour le hub ${selectedHubId}.`, 'export');
@@ -188,7 +187,7 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
         </div>
 
         <div className="text-xs text-slate-400">
-          Taux de change appliqué : <strong className="text-amber-400 font-mono">1 USD = 2 850 CDF</strong> (Banque Centrale du Congo)
+          Taux de change appliqué : <strong className="text-amber-400 font-mono">1 USD = {rate.toLocaleString('fr-FR')} CDF</strong> ({rateStatusLabel(rateSetting)})
         </div>
       </div>
 

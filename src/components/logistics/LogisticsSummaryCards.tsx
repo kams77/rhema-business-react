@@ -1,5 +1,7 @@
 // src/components/logistics/LogisticsSummaryCards.tsx
 import React from 'react';
+import { useRate } from '../../lib/exchangeRate';
+import { formatCDF, round2, usdToCdf } from '../../lib/money';
 import type { PurchaseOrderItem, DeliveryNoteItem, ShipmentTracking, NetToPayInvoiceItem } from '../../types';
 import { Package, Truck, FileText, CheckCircle2, ShieldAlert, DollarSign } from 'lucide-react';
 
@@ -22,7 +24,8 @@ export const LogisticsSummaryCards: React.FC<Props> = ({
   const pendingOrders = orders.filter(o => o.status !== 'receptionne_conforme' && o.status !== 'annule').length;
   const inTransitShipments = shipments.filter(s => s.currentStatus !== 'livre_sur_site').length;
   const pendingDeliveries = deliveryNotes.filter(d => d.status !== 'livre_conforme').length;
-  const totalNetToPay = invoices.reduce((sum, i) => sum + i.remainingBalanceUSD, 0);
+  const rate = useRate();
+  const totalNetToPay = round2(invoices.reduce((sum, i) => sum + i.remainingBalanceUSD, 0));
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
@@ -98,7 +101,7 @@ export const LogisticsSummaryCards: React.FC<Props> = ({
         </div>
         <div className="text-[11px] text-slate-400 mt-1 flex justify-between">
           <span>Solde à encaisser :</span>
-          <span className="text-amber-300 font-mono">~{(totalNetToPay * 2850).toLocaleString()} CDF</span>
+          <span className="text-amber-300 font-mono">~{formatCDF(usdToCdf(totalNetToPay, rate))}</span>
         </div>
       </div>
     </div>

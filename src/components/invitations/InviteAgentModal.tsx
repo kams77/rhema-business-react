@@ -22,11 +22,15 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { generate10DigitAuthKey, getManagedEntities, resolveAgentsByMatricules, format10DigitKey } from '../../utils/invitationUtils';
+import { nextReference } from '../../lib/sequence';
+import { newId } from '../../utils/id';
 
 interface InviteAgentModalProps {
   currentUser: User;
   entities: HierarchicalEntity[];
   users: User[];
+  /** Codes d'invitation déjà attribués (numérotation suivie). */
+  existingCodes?: string[];
   onClose: () => void;
   onSendInvitation: (invitation: EntityInvitation, notification: EntityInvitationNotification) => void;
   onLogAction?: (action: string, details: string, category: string) => void;
@@ -36,6 +40,7 @@ export const InviteAgentModal: React.FC<InviteAgentModalProps> = ({
   currentUser,
   entities,
   users,
+  existingCodes = [],
   onClose,
   onSendInvitation,
   onLogAction
@@ -50,7 +55,7 @@ export const InviteAgentModal: React.FC<InviteAgentModalProps> = ({
   const [purpose, setPurpose] = useState<string>('');
   const [durationHours, setDurationHours] = useState<number>(24);
   const [accessScope, setAccessScope] = useState<'lecture' | 'operant_delegue' | 'superviseur_temporaire'>('operant_delegue');
-  const [authKey, setAuthKey] = useState<string>(generate10DigitAuthKey());
+  const [authKey, setAuthKey] = useState<string>(() => generate10DigitAuthKey());
   const [copiedKey, setCopiedKey] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [createdSummary, setCreatedSummary] = useState<{ count: number; key: string; hostName: string } | null>(null);
@@ -113,11 +118,13 @@ export const InviteAgentModal: React.FC<InviteAgentModalProps> = ({
     if (!purpose.trim()) return;
 
     // Créer une invitation pour chaque agent trouvé
+    const takenCodes = [...existingCodes];
     matchedAgents.forEach((agent, index) => {
       // Clé unique pour chaque agent (la première utilise authKey, les suivantes en génèrent une nouvelle si multi-agents)
       const agentKey = index === 0 ? authKey : generate10DigitAuthKey();
-      const invId = `inv-${Date.now()}-${index}`;
-      const invCode = `INV-2026-${Math.floor(100 + Math.random() * 900)}`;
+      const invId = newId('inv');
+      const invCode = nextReference('INV', takenCodes);
+      takenCodes.push(invCode);
 
       const invitation: EntityInvitation = {
         id: invId,

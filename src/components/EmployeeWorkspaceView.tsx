@@ -1,6 +1,11 @@
 // src/components/EmployeeWorkspaceView.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract } from '../types';
+import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract, LeaveRequest } from '../types';
+import { demoSeed, usePersistentState } from '../hooks/usePersistentState';
+import { addDaysLocal, localDateTime, todayLocal, workingDaysBetween } from '../lib/dates';
+import { newId } from '../utils/id';
+import { ATTENDANCE_KEY, workedSeconds, type AttendancePunch } from '../lib/attendance';
+import { DEMO_MODE } from '../config';
 import { 
   CheckCircle2, 
   Clock, 
@@ -32,9 +37,34 @@ import {
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { DepartmentTasksProgressChart } from './DepartmentTasksProgressChart';
-import { initialContracts } from '../data/initialData';
+import { initialContracts, initialLeaves } from '../data/initialData';
 import { canAccessLogistics } from '../utils/rbac';
 import { isEntityManager } from '../utils/invitationUtils';
+
+interface WorkspaceTask {
+  id: string;
+  /** Agent propriétaire (absent = tâche de démonstration visible de tous). */
+  ownerId?: string;
+  title: string;
+  priority: string;
+  status: string;
+  description: string;
+  completed: boolean;
+  dueDate: string;
+  steps: { id: string; label: string; done: boolean }[];
+  intervenants: { initials: string; name: string; role: string; bg: string; roleBadge: string }[];
+}
+
+interface WorkspaceMessage {
+  id: string;
+  authorId?: string;
+  auteur: string;
+  date: string;
+  message: string;
+  priorite: string;
+}
+
+const formatClock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -65,10 +95,34 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   onOpenInviteAgent,
   onOpenInvitationsManager,
 }) => {
-  // Chronomètre de travail en direct (démarre à 01:20:10)
-  const [seconds, setSeconds] = useState<number>(4810);
-  const [workStatus, setWorkStatus] = useState<'working' | 'coffee_break'>('working');
-  const [breakSeconds, setBreakSeconds] = useState<number>(0);
+  // Pointage réel (enregistré) : arrivée, pauses et départ de chaque agent, jour par jour.
+  const [punches, setPunches] = usePersistentState<AttendancePunch[]>(ATTENDANCE_KEY, []);
+  const today = todayLocal();
+  const myPunches = useMemo(
+    () => punches.filter(p => p.userId === currentUser.id).sort((a, b) => b.date.localeCompare(a.date)),
+    [punches, currentUser.id]
+  );
+  const todayPunch = myPunches.find(p => p.date === today);
+  const openBreak = todayPunch?.breaks.find(b => !b.end);
+  const workStatus: 'off' | 'working' | 'coffee_break' | 'done' =
+    !todayPunch ? 'off' : todayPunch.departureAt ? 'done' : openBreak ? 'coffee_break' : 'working';
+  const [now, setNow] = useState(() => Date.now());
+  const seconds = todayPunch ? workedSeconds(todayPunch, now) : 0;
+  const breakSeconds = openBreak ? Math.max(0, Math.floor((now - Date.parse(openBreak.start)) / 1000)) : 0;
+  const updateTodayPunch = (fn: (p: AttendancePunch) => AttendancePunch) =>
+    setPunches(prev => prev.map(p => (p.userId === currentUser.id && p.date === today ? fn(p) : p)));
+  const clockIn = () => {
+    if (todayPunch) return;
+    setPunches(prev => [{ id: newId('pt'), userId: currentUser.id, userName: currentUser.name, date: today, arrivalAt: new Date().toISOString(), breaks: [] }, ...prev]);
+  };
+  const toggleBreak = () => {
+    if (workStatus === 'working') updateTodayPunch(p => ({ ...p, breaks: [...p.breaks, { start: new Date().toISOString() }] }));
+    else if (workStatus === 'coffee_break') updateTodayPunch(p => ({ ...p, breaks: p.breaks.map(b => (b.end ? b : { ...b, end: new Date().toISOString() })) }));
+  };
+  const clockOut = () => {
+    const end = new Date().toISOString();
+    updateTodayPunch(p => ({ ...p, departureAt: end, breaks: p.breaks.map(b => (b.end ? b : { ...b, end })) }));
+  };
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'task_analytics' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('dashboard');
   const [showAnalyticsInTasks, setShowAnalyticsInTasks] = useState<boolean>(true);
   const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'completed'>('all');
@@ -76,6 +130,16 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState<boolean>(false);
   const [viewingDoc, setViewingDoc] = useState<DocumentItem | null>(null);
+
+  // Entité de rattachement la plus précise (service > division > direction > département).
+  const myEntity = useMemo(() => {
+    const ids = [currentUser.serviceId, currentUser.divisionId, currentUser.directionId, currentUser.departementId];
+    for (const id of ids) {
+      const e = id ? entities.find(x => x.id === id) : undefined;
+      if (e) return e;
+    }
+    return undefined;
+  }, [entities, currentUser]);
 
   // Documents strictement accessibles à l'agent connecté selon les règles de confidentialité
   const agentDocuments = useMemo(() => {
@@ -96,8 +160,8 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
     });
   }, [documents, currentUser]);
 
-  // État interactif des tâches opérationnelles
-  const [taskList, setTaskList] = useState([
+  // Tâches personnelles (enregistrées) : celles créées par l'agent ou qui lui sont attribuées.
+  const [allWorkspaceTasks, setTaskList] = usePersistentState<WorkspaceTask[]>('workspace.tasks', () => demoSeed<WorkspaceTask>([
     {
       id: 'tsk-1',
       title: "Approbation Demande d'Achat DA-2026-118 - Licences Oracle & SAP",
@@ -149,16 +213,20 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         { initials: 'FM', name: 'M. Fabrice Mukendi', role: 'Chef Srv.', bg: 'bg-emerald-600', roleBadge: 'bg-emerald-100 text-emerald-700' },
       ]
     }
-  ]);
+  ]));
+  const taskList = useMemo(
+    () => allWorkspaceTasks.filter(t => !t.ownerId || t.ownerId === currentUser.id),
+    [allWorkspaceTasks, currentUser.id]
+  );
 
   // Nouvelle tâche (formulaire)
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState<'NORMALE' | 'HAUTE' | 'CRITIQUE'>('HAUTE');
-  const [newTaskDueDate, setNewTaskDueDate] = useState('2026-10-15');
+  const [newTaskDueDate, setNewTaskDueDate] = useState(() => addDaysLocal(7));
 
-  // Main courante / Transmissions
-  const [consignes, setConsignes] = useState([
+  // Main courante / Transmissions (partagée et enregistrée)
+  const [consignes, setConsignes] = usePersistentState<WorkspaceMessage[]>('workspace.messages', () => demoSeed<WorkspaceMessage>([
     {
       id: 'c-1',
       auteur: 'M. Ibrahima Sarr (DAF)',
@@ -173,25 +241,23 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
       message: 'Les fiches d’évaluation de mi-parcours sont disponibles dans votre espace documentaire. Merci de les valider.',
       priorite: 'normale'
     }
-  ]);
+  ]));
   const [nouveauMessage, setNouveauMessage] = useState('');
 
   // Demande de congé
-  const [demandeConge, setDemandeConge] = useState({ type: 'Congé annuel légal (OHADA)', debut: '2026-10-01', fin: '2026-10-15', motif: '' });
+  const [demandeConge, setDemandeConge] = useState<{ type: LeaveRequest['type']; debut: string; fin: string; motif: string }>(
+    () => ({ type: 'conge_annuel', debut: addDaysLocal(1), fin: addDaysLocal(7), motif: '' })
+  );
   const [congeSucces, setCongeSucces] = useState(false);
+  // Demandes de congé : même liste que le module Paie (les RH les voient et les traitent).
+  const [leaves, setLeaves] = usePersistentState<LeaveRequest[]>('payroll.leaves', () => demoSeed(initialLeaves));
+  const myLeaves = useMemo(() => leaves.filter(l => l.userId === currentUser.id), [leaves, currentUser.id]);
+  const congeJours = workingDaysBetween(demandeConge.debut, demandeConge.fin);
 
   // Chronomètres
   useEffect(() => {
-    let timer: any = null;
-    if (workStatus === 'working') {
-      timer = setInterval(() => {
-        setSeconds(prev => prev + 1);
-      }, 1000);
-    } else {
-      timer = setInterval(() => {
-        setBreakSeconds(prev => prev + 1);
-      }, 1000);
-    }
+    if (workStatus !== 'working' && workStatus !== 'coffee_break') return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [workStatus]);
 
@@ -224,8 +290,9 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
-    const created = {
-      id: `tsk-${Date.now()}`,
+    const created: WorkspaceTask = {
+      id: newId('tsk'),
+      ownerId: currentUser.id,
       title: newTaskTitle,
       priority: newTaskPriority,
       status: 'En cours de traitement',
@@ -253,9 +320,10 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
     if (!nouveauMessage.trim()) return;
     setConsignes(prev => [
       {
-        id: `c-${Date.now()}`,
+        id: newId('c'),
+        authorId: currentUser.id,
         auteur: `${currentUser.name} (${currentUser.roleTitle})`,
-        date: 'À l’instant',
+        date: localDateTime(),
         message: nouveauMessage,
         priorite: 'normale'
       },
@@ -266,6 +334,19 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
 
   const soumettreConge = (e: React.FormEvent) => {
     e.preventDefault();
+    if (congeJours <= 0) return;
+    setLeaves(prev => [{
+      id: newId('lv'),
+      userId: currentUser.id,
+      userName: currentUser.name,
+      type: demandeConge.type,
+      startDate: demandeConge.debut,
+      endDate: demandeConge.fin,
+      durationDays: congeJours,
+      reason: demandeConge.motif.trim(),
+      status: 'en_attente',
+    }, ...prev]);
+    setDemandeConge(d => ({ ...d, motif: '' }));
     setCongeSucces(true);
     setTimeout(() => setCongeSucces(false), 4000);
   };
@@ -273,27 +354,24 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* 1. BANDEAU VERT : Pointage Automatique Conforme */}
-      {showNotification && (
-        <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-400/80 text-emerald-950 flex items-center justify-between gap-3 text-xs shadow-sm">
+      {showNotification && todayPunch && (
+        <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-400/80 text-emerald-100 flex items-center justify-between gap-3 text-xs shadow-sm">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
               <CheckCircle2 className="w-4 h-4" />
             </div>
             <div className="min-w-0">
               <div className="font-bold flex items-center gap-2 flex-wrap">
-                <span>Pointage Automatique Conforme</span>
-                <span className="px-2 py-0.5 bg-emerald-200/90 text-emerald-900 text-[10px] rounded uppercase font-bold tracking-wider">
-                  Horodatage Inviolable
-                </span>
+                <span>Pointage enregistré</span>
               </div>
-              <div className="text-[11px] text-emerald-900 mt-0.5 truncate">
-                Pointage d'arrivée prélevé et certifié automatiquement à 08:15:00 pour l'agent {currentUser.name}. Compteur de travail initialisé.
+              <div className="text-[11px] text-emerald-200 mt-0.5 truncate">
+                Arrivée enregistrée à {formatClock(todayPunch.arrivalAt)} pour {currentUser.name} (heure de cet appareil).
               </div>
             </div>
           </div>
           <button
             onClick={() => setShowNotification(false)}
-            className="text-emerald-700 hover:text-emerald-950 p-1 text-xs shrink-0 font-bold"
+            className="text-emerald-300 hover:text-white p-1 text-xs shrink-0 font-bold"
           >
             ✕
           </button>
@@ -318,21 +396,25 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                   {currentUser.roleTitle}
                 </span>
                 <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                  Matricule: EMP-R-DG
+                  Matricule : {currentUser.matricule || '—'}
                 </span>
               </div>
 
               <p className="text-xs text-slate-600 mt-1.5 flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-slate-700">Service :</span> 
-                <span className="text-sky-700 font-semibold">Direction Opérationnelle</span>
+                <span className="text-sky-700 font-semibold">{myEntity?.name || currentUser.departmentName || '—'}</span>
                 <span className="text-slate-300">•</span>
                 <span className="font-semibold text-slate-700">Pointage Arrivée :</span>
                 <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                  08:15:00
+                  {todayPunch ? formatClock(todayPunch.arrivalAt) : 'non pointé'}
                 </span>
-                <span className="text-slate-300">•</span>
-                <span className="font-semibold text-slate-700">N+1 :</span>
-                <span className="text-slate-600 font-medium">{currentUser.name}</span>
+                {myEntity?.managerName && myEntity.managerName !== currentUser.name && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="font-semibold text-slate-700">Responsable :</span>
+                    <span className="text-slate-600 font-medium">{myEntity.managerName}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -348,9 +430,12 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 {formatHours(seconds)}
               </div>
               <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
-                <span className={`w-2 h-2 rounded-full ${workStatus === 'working' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+                <span className={`w-2 h-2 rounded-full ${workStatus === 'working' ? 'bg-emerald-500 animate-pulse' : workStatus === 'coffee_break' ? 'bg-amber-500' : 'bg-slate-400'}`}></span>
                 <span className="font-semibold text-slate-700">
-                  {workStatus === 'working' ? 'En poste (Pointage prélevé)' : `Pause Café (${formatHours(breakSeconds)})`}
+                  {workStatus === 'off' ? 'Pas encore pointé aujourd’hui'
+                    : workStatus === 'working' ? `En poste depuis ${formatClock(todayPunch!.arrivalAt)}`
+                    : workStatus === 'coffee_break' ? `En pause (${formatHours(breakSeconds)})`
+                    : `Journée terminée à ${formatClock(todayPunch!.departureAt!)}`}
                 </span>
               </div>
             </div>
@@ -358,21 +443,37 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             <div className="h-10 w-px bg-sky-200 mx-1 hidden sm:block"></div>
 
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setWorkStatus(workStatus === 'working' ? 'coffee_break' : 'working')}
-                className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 ${
-                  workStatus === 'coffee_break'
-                    ? 'bg-emerald-600 hover:bg-emerald-500'
-                    : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'
-                }`}
-              >
-                <Coffee className="w-4 h-4 text-amber-100" />
-                <span>
-                  {workStatus === 'working'
-                    ? 'Pause Café (Interrompre le compteur)'
-                    : 'Reprendre le travail'}
-                </span>
-              </button>
+              {workStatus === 'off' && (
+                <button
+                  onClick={clockIn}
+                  className="px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 bg-emerald-600 hover:bg-emerald-500"
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>Pointer mon arrivée</span>
+                </button>
+              )}
+              {(workStatus === 'working' || workStatus === 'coffee_break') && (
+                <>
+                  <button
+                    onClick={toggleBreak}
+                    className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 ${
+                      workStatus === 'coffee_break'
+                        ? 'bg-emerald-600 hover:bg-emerald-500'
+                        : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'
+                    }`}
+                  >
+                    <Coffee className="w-4 h-4 text-amber-100" />
+                    <span>{workStatus === 'working' ? 'Pause' : 'Reprendre le travail'}</span>
+                  </button>
+                  <button
+                    onClick={clockOut}
+                    className="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Pointer mon départ</span>
+                  </button>
+                </>
+              )}
 
               {onSelectUser && (
               <button
@@ -425,7 +526,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             { id: 'dashboard', label: 'Tableau de Bord & Ratios RH', icon: <BarChart3 className="w-4 h-4" /> },
             { id: 'tasks', label: `Mes Tâches Opérationnelles (${taskList.length})`, icon: <CheckCircle2 className="w-4 h-4" /> },
             { id: 'task_analytics', label: 'Progression des Tâches (30j)', icon: <TrendingUp className="w-4 h-4" /> },
-            { id: 'attendance', label: 'Pointage & Présences (2)', icon: <Clock className="w-4 h-4" /> },
+            { id: 'attendance', label: `Pointage & Congés (${myPunches.length})`, icon: <Clock className="w-4 h-4" /> },
             { id: 'documents', label: `Mes Documents & Bulletins (${agentDocuments.length})`, icon: <FileText className="w-4 h-4" /> },
             { id: 'transmissions', label: 'Transmissions Hiérarchiques & Consignes', icon: <MessageSquare className="w-4 h-4" /> },
             { id: 'profile', label: 'Fiche de Poste & Habilitations', icon: <Shield className="w-4 h-4" /> },
@@ -645,7 +746,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-sky-600" /> Registre Officiel de Présence (Semaine en cours)
+              <Clock className="w-4 h-4 text-sky-600" /> Mes pointages (14 derniers jours)
             </h3>
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -658,28 +759,24 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                <tr>
-                  <td className="py-3 font-semibold">Aujourd'hui</td>
-                  <td className="py-3 font-mono text-emerald-700 font-bold">08:15:00</td>
-                  <td className="py-3 text-slate-400">En poste</td>
-                  <td className="py-3 font-mono font-bold">{formatHours(seconds)}</td>
-                  <td className="py-3">
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Certifié IP
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-3 font-semibold">Hier</td>
-                  <td className="py-3 font-mono text-slate-600">08:10:22</td>
-                  <td className="py-3 font-mono text-slate-600">17:05:40</td>
-                  <td className="py-3 font-mono">08h 15m</td>
-                  <td className="py-3">
-                    <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Complet
-                    </span>
-                  </td>
-                </tr>
+                {myPunches.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-400">Aucun pointage enregistré. Utilisez « Pointer mon arrivée » en haut de la page.</td>
+                  </tr>
+                )}
+                {myPunches.slice(0, 14).map(p => (
+                  <tr key={p.id}>
+                    <td className="py-3 font-semibold">{p.date === today ? "Aujourd'hui" : p.date.split('-').reverse().join('/')}</td>
+                    <td className="py-3 font-mono text-emerald-700 font-bold">{formatClock(p.arrivalAt)}</td>
+                    <td className="py-3 font-mono text-slate-600">{p.departureAt ? formatClock(p.departureAt) : p.date === today ? 'En poste' : 'Non pointé'}</td>
+                    <td className="py-3 font-mono font-bold">{formatHours(p.date === today ? seconds : workedSeconds(p, Date.now()))}</td>
+                    <td className="py-3">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${p.departureAt ? 'bg-slate-100 text-slate-700' : p.date === today ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {p.departureAt ? 'Complet' : p.date === today ? 'En cours' : 'Départ manquant'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -692,7 +789,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
 
             {congeSucces && (
               <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-xl border border-emerald-200 font-bold">
-                ✓ Votre demande a été transmise à la Direction RH !
+                ✓ Demande enregistrée : elle apparaît dans le module Paie (Congés) pour traitement par les RH.
               </div>
             )}
 
@@ -701,13 +798,14 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 <label className="text-slate-600 font-semibold block mb-1">Type de demande</label>
                 <select
                   value={demandeConge.type}
-                  onChange={e => setDemandeConge({ ...demandeConge, type: e.target.value })}
+                  onChange={e => setDemandeConge({ ...demandeConge, type: e.target.value as LeaveRequest['type'] })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
                 >
-                  <option>Congé annuel légal (OHADA)</option>
-                  <option>Mission de terrain / Déplacement VSAT</option>
-                  <option>Permission exceptionnelle / Famille</option>
-                  <option>Arrêt maladie / Justificatif médical</option>
+                  <option value="conge_annuel">Congé annuel</option>
+                  <option value="circonstance">Congé de circonstance (famille)</option>
+                  <option value="maladie">Maladie (justificatif médical)</option>
+                  <option value="maternite">Maternité</option>
+                  <option value="sans_solde">Congé sans solde</option>
                 </select>
               </div>
 
@@ -746,13 +844,32 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                 />
               </div>
 
+              <p className={congeJours > 0 ? 'text-slate-500' : 'text-rose-600 font-semibold'}>
+                {congeJours > 0 ? `${congeJours} jour(s) ouvrable(s) (dimanches exclus).` : 'La date de fin doit être postérieure ou égale à la date de début.'}
+              </p>
+
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition shadow-sm"
+                disabled={congeJours <= 0}
+                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition shadow-sm disabled:opacity-50"
               >
-                Transmettre pour visa hiérarchique
+                Transmettre aux RH
               </button>
             </form>
+
+            {myLeaves.length > 0 && (
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">Mes demandes</h4>
+                {myLeaves.slice(0, 6).map(l => (
+                  <div key={l.id} className="flex items-center justify-between text-[11px] bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                    <span className="text-slate-700">{l.startDate.split('-').reverse().join('/')} → {l.endDate.split('-').reverse().join('/')} ({l.durationDays} j)</span>
+                    <span className={`font-bold ${l.status === 'approuve' ? 'text-emerald-700' : l.status === 'rejete' ? 'text-rose-700' : 'text-amber-700'}`}>
+                      {l.status === 'approuve' ? 'Approuvée' : l.status === 'rejete' ? 'Refusée' : 'En attente'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -774,7 +891,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
 
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Coffre-Fort Inviolable RDC</span>
+                <span>Accès réservé au titulaire</span>
               </div>
             </div>
 
