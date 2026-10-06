@@ -1,8 +1,8 @@
 // src/components/OrganizationIdentityModal.tsx
 // Fenêtre « Identité & Logo » de l'organisation (modification réservée au DG).
 import React, { useState } from 'react';
-import { Sparkles, X, Check, Lock } from 'lucide-react';
-import type { Organization } from '../types';
+import { Sparkles, X, Check, Lock, Plus, Trash2, Landmark } from 'lucide-react';
+import type { Organization, OrganizationBankAccount } from '../types';
 
 interface OrganizationIdentityModalProps {
   organization: Organization;
@@ -14,7 +14,10 @@ interface OrganizationIdentityModalProps {
 const buildForm = (org: Organization) => ({
   name: org.name,
   type: org.type,
-  registrationNumber: org.registrationNumber || '',
+  registrationNumber: org.rccm || org.registrationNumber || '',
+  idNat: org.idNat || '',
+  numImpot: org.numImpot || '',
+  bankAccounts: (org.bankAccounts || []).map(a => ({ ...a })) as OrganizationBankAccount[],
   headquarters: org.headquarters || '',
   email: org.email || '',
   phone: org.phone || '',
@@ -40,6 +43,12 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
       name: form.name.trim(),
       type: form.type,
       registrationNumber: form.registrationNumber.trim(),
+      rccm: form.registrationNumber.trim(),
+      idNat: form.idNat.trim(),
+      numImpot: form.numImpot.trim(),
+      bankAccounts: form.bankAccounts
+        .map(a => ({ ...a, bankName: a.bankName.trim() }))
+        .filter(a => a.bankName),
       headquarters: form.headquarters.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
@@ -173,6 +182,78 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
                   onChange={e => setForm({ ...form, logoUrl: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500"
                 />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Identification nationale (Id. Nat)</label>
+                <input
+                  type="text"
+                  value={form.idNat}
+                  onChange={e => setForm({ ...form, idNat: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Numéro d'impôt (NIF)</label>
+                <input
+                  type="text"
+                  value={form.numImpot}
+                  onChange={e => setForm({ ...form, numImpot: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2 space-y-2 pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <Landmark className="w-3.5 h-3.5 text-indigo-400" /> Coordonnées bancaires (imprimées sur les factures)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setForm({
+                      ...form,
+                      bankAccounts: [...form.bankAccounts, { id: `bank-${Date.now()}`, bankName: '', accountNumberUSD: '', accountNumberCDF: '', swiftBic: '', ibanOrRib: '' }],
+                    })}
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Ajouter un compte
+                  </button>
+                </div>
+                {form.bankAccounts.length === 0 && (
+                  <p className="text-slate-500">Aucun compte : les factures afficheront « Non renseigné ».</p>
+                )}
+                {form.bankAccounts.map((a, idx) => {
+                  const update = (field: keyof OrganizationBankAccount, value: string) =>
+                    setForm({ ...form, bankAccounts: form.bankAccounts.map((x, i) => (i === idx ? { ...x, [field]: value } : x)) });
+                  return (
+                    <div key={a.id} className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                      {([
+                        ['bankName', 'Banque'],
+                        ['swiftBic', 'SWIFT / BIC'],
+                        ['accountNumberUSD', 'Compte USD'],
+                        ['accountNumberCDF', 'Compte CDF'],
+                        ['ibanOrRib', 'IBAN / RIB'],
+                      ] as Array<[keyof OrganizationBankAccount, string]>).map(([field, label]) => (
+                        <input
+                          key={field}
+                          aria-label={label}
+                          placeholder={label}
+                          value={a[field]}
+                          onChange={e => update(field, e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-white font-mono focus:outline-none focus:border-indigo-500"
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, bankAccounts: form.bankAccounts.filter((_, i) => i !== idx) })}
+                        className="px-2 py-1.5 rounded-lg text-rose-300 hover:bg-rose-500/10 flex items-center justify-center gap-1"
+                      >
+                        <Trash2 className="w-3 h-3" /> Retirer
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="sm:col-span-2">

@@ -3,12 +3,45 @@ import React, { useState } from 'react';
 import type { AuditLog } from '../types';
 import { History, Shield, Hash, Search, Clock, Download, Filter, CheckCircle2, ShieldAlert, FileText } from 'lucide-react';
 import { exportAuditLogsToCSV, exportAuditLogsToPDF } from '../utils/exportUtils';
+import { API_MODE } from '../config';
+import { api } from '../lib/api';
+import { shortHash, verifyAuditChain } from '../lib/integrity';
 
 interface AuditViewProps {
   logs: AuditLog[];
+  organizationName?: string;
 }
 
-export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
+type VerifyState =
+  | { status: 'idle' }
+  | { status: 'running' }
+  | { status: 'ok'; count: number; source: 'serveur' | 'local' }
+  | { status: 'broken'; count: number; source: 'serveur' | 'local'; detail: string }
+  | { status: 'error'; message: string };
+
+export const AuditView: React.FC<AuditViewProps> = ({ logs, organizationName }) => {
+  const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
+
+  const handleVerify = async () => {
+    setVerify({ status: 'running' });
+    try {
+      if (API_MODE) {
+        const r = await api.verifyAudit();
+        setVerify(r.ok
+          ? { status: 'ok', count: r.count, source: 'serveur' }
+          : { status: 'broken', count: r.count, source: 'serveur', detail: r.entry ? `entrée n°${(r.brokenAt ?? 0) + 1} — ${r.entry.timestamp} — ${r.entry.action}` : `entrée n°${(r.brokenAt ?? 0) + 1}` });
+      } else {
+        const asc = [...logs].reverse() as unknown as Array<Record<string, any>>;
+        const r = verifyAuditChain(asc);
+        const e = r.brokenAt !== undefined ? asc[r.brokenAt] : undefined;
+        setVerify(r.ok
+          ? { status: 'ok', count: r.count, source: 'local' }
+          : { status: 'broken', count: r.count, source: 'local', detail: e ? `${e.timestamp} — ${e.action}` : '' });
+      }
+    } catch (err) {
+      setVerify({ status: 'error', message: err instanceof Error ? err.message : 'Vérification impossible.' });
+    }
+  };
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -31,7 +64,7 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
   const handleExportPDF = () => {
     setIsExporting(true);
     try {
-      exportAuditLogsToPDF(filteredLogs, 'RHEMA BUSINESS RDC');
+      exportAuditLogsToPDF(filteredLogs, organizationName || 'Organisation');
     } finally {
       setIsExporting(false);
     }
@@ -61,18 +94,25 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <History className="w-5 h-5 text-cyan-400" />
-            <h2 className="text-xl font-black text-white">Journal d'Audit Immuable SHA-256</h2>
+            <h2 className="text-xl font-black text-white">Journal d'audit chaîné (SHA-256)</h2>
           </div>
           <p className="text-xs text-slate-400">
-            Traçabilité juridique certifiée : horodatage, adresses IP, empreintes cryptographiques et enregistrement conforme des opérations
+            {API_MODE
+              ? "Horodatage, auteur et adresse IP fixés par le serveur. Chaque entrée contient l'empreinte de la précédente : toute modification ou suppression en base est détectée par la vérification."
+              : "Mode local : le journal est conservé dans ce navigateur. La chaîne d'empreintes détecte les modifications, mais n'a pas de valeur probante sans serveur."}
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="flex items-center gap-2 bg-cyan-500/10 text-cyan-400 px-3.5 py-1.5 rounded-xl border border-cyan-500/20 text-xs font-mono font-bold">
+          <button
+            onClick={handleVerify}
+            disabled={verify.status === 'running'}
+            title="Recalculer toutes les empreintes et vérifier que la chaîne est intacte"
+            className="flex items-center gap-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 px-3.5 py-1.5 rounded-xl border border-cyan-500/20 text-xs font-bold transition disabled:opacity-50"
+          >
             <Hash className="w-4 h-4" />
-            Chaîne Cryptographique Intègre
-          </div>
+            {verify.status === 'running' ? 'Vérification…' : "Vérifier l'intégrité"}
+          </button>
           <div className="flex items-center gap-2">
             <button
               onClick={handleExportCSV}
@@ -85,15 +125,34 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
             <button
               onClick={handleExportPDF}
               disabled={isExporting}
-              title="Générer le rapport PDF officiel avec mise en page juridique pour archivage légal"
+              title="Générer un rapport PDF du journal filtré (archivage)"
               className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md shadow-cyan-900/30 active:scale-95 disabled:opacity-50"
             >
               <FileText className="w-3.5 h-3.5 text-white" />
-              <span>{isExporting ? 'Génération...' : 'Exporter PDF Légal'}</span>
+              <span>{isExporting ? 'Génération...' : 'Exporter PDF'}</span>
             </button>
           </div>
         </div>
       </div>
+
+      {verify.status === 'ok' && (
+        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl px-4 py-3">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          Chaîne intacte : {verify.count} entrée(s) vérifiée(s) {verify.source === 'serveur' ? 'par le serveur' : 'dans ce navigateur'}.
+        </div>
+      )}
+      {verify.status === 'broken' && (
+        <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs rounded-xl px-4 py-3">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          Chaîne rompue ({verify.source}) : le journal a été modifié à partir de {verify.detail || 'une entrée'}. Conservez une sauvegarde et alertez la Direction.
+        </div>
+      )}
+      {verify.status === 'error' && (
+        <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs rounded-xl px-4 py-3">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          {verify.message}
+        </div>
+      )}
 
       {/* Barre de Recherche et Filtres par Catégorie */}
       <div className="space-y-3">
@@ -192,7 +251,7 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs }) => {
 
                     <td className="p-3.5 whitespace-nowrap font-mono text-[10px] text-cyan-400">
                       <span className="bg-slate-950 px-2 py-1 rounded border border-slate-800 select-all" title={log.hash}>
-                        {log.hash.slice(0, 18)}...
+                        {log.prevHash ? shortHash(log.hash) : `${log.hash.slice(0, 18)}… (non chaînée)`}
                       </span>
                     </td>
                   </tr>

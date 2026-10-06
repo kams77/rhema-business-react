@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
+import { isPayrollStaff } from '../utils/rbac';
 import type { 
   PayrollSystemConfig, 
   PayrollAllowance, 
@@ -36,8 +36,26 @@ import {
   exportPayslipToCSV, 
   exportPayrollRunToPDF, 
   exportPayrollRunToCSV, 
-  type PayslipExportData 
+  type PayslipExportData,
+  type PayrollBookRow
 } from '../utils/exportUtils';
+import {
+  computePayslip,
+  computePayslipForContract,
+  convert,
+  currentPayMonth,
+  hourlyRateOf,
+  isContractActiveForMonth,
+  lastDayOfMonth,
+  nextPayMonth,
+  overtimeAmountFor,
+  payMonthLabel,
+  roundMoney,
+} from '../lib/payroll';
+import { buildPayslipExport, withIntegrityHash } from '../lib/payslipDocument';
+import { contentHash, shortHash } from '../lib/integrity';
+import { PayslipTable, formatPayslipMoney } from './payroll/PayslipTable';
+import { DEMO_MODE } from '../config';
 
 import { 
   Coins, 
@@ -118,10 +136,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     name: 'RHEMA BUSINESS RDC',
     code: 'RB-RDC',
     type: 'entreprise',
-    registrationNumber: 'CD/KNG/RCCM/18-B-01290',
-    rccm: 'CD/KNG/RCCM/18-B-01290',
-    idNat: '01-83-N45201L',
-    numImpot: 'A1934892Z',
+    registrationNumber: '',
     headquarters: 'Avenue de la Justice, Gombe, Kinshasa - RDC',
     phone: '+243 81 000 0000',
     email: 'direction@rhemabusiness.cd',
@@ -135,11 +150,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   };
 
   // Droits Direction & DRH
-  const isHR =
-    currentUser.role === 'dg' ||
-    currentUser.role === 'chef_departement' ||
-    currentUser.role === 'directeur' ||
-    titleHasAny(currentUser.roleTitle, ['pdg', 'dg', 'president', 'financier', 'daf', ...HR_TITLE_TERMS]);
+  // Gestion de la paie : même règle que le serveur (shared/access.mjs).
+  const isHR = isPayrollStaff(currentUser);
 
 
   // Configuration avec devises strictes USD / CDF
@@ -158,7 +170,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [exchangeRate, setExchangeRate] = usePersistentState<number>('payroll.exchangeRate', DEFAULT_EXCHANGE_RATE_USD_CDF);
-  const [expandedPayrollRunId, setExpandedPayrollRunId] = useState<string | null>('run-2026-09');
+  const [expandedPayrollRunId, setExpandedPayrollRunId] = useState<string | null>(null);
 
   // =========================================================================
   // DONNÉES DU PERSONNEL & HISTORIQUE DES ACTIONS RH
@@ -171,35 +183,23 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [overtimeRecords, setOvertimeRecords] = usePersistentState<OvertimeRecord[]>('payroll.overtime', initialOvertimes);
   const [disciplinaryActions, setDisciplinaryActions] = usePersistentState<DisciplinaryAction[]>('payroll.disciplinary', initialDisciplinaryActions);
 
-  const [payrollRuns, setPayrollRuns] = usePersistentState<PayrollRunPeriod[]>('payroll.runs', [
-    {
-      id: 'run-2026-08',
-      month: '2026-08',
-      title: 'Paie RHEMA BUSINESS - Août 2026',
-      currency: 'USD',
-      exchangeRateUSD_CDF: 2850,
-      status: 'cloture',
-      totalGross: 8650,
-      totalNet: 7120,
-      totalEmployerCharges: 1420,
-      totalEmployees: 4,
-      validatedByDG: 'Junior Monya (DG)',
-      validatedAt: '2026-08-31 17:00',
-      closureHash: 'SHA256:d892bc018ae82103fca9182390a821e'
-    },
-    {
-      id: 'run-2026-09',
-      month: '2026-09',
-      title: 'Paie RHEMA BUSINESS - Septembre 2026',
-      currency: 'USD',
-      exchangeRateUSD_CDF: 2850,
-      status: 'en_validation',
-      totalGross: 8950,
-      totalNet: 7380,
-      totalEmployerCharges: 1475,
-      totalEmployees: 4
-    }
-  ]);
+  // Périodes de paie (vide au départ en mode réel ; une période de démonstration sinon).
+  const [payrollRuns, setPayrollRuns] = usePersistentState<PayrollRunPeriod[]>('payroll.runs', () =>
+    DEMO_MODE
+      ? [{
+          id: `run-${currentPayMonth()}`,
+          month: currentPayMonth(),
+          title: `Paie ${payMonthLabel(currentPayMonth())}`,
+          currency: 'USD',
+          exchangeRateUSD_CDF: DEFAULT_EXCHANGE_RATE_USD_CDF,
+          status: 'brouillon',
+          totalGross: 0,
+          totalNet: 0,
+          totalEmployerCharges: 0,
+          totalEmployees: 0,
+        }]
+      : []
+  );
 
   // =========================================================================
   // ÉTATS DES MODALES D'ACTIONS RH & WORKFLOW MENSUEL STRICT
@@ -210,23 +210,23 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
   // Formulaire Étape 1 : Paramétrage du Paiement Mensuel
   const [paymentParamForm, setPaymentParamForm] = useState({
-    month: '2026-09',
+    month: currentPayMonth(),
     exchangeRateUSD_CDF: DEFAULT_EXCHANGE_RATE_USD_CDF,
-    bankName: 'Rawbank Kinshasa',
-    bankAccount: '01002-39201928019-88',
-    valueDate: '2026-09-30',
-    globalBonusUSD: 100,
+    bankName: '',
+    bankAccount: '',
+    valueDate: lastDayOfMonth(currentPayMonth()),
+    globalBonusUSD: 0,
     currency: 'USD' as 'USD' | 'CDF',
     comments: 'Paie mensuelle conforme au barème légal et convention collective RHEMA BUSINESS.'
   });
 
   // Formulaire Étape 3 : Confirmation du Virement Bancaire
   const [bankConfirmForm, setBankConfirmForm] = useState({
-    bankName: 'Rawbank Kinshasa',
-    transactionRef: 'RAW-TXN-202609-481029',
+    bankName: '',
+    transactionRef: '',
     confirmedDate: new Date().toISOString().slice(0, 10),
-    debitAccount: '01002-39201928019-88',
-    bankReceiptNote: 'Ordre de virement de masse exécuté par Rawbank Kinshasa. Tous les comptes agents ont été crédités.'
+    debitAccount: '',
+    bankReceiptNote: ''
   });
 
   // Notification Étape 4 : Déclenchement automatique de l'envoi des bulletins
@@ -242,7 +242,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [activeDocData, setActiveDocData] = useState<{ docType: string; title: string; ref: string; content: any }>({
     docType: 'bulletin',
     title: 'Bulletin de Paie Individuel',
-    ref: 'BP-2026-09-001',
+    ref: '',
     content: {}
   });
 
@@ -256,12 +256,12 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const [contractForm, setContractForm] = useState({
     userId: users[0]?.id || '',
     contractType: 'CDI' as const,
-    matricule: 'MAT-2026-005',
-    baseSalary: 1500,
+    matricule: '',
+    baseSalary: 0,
     salaryCurrency: 'USD' as 'USD' | 'CDF',
-    categoryPro: 'Cadre Technique',
-    cnssNumber: 'CNSS-CD-7729103',
-    bankName: 'Rawbank Kinshasa',
+    categoryPro: '',
+    cnssNumber: '',
+    bankName: '',
     paymentMode: 'virement' as const
   });
 
@@ -278,7 +278,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     userId: users[0]?.id || '',
     amount: 150,
     currency: 'USD' as 'USD' | 'CDF',
-    repaymentMonth: '2026-10',
+    repaymentMonth: nextPayMonth(currentPayMonth()),
     reason: 'Frais de scolarité / urgence médicale'
   });
 
@@ -287,7 +287,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     dayHours: 4,
     nightHours: 2,
     holidayHours: 0,
-    reason: 'Intervention d\'urgence antenne satellite'
+    month: currentPayMonth(),
+    reason: ''
   });
 
   const [disciplineForm, setDisciplineForm] = useState({
@@ -298,76 +299,90 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   });
 
   const simulation = useMemo(() => {
-    return calculatePayslipSimulation(config, simBaseSalary, simSeniorityYears, simDependents);
-  }, [config, simBaseSalary, simSeniorityYears, simDependents]);
+    return calculatePayslipSimulation(config, simBaseSalary, simSeniorityYears, simDependents, exchangeRate);
+  }, [config, simBaseSalary, simSeniorityYears, simDependents, exchangeRate]);
 
-  const getPayslipExportDataForUser = (userId: string, customContent?: any): PayslipExportData => {
-    const targetUser = users.find(u => u.id === userId);
-    const contract = contracts.find(c => c.userId === userId);
-    
-    const baseSal = customContent?.baseSalary ?? (contract ? contract.baseSalary : simBaseSalary);
-    const curr = customContent?.currency ?? (contract ? contract.salaryCurrency : config.currency);
-    const dependents = customContent?.dependents ?? (contract ? contract.dependentsCount : simDependents);
-    const seniority = customContent?.seniorityYears ?? (contract ? 3 : simSeniorityYears);
-    
-    // Ancienneté bonus (3% par tranche de 2 ans)
-    const seniorityBonus = seniority >= 2 ? baseSal * Math.floor(seniority / 2) * 0.03 : 0;
-    const allowances = 100;
-    
-    // Heures sup
-    const userOvertime = overtimeRecords.find(o => o.userId === userId && o.month === '2026-09');
-    const overtimeAmount = userOvertime ? userOvertime.calculatedAmountUSD : 0;
-    
-    // Acompte
-    const userAdvance = advances.find(a => a.userId === userId && a.repaymentMonth === '2026-09');
-    const advanceDeduction = userAdvance ? userAdvance.amount : 0;
-    
-    const gross = baseSal + seniorityBonus + allowances + overtimeAmount;
-    const cnssSal = gross * 0.05;
-    const ipr = (gross - cnssSal) * 0.15;
-    const totalDeductions = cnssSal + ipr + advanceDeduction;
-    const net = gross - totalDeductions;
-    
-    const cnssPat = gross * 0.13;
-    const inpp = gross * 0.03;
-    const onem = gross * 0.002;
-    const totalEmployer = gross + cnssPat + inpp + onem;
-    
+  /** Calcul détaillé du simulateur (même moteur que les bulletins officiels). */
+  const simComputation = useMemo(() => computePayslip({
+    config,
+    baseSalary: simBaseSalary,
+    currency: config.currency === 'CDF' ? 'CDF' : 'USD',
+    exchangeRate,
+    seniorityYears: simSeniorityYears,
+    dependents: simDependents,
+  }), [config, simBaseSalary, simSeniorityYears, simDependents, exchangeRate]);
+
+  const simUser = users.find(u => u.id === simSelectedUserId);
+  const simContract = contracts.find(c => c.userId === simSelectedUserId);
+  const simulationExport: PayslipExportData = buildPayslipExport(simComputation, {
+    org: currentOrg,
+    month: currentPayMonth(),
+    ref: `SIM-${currentPayMonth()}-${simContract?.matricule || simUser?.matricule || 'X'}`,
+    user: simUser,
+    contract: simContract,
+    dependents: simDependents,
+  });
+
+  /** Bulletins d'une période : contrats actifs ce mois-là, calculés avec la configuration. */
+  const computeRunRows = (run: PayrollRunPeriod): PayrollBookRow[] => {
+    const rate = run.exchangeRateUSD_CDF || exchangeRate;
+    return contracts
+      .filter(c => isContractActiveForMonth(c, run.month))
+      .map(c => {
+        const bonus = run.extraBonus
+          ? convert(run.extraBonus, run.currency, c.salaryCurrency === 'CDF' ? 'CDF' : 'USD', rate)
+          : 0;
+        return {
+          contract: c,
+          user: users.find(u => u.id === c.userId),
+          payslip: computePayslipForContract(c, { config, month: run.month, exchangeRate: rate, overtimeRecords, advances, extraBonus: bonus }),
+        };
+      });
+  };
+
+  /** Totaux d'une période dans la devise de la période. */
+  const computeRunTotals = (run: PayrollRunPeriod, rows: PayrollBookRow[] = computeRunRows(run)) => {
+    const rate = run.exchangeRateUSD_CDF || exchangeRate;
+    const to = (v: number, from: string) => convert(v, from === 'CDF' ? 'CDF' : 'USD', run.currency, rate);
+    const r = (v: number) => roundMoney(v, run.currency);
     return {
-      orgName: currentOrg.name,
-      rccm: currentOrg.rccm || 'CD/KNG/RCCM/20-A-01120',
-      idNat: currentOrg.idNat || '01-83-N45201L',
-      numImpot: currentOrg.numImpot || 'A1934892Z',
-      headquarters: currentOrg.headquarters,
-      ref: customContent?.ref || `BP-2026-09-${contract?.matricule || targetUser?.matricule || 'MAT-RB'}`,
-      period: 'Septembre 2026',
-      date: new Date().toLocaleDateString('fr-FR'),
-      employeeName: customContent?.userName || targetUser?.name || contract?.employeeCode || 'Collaborateur',
-      matricule: customContent?.matricule || contract?.matricule || targetUser?.matricule || 'MAT-2026-RHEMA',
-      roleTitle: customContent?.roleTitle || targetUser?.roleTitle || contract?.categoryPro || 'Cadre',
-      cnssNumber: contract?.cnssNumber || 'CNSS-CD-9982410',
-      bankName: contract?.bankName || 'Rawbank Kinshasa',
-      accountNumber: contract?.bankAccountNumber || '01002-39201928019-88',
-      seniorityYears: seniority,
-      dependents: dependents,
-      currency: curr,
-      baseSalary: baseSal,
-      seniorityBonus,
-      allowances,
-      overtimeAmount,
-      grossSalary: gross,
-      socialDeductionCNSS: cnssSal,
-      taxDeductionIPR: ipr,
-      advanceDeduction,
-      totalDeductions,
-      netSalary: net,
-      counterValueCDF: curr === 'USD' ? net * exchangeRate : net,
-      employerCNSS: cnssPat,
-      employerINPP: inpp,
-      employerONEM: onem,
-      totalEmployerCost: totalEmployer,
-      sha256Hash: `SHA256:${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}`
+      totalEmployees: rows.length,
+      totalGross: r(rows.reduce((s, x) => s + to(x.payslip.grossSalary, x.payslip.currency), 0)),
+      totalNet: r(rows.reduce((s, x) => s + to(x.payslip.netSalary, x.payslip.currency), 0)),
+      totalEmployerCharges: r(rows.reduce((s, x) => s + to(x.payslip.totalEmployerContributions, x.payslip.currency), 0)),
     };
+  };
+
+  /** Données d'un bulletin officiel (aperçu, PDF, CSV) pour un contrat et une période. */
+  const buildRunPayslip = (run: PayrollRunPeriod, row: PayrollBookRow): PayslipExportData =>
+    buildPayslipExport(row.payslip as ReturnType<typeof computePayslipForContract>, {
+      org: currentOrg,
+      month: run.month,
+      ref: `BP-${run.month}-${row.contract.matricule || row.contract.userId}`,
+      user: row.user,
+      contract: row.contract,
+    });
+
+  /** Ouvre l'aperçu A4 d'un bulletin. */
+  const openPayslipPreview = (data: PayslipExportData, title = 'Bulletin de Paie Individuel') => {
+    setActiveDocData({ docType: 'bulletin', title, ref: data.ref, content: { payslip: data } });
+    setModalAction('doc_print');
+  };
+
+  /** Téléchargement PDF / CSV d'un bulletin, avec empreinte SHA-256 réelle du contenu. */
+  const downloadPayslip = async (data: PayslipExportData, format: 'pdf' | 'csv' | 'specimen') => {
+    try {
+      const sealed = format === 'specimen' ? data : await withIntegrityHash(data);
+      if (format === 'csv') exportPayslipToCSV(sealed);
+      else exportPayslipToPDF(sealed, format === 'specimen');
+      onLogAction?.(
+        format === 'specimen' ? 'Export Spécimen PDF' : `Export Fiche de Paie ${format.toUpperCase()}`,
+        `Bulletin ${data.ref} de ${data.employeeName}${sealed.sha256Hash ? ` (empreinte ${shortHash(sealed.sha256Hash)})` : ''}`,
+        'document'
+      );
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Export impossible.');
+    }
   };
 
   const handleSave = () => {
@@ -400,13 +415,17 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     setTimeout(() => setSaveSuccess(false), 4000);
   };
 
-  const handleSignPayroll = (runId: string) => {
-    const hash = `SHA256:d892bc018ae82103fca9182390a821e${Math.random().toString(36).substring(2, 6)}`;
+  const handleSignPayroll = async (runId: string) => {
+    const run = payrollRuns.find(r => r.id === runId);
+    if (!run || currentUser?.role !== 'dg') return;
+    const rows = computeRunRows(run);
+    const hash = await contentHash({ month: run.month, rows: rows.map(x => ({ matricule: x.contract.matricule, ...x.payslip })) });
     setPayrollRuns(prev => prev.map(r => r.id === runId ? {
       ...r,
+      ...computeRunTotals(run, rows),
       status: 'cloture',
-      validatedByDG: `${currentUser?.name || 'Junior Monya'} (DG / Direction Générale)`,
-      validatedAt: `${new Date().toISOString().slice(0, 10)} 17:00`,
+      validatedByDG: `${currentUser.name} (${currentUser.roleTitle})`,
+      validatedAt: new Date().toLocaleString('fr-FR'),
       closureHash: hash
     } : r));
     if (onLogAction) onLogAction('Signature DG Paie', `Période clôturée par la Direction Générale.`, 'admin');
@@ -420,10 +439,10 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     setPaymentParamForm({
       month: run.month,
       exchangeRateUSD_CDF: run.exchangeRateUSD_CDF || exchangeRate,
-      bankName: run.bankName || 'Rawbank Kinshasa',
-      bankAccount: '01002-39201928019-88',
-      valueDate: `${run.month}-28`,
-      globalBonusUSD: 100,
+      bankName: run.bankName || '',
+      bankAccount: '',
+      valueDate: lastDayOfMonth(run.month),
+      globalBonusUSD: run.extraBonus || 0,
       currency: run.currency,
       comments: `Paramètres de paiement officiels pour la période ${run.title}.`
     });
@@ -432,7 +451,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
   const handleConfigurePaymentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRunForWorkflow) return;
+    if (!selectedRunForWorkflow || !isHR) return;
 
     setPayrollRuns(prev => prev.map(r => r.id === selectedRunForWorkflow.id ? {
       ...r,
@@ -440,6 +459,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
       currency: paymentParamForm.currency,
       exchangeRateUSD_CDF: paymentParamForm.exchangeRateUSD_CDF,
       bankName: paymentParamForm.bankName,
+      extraBonus: Math.max(0, Number(paymentParamForm.globalBonusUSD) || 0),
     } : r));
 
     if (onLogAction) {
@@ -460,14 +480,17 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     const run = payrollRuns.find(r => r.id === runId);
     if (!run) return;
 
-    const drhName = currentUser?.name || 'M. Jean-Paul Kouassi';
-    const drhRole = currentUser?.roleTitle || 'Directeur des Ressources Humaines (DRH)';
-    const dateStr = new Date().toISOString().replace('T', ' ').slice(0, 16);
+    if (!isHR) return;
+    const drhName = currentUser.name;
+    const drhRole = currentUser.roleTitle;
+    const dateStr = new Date().toLocaleString('fr-FR');
 
     setPayrollRuns(prev => prev.map(r => r.id === runId ? {
       ...r,
+      ...computeRunTotals(run),
       status: 'valide_drh',
       validatedByDRH: `${drhName} (${drhRole})`,
+      validatedByDRHUserId: currentUser.id,
       validatedAtDRH: dateStr,
     } : r));
 
@@ -486,66 +509,60 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   const handleOpenBankConfirm = (run: PayrollRunPeriod) => {
     setSelectedRunForWorkflow(run);
     setBankConfirmForm({
-      bankName: run.bankName || 'Rawbank Kinshasa',
-      transactionRef: `RAW-TXN-${run.month.replace('-', '')}-${Math.floor(100000 + Math.random() * 900000)}`,
+      bankName: run.bankName || '',
+      transactionRef: '',
       confirmedDate: new Date().toISOString().slice(0, 10),
-      debitAccount: '01002-39201928019-88',
-      bankReceiptNote: `Ordre de virement bancaire collectif exécuté par la banque pour ${contracts.length} agents. Fonds transférés sur les comptes bénéficiaires.`
+      debitAccount: '',
+      bankReceiptNote: ''
     });
     setModalAction('confirm_bank_transfer');
   };
 
-  const handleConfirmBankTransferAndAutoDispatch = (e: React.FormEvent) => {
+  const handleConfirmBankTransferAndAutoDispatch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRunForWorkflow) return;
+    if (!selectedRunForWorkflow || !isHR) return;
 
     const run = selectedRunForWorkflow;
-    const nowIso = new Date().toISOString();
-    const dateStr = nowIso.replace('T', ' ').slice(0, 16);
-    const dateOnly = nowIso.slice(0, 10);
-    const bankRef = bankConfirmForm.transactionRef || `RAW-TXN-${Date.now()}`;
-    const bankName = bankConfirmForm.bankName || 'Rawbank Kinshasa';
+    const bankRef = bankConfirmForm.transactionRef.trim();
+    const bankName = bankConfirmForm.bankName.trim();
+    if (!bankRef || !bankName) {
+      window.alert('Indiquez la banque et la référence du virement figurant sur l\'avis bancaire.');
+      return;
+    }
+    const dateStr = new Date().toLocaleString('fr-FR');
+    const dateOnly = new Date().toISOString().slice(0, 10);
 
-    // RÈGLE STRICTE : GÉNÉRATION ET ENVOI AUTOMATIQUE DES BULLETINS DE PAIE À TOUS LES AGENTS
+    // Bulletins calculés avec la configuration, les heures sup et les avances du mois de la période.
+    const rows = computeRunRows(run);
+    const totals = computeRunTotals(run, rows);
     let dispatched = 0;
-    contracts.forEach(c => {
-      const u = users.find(usr => usr.id === c.userId);
-      const agentName = u?.name || `Agent ${c.matricule}`;
-      const baseSal = c.baseSalary;
-      const bonus = paymentParamForm.globalBonusUSD || 100;
-      const gross = baseSal + bonus;
-      const cnssEmployee = gross * 0.05; // 5% CNSS salarié RDC
-      const ipr = Math.max(0, (gross - cnssEmployee) * 0.15); // IPR barème moyen
-      const net = Math.round(gross - cnssEmployee - ipr);
-
+    for (const row of rows) {
+      const c = row.contract;
+      const agentName = row.user?.name || `Agent ${c.matricule}`;
+      const data = await withIntegrityHash(buildRunPayslip(run, row));
       const payslipDoc: DocumentItem = {
-        id: `doc-payslip-${run.month}-${c.matricule || c.userId}-${Date.now().toString().slice(-4)}`,
-        title: `Bulletin de Paie Officiel - ${run.title} - ${agentName}`,
-        referenceNumber: `BP-${run.month}-${c.matricule || 'AG'}`,
+        id: `doc-payslip-${run.month}-${c.matricule || c.userId}`,
+        title: `Bulletin de paie ${payMonthLabel(run.month)} - ${agentName}`,
+        referenceNumber: data.ref,
         category: 'ressources_humaines',
         subtype: 'bulletin_de_paie',
         organizationId: currentOrg.id,
         authorId: currentUser.id,
         authorName: `${currentUser.name} (${currentUser.roleTitle})`,
         authorRole: currentUser.role,
-        authorEntity: 'Direction des Ressources Humaines (DRH) & DAF',
+        authorEntity: currentUser.departmentName || 'Ressources Humaines',
         createdAt: dateOnly,
-        status: 'signe',
-        size: '1.4 Mo',
+        status: 'approuve',
+        size: '—',
         fileType: 'PDF',
         targetUserId: c.userId,
         targetUserName: agentName,
-        targetEntityId: u?.departementId || u?.serviceId || 'dept-daf',
+        targetEntityId: row.user?.serviceId || row.user?.departementId,
         isConfidentialPayslip: true,
-        amount: net,
-        currency: (c.salaryCurrency || run.currency) as any,
-        description: `Bulletin de paie mensuel certifié et scellé électroniquement. Salaire Net transféré par virement bancaire (${bankName} - Réf Virement: ${bankRef}). Cotisations CNSS (5% salarié / 13% employeur) et IPR décomptés.`,
-        electronicSignature: {
-          signedBy: `${currentOrg.managerName || 'Direction Générale'} (DG) & DRH`,
-          signedAt: new Date().toLocaleTimeString(),
-          role: 'Directeur Général & DRH',
-          certificateHash: `SHA256:bank-transfer-confirmed-${run.month}-${Math.random().toString(36).substring(2, 9)}`,
-        },
+        amount: data.netSalary,
+        currency: data.currency as 'USD' | 'CDF',
+        description: `Net à payer : ${formatPayslipMoney(data.netSalary, data.currency)}. Virement ${bankName} (réf. ${bankRef}). Empreinte du contenu : ${shortHash(data.sha256Hash)}.`,
+        payslipData: data,
         allowedRoles: ['dg', 'directeur', 'chef_departement', 'agent'],
         permissions: {
           viewRoles: ['dg', 'directeur', 'chef_departement', 'agent'],
@@ -559,28 +576,28 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
         onAddDocument(payslipDoc);
         dispatched++;
       }
-    });
+    }
 
-    // Mise à jour de la période de paie
+    const closureHash = await contentHash({ month: run.month, rows: rows.map(x => ({ matricule: x.contract.matricule, ...x.payslip })) });
     setPayrollRuns(prev => prev.map(r => r.id === run.id ? {
       ...r,
+      ...totals,
       status: 'virement_confirme',
       bankTransferConfirmedBy: `${currentUser.name} (${currentUser.roleTitle})`,
+      bankTransferConfirmedByUserId: currentUser.id,
       bankTransferReference: bankRef,
       bankTransferConfirmedAt: dateStr,
       bankName: bankName,
-      payslipsAutoDispatched: true,
+      payslipsAutoDispatched: dispatched > 0,
       payslipsDispatchedAt: dateStr,
-      dispatchedCount: contracts.length,
-      validatedByDG: `${currentOrg.managerName || 'Junior Monya'} (DG)`,
-      validatedAt: dateStr,
-      closureHash: `SHA256:paie-scellee-${run.month}-${Math.random().toString(36).substring(2, 8)}`
+      dispatchedCount: dispatched,
+      closureHash
     } : r));
 
     if (onLogAction) {
       onLogAction(
-        'Virement Bancaire Confirmé & Envoi Automatique des Bulletins',
-        `La banque ${bankName} a transféré les salaires (Réf: ${bankRef}). L'ERP a automatiquement généré et expédié ${contracts.length} bulletins de paie scellés dans le coffre-fort numérique de chaque agent.`,
+        'Virement Bancaire Confirmé & Envoi des Bulletins',
+        `Virement ${bankName} (réf. ${bankRef}) confirmé par ${currentUser.name}. ${dispatched} bulletin(s) de ${payMonthLabel(run.month)} publié(s). Net total : ${formatPayslipMoney(totals.totalNet, run.currency)}. Empreinte de la période : ${shortHash(closureHash)}.`,
         'admin'
       );
     }
@@ -589,7 +606,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
     setAutoDispatchNotification({
       show: true,
       runTitle: run.title,
-      count: contracts.length,
+      count: dispatched,
       bankRef,
       bankName,
       timestamp: dateStr
@@ -943,20 +960,28 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             </div>
             <button
               onClick={() => {
-                const next = `2026-${String(payrollRuns.length + 9).padStart(2, '0')}`;
-                setPayrollRuns([{
+                if (!isHR) return;
+                // Mois suivant la dernière période ouverte, ou mois en cours s'il n'y en a pas.
+                const latest = [...payrollRuns].map(r => r.month).sort().pop();
+                const next = latest ? nextPayMonth(latest) : currentPayMonth();
+                if (payrollRuns.some(r => r.month === next)) return;
+                const draft: PayrollRunPeriod = {
                   id: `run-${next}`,
                   month: next,
-                  title: `Paie RHEMA BUSINESS - Mois ${next}`,
+                  title: `Paie ${payMonthLabel(next)}`,
                   currency: config.currency as 'USD' | 'CDF',
                   exchangeRateUSD_CDF: exchangeRate,
                   status: 'brouillon',
-                  totalGross: 8950,
-                  totalNet: 7380,
-                  totalEmployerCharges: 1475,
-                  totalEmployees: contracts.length
-                }, ...payrollRuns]);
+                  totalGross: 0,
+                  totalNet: 0,
+                  totalEmployerCharges: 0,
+                  totalEmployees: 0
+                };
+                setPayrollRuns([{ ...draft, ...computeRunTotals(draft) }, ...payrollRuns]);
+                onLogAction?.('Ouverture Période de Paie', `Période ${payMonthLabel(next)} ouverte par ${currentUser.name}.`, 'admin');
               }}
+              disabled={!isHR}
+              title={isHR ? undefined : 'Réservé à la Direction et aux Ressources Humaines'}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -995,9 +1020,17 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
           )}
 
           <div className="space-y-4">
+            {payrollRuns.length === 0 && (
+              <div className="bg-slate-900 border border-dashed border-slate-700 rounded-2xl p-8 text-center text-sm text-slate-400">
+                Aucune période de paie. Cliquez sur « Ouvrir une Période » pour préparer la paie de {payMonthLabel(currentPayMonth())}.
+              </div>
+            )}
             {payrollRuns.map(run => {
               const isClosed = run.status === 'cloture' || run.status === 'virement_confirme';
               const isExpanded = expandedPayrollRunId === run.id;
+              // Période close : totaux figés au moment du virement ; sinon calcul en direct.
+              const runRows = computeRunRows(run);
+              const liveTotals = isClosed ? run : { ...run, ...computeRunTotals(run, runRows) };
               return (
                 <div key={run.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1016,7 +1049,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                               : 'bg-slate-800 text-slate-400 border-slate-700'
                       }`}>
                         {run.status === 'virement_confirme' && '✓ Virement Confirmé & Bulletins Envoyés'}
-                        {run.status === 'cloture' && '✓ Clôturé & E-Signé par le DG'}
+                        {run.status === 'cloture' && `✓ Clôturé par ${run.validatedByDG || 'la Direction'}`}
+                        {run.status === 'en_validation' && 'En validation'}
                         {run.status === 'valide_drh' && '✓ Visé par le DRH (En attente virement)'}
                         {run.status === 'parametre' && 'Paramétré (En attente visa DRH)'}
                         {run.status === 'brouillon' && 'Brouillon à paramétrer'}
@@ -1026,7 +1060,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                     <div className="flex gap-2 flex-wrap items-center">
                       <button
                         onClick={() => {
-                          exportPayrollRunToCSV(run, contracts, users);
+                          exportPayrollRunToCSV(run, runRows);
                           if (onLogAction) onLogAction('Export Livre de Paie CSV', `Export CSV livre de paie période ${run.month}`, 'document');
                         }}
                         title="Exporter le livre de paie complet de la période en CSV"
@@ -1038,7 +1072,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
                       <button
                         onClick={() => {
-                          exportPayrollRunToPDF(run, contracts, users, currentOrg);
+                          exportPayrollRunToPDF(run, runRows, currentOrg);
                           if (onLogAction) onLogAction('Export Livre de Paie PDF', `Génération PDF légal du livre de paie ${run.month}`, 'document');
                         }}
                         title="Télécharger l'état récapitulatif officiel certifié en PDF (format paysage)"
@@ -1170,19 +1204,19 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                     <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] uppercase font-bold block">Effectif</span>
-                      <span className="text-lg font-bold text-white mt-1 block font-mono">{run.totalEmployees} agents</span>
+                      <span className="text-lg font-bold text-white mt-1 block font-mono">{liveTotals.totalEmployees} agents</span>
                     </div>
                     <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] uppercase font-bold block">Brut Global</span>
-                      <span className="text-lg font-bold text-indigo-400 mt-1 block font-mono">{formatMoney(run.totalGross, run.currency)}</span>
+                      <span className="text-lg font-bold text-indigo-400 mt-1 block font-mono">{formatMoney(liveTotals.totalGross, run.currency)}</span>
                     </div>
                     <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] uppercase font-bold block">Net à Virer</span>
-                      <span className="text-lg font-bold text-emerald-400 mt-1 block font-mono">{formatMoney(run.totalNet, run.currency)}</span>
+                      <span className="text-lg font-bold text-emerald-400 mt-1 block font-mono">{formatMoney(liveTotals.totalNet, run.currency)}</span>
                     </div>
                     <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] uppercase font-bold block">Charges Patronales</span>
-                      <span className="text-lg font-bold text-amber-400 mt-1 block font-mono">{formatMoney(run.totalEmployerCharges, run.currency)}</span>
+                      <span className="text-lg font-bold text-amber-400 mt-1 block font-mono">{formatMoney(liveTotals.totalEmployerCharges, run.currency)}</span>
                     </div>
                   </div>
 
@@ -1193,92 +1227,53 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                           <tr>
                             <th className="p-2.5">Matricule & Agent</th>
                             <th className="p-2.5 text-right">Base</th>
-                            <th className="p-2.5 text-right">Primes</th>
-                            <th className="p-2.5 text-right">Brut Imposable</th>
-                            <th className="p-2.5 text-right">CNSS (5%)</th>
-                            <th className="p-2.5 text-right">IPR</th>
+                            <th className="p-2.5 text-right">Primes & variables</th>
+                            <th className="p-2.5 text-right">Brut</th>
+                            <th className="p-2.5 text-right">Cotisations</th>
+                            <th className="p-2.5 text-right">Impôt</th>
                             <th className="p-2.5 text-right font-bold text-emerald-400">Net à Virer</th>
                             <th className="p-2.5 text-center">Bulletin & Exports</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono">
-                          {contracts.map(c => {
-                            const u = users.find(usr => usr.id === c.userId);
-                            const gross = c.baseSalary + 100;
-                            const cnss = gross * 0.05;
-                            const ipr = (gross - cnss) * 0.15;
-                            const net = gross - cnss - ipr;
+                          {runRows.map(row => {
+                            const c = row.contract;
+                            const u = row.user;
+                            const p = row.payslip;
+                            const payslipData = buildRunPayslip(run, row);
                             return (
                               <tr key={c.id}>
                                 <td className="p-2.5 font-sans text-white">{u?.name || c.employeeCode} ({c.matricule})</td>
-                                <td className="p-2.5 text-right">{formatMoney(c.baseSalary, c.salaryCurrency)}</td>
-                                <td className="p-2.5 text-right">+{formatMoney(100)}</td>
-                                <td className="p-2.5 text-right font-bold text-indigo-300">{formatMoney(gross)}</td>
-                                <td className="p-2.5 text-right text-amber-400">-{formatMoney(cnss)}</td>
-                                <td className="p-2.5 text-right text-rose-400">-{formatMoney(ipr)}</td>
-                                <td className="p-2.5 text-right font-bold text-emerald-400">{formatMoney(net)}</td>
+                                <td className="p-2.5 text-right">{formatMoney(p.baseSalary, p.currency)}</td>
+                                <td className="p-2.5 text-right">+{formatMoney(p.grossSalary - p.baseSalary, p.currency)}</td>
+                                <td className="p-2.5 text-right font-bold text-indigo-300">{formatMoney(p.grossSalary, p.currency)}</td>
+                                <td className="p-2.5 text-right text-amber-400">-{formatMoney(p.totalEmployeeContributions, p.currency)}</td>
+                                <td className="p-2.5 text-right text-rose-400">-{formatMoney(p.totalTaxes, p.currency)}</td>
+                                <td className="p-2.5 text-right font-bold text-emerald-400">{formatMoney(p.netSalary, p.currency)}</td>
                                 <td className="p-2.5 text-center">
                                   <div className="flex items-center justify-center gap-1.5">
                                     <button
-                                      onClick={() => {
-                                        setActiveDocData({
-                                          docType: 'bulletin',
-                                          title: 'Bulletin de Paie Individuel',
-                                          ref: `BP-${run.month}-${c.matricule}`,
-                                          content: { userName: u?.name || c.employeeCode, matricule: c.matricule, net, currency: c.salaryCurrency }
-                                        });
-                                        setModalAction('doc_print');
-                                      }}
+                                      onClick={() => openPayslipPreview(payslipData)}
                                       className="px-2 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded text-[10px] font-sans transition"
                                     >
                                       Voir
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        const exportData = getPayslipExportDataForUser(c.userId, {
-                                          ref: `BP-${run.month}-${c.matricule}`,
-                                          baseSalary: c.baseSalary,
-                                          currency: c.salaryCurrency,
-                                          userName: u?.name || c.employeeCode,
-                                          matricule: c.matricule
-                                        });
-                                        exportPayslipToPDF(exportData, false);
-                                        if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Téléchargement PDF bulletin officiel ${c.matricule} (${run.month})`, 'document');
-                                      }}
-                                      title="Télécharger le bulletin officiel en PDF certifié conforme RDC"
+                                      onClick={() => void downloadPayslip(payslipData, 'pdf')}
+                                      title="Télécharger le bulletin en PDF"
                                       className="p-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-[10px] transition"
                                     >
                                       <FileText className="w-3.5 h-3.5 text-indigo-400 hover:text-white" />
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        const exportData = getPayslipExportDataForUser(c.userId, {
-                                          ref: `BP-${run.month}-${c.matricule}`,
-                                          baseSalary: c.baseSalary,
-                                          currency: c.salaryCurrency,
-                                          userName: u?.name || c.employeeCode,
-                                          matricule: c.matricule
-                                        });
-                                        exportPayslipToPDF(exportData, true);
-                                        if (onLogAction) onLogAction('Export Spécimen PDF', `Téléchargement Spécimen bulletin ${c.matricule} (${run.month})`, 'document');
-                                      }}
+                                      onClick={() => void downloadPayslip(payslipData, 'specimen')}
                                       title="Télécharger le Spécimen d'essai RH (Épreuve avec filigrane)"
                                       className="p-1 bg-amber-950/40 hover:bg-amber-600 text-amber-300 hover:text-white rounded text-[10px] transition border border-amber-600/30"
                                     >
                                       <span className="font-bold font-mono text-[9px] px-1">SPÉC</span>
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        const exportData = getPayslipExportDataForUser(c.userId, {
-                                          ref: `BP-${run.month}-${c.matricule}`,
-                                          baseSalary: c.baseSalary,
-                                          currency: c.salaryCurrency,
-                                          userName: u?.name || c.employeeCode,
-                                          matricule: c.matricule
-                                        });
-                                        exportPayslipToCSV(exportData);
-                                        if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin ${c.matricule} (${run.month})`, 'document');
-                                      }}
+                                      onClick={() => void downloadPayslip(payslipData, 'csv')}
                                       title="Exporter le bulletin au format CSV (Excel)"
                                       className="p-1 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded text-[10px] transition"
                                     >
@@ -1834,16 +1829,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
               <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
-                      baseSalary: simBaseSalary,
-                      currency: config.currency,
-                      seniorityYears: simSeniorityYears,
-                      dependents: simDependents,
-                    });
-                    exportPayslipToCSV(exportData);
-                    if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin de paie ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
+                  onClick={() => exportPayslipToCSV(simulationExport)}
                   title="Exporter les lignes du bulletin au format CSV (Excel)"
                   className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95"
                 >
@@ -1852,16 +1838,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
-                      baseSalary: simBaseSalary,
-                      currency: config.currency,
-                      seniorityYears: simSeniorityYears,
-                      dependents: simDependents,
-                    });
-                    exportPayslipToPDF(exportData, true);
-                    if (onLogAction) onLogAction('Export Spécimen PDF', `Génération Spécimen PDF pour ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
+                  onClick={() => void downloadPayslip(simulationExport, 'specimen')}
                   title="Générer un spécimen de bulletin d'essai avec filigrane non négociable"
                   className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
                 >
@@ -1869,51 +1846,16 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   <span>Télécharger Spécimen</span>
                 </button>
 
-                <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, {
-                      baseSalary: simBaseSalary,
-                      currency: config.currency,
-                      seniorityYears: simSeniorityYears,
-                      dependents: simDependents,
-                    });
-                    exportPayslipToPDF(exportData, false);
-                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF légal officiel de ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
-                  title="Générer directement le bulletin officiel certifié au format PDF conforme RDC"
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-indigo-600/30 active:scale-95"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Télécharger PDF Officiel</span>
-                </button>
 
                 <button
                   onClick={() => {
-                    const targetUser = users.find(u => u.id === simSelectedUserId);
-                    setActiveDocData({
-                      docType: 'bulletin',
-                      title: 'Bulletin de Rémunération Individuel',
-                      ref: `BP-2026-09-${simSelectedUserId.toUpperCase()}`,
-                      content: {
-                        userName: targetUser?.name || 'Collaborateur',
-                        roleTitle: targetUser?.roleTitle || 'Cadre Supérieur',
-                        matricule: 'MAT-2026-RHEMA',
-                        netSalary: simulation.netSalary,
-                        baseSalary: simBaseSalary,
-                        currency: config.currency,
-                        seniorityYears: simSeniorityYears,
-                        dependents: simDependents,
-                        grossSalary: simulation.grossSalary,
-                        cnssDeduction: simulation.socialDeductions,
-                        iprDeduction: simulation.taxDeductions
-                      }
-                    });
-                    setModalAction('doc_print');
+                    setDocPreviewMode('specimen');
+                    openPayslipPreview(simulationExport, 'Simulation de bulletin');
                   }}
                   className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-emerald-600/30 active:scale-95"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Aperçu A4 & Impression</span>
+                  <span>Aperçu A4 (simulation)</span>
                 </button>
               </div>
             </div>
@@ -1975,21 +1917,21 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
           {/* Synthèse Chiffrée Instantanée */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block">Salaire Brut Imposable</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block">Salaire brut</span>
               <span className="text-xl font-bold text-white font-mono mt-1 block">
                 {formatMoney(simulation.grossSalary)}
               </span>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block">Retenue CNSS Salarié (5%)</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block">Cotisations salariales</span>
               <span className="text-xl font-bold text-amber-400 font-mono mt-1 block">
                 - {formatMoney(simulation.socialDeductions)}
               </span>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl text-center">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block">Impôt IPR (DGI RDC)</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block">Impôt sur les rémunérations</span>
               <span className="text-xl font-bold text-rose-400 font-mono mt-1 block">
                 - {formatMoney(simulation.taxDeductions)}
               </span>
@@ -2014,86 +1956,16 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 <span>Spécimen Visuel du Bulletin de Paie (Aperçu Direct)</span>
               </h4>
               <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">
-                Période active : Septembre 2026
+                Simulation • {payMonthLabel(currentPayMonth())}
               </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-[11px] text-left border border-slate-800 rounded-xl overflow-hidden font-mono">
-                <thead className="bg-slate-950 text-slate-400 font-semibold font-sans border-b border-slate-800">
-                  <tr>
-                    <th className="p-3">Désignation de la Rubrique</th>
-                    <th className="p-3 text-right">Base de Calcul</th>
-                    <th className="p-3 text-right">Taux / Formule</th>
-                    <th className="p-3 text-right text-emerald-400">Gains Salarié (+)</th>
-                    <th className="p-3 text-right text-rose-400">Retenues (-)</th>
-                    <th className="p-3 text-right text-indigo-400">Charges Employeur</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  <tr>
-                    <td className="p-3 font-sans text-white font-medium">Salaire de Base Conventionnel</td>
-                    <td className="p-3 text-right">{formatMoney(simBaseSalary)}</td>
-                    <td className="p-3 text-right">100%</td>
-                    <td className="p-3 text-right text-emerald-400 font-bold">+{formatMoney(simBaseSalary)}</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">-</td>
-                  </tr>
-
-                  {simSeniorityYears >= 2 && (
-                    <tr>
-                      <td className="p-3 font-sans text-white">Prime d'Ancienneté ({simSeniorityYears} ans)</td>
-                      <td className="p-3 text-right">{formatMoney(simBaseSalary)}</td>
-                      <td className="p-3 text-right">{Math.floor(simSeniorityYears / 2) * 3}%</td>
-                      <td className="p-3 text-right text-emerald-400">+{formatMoney(simBaseSalary * Math.floor(simSeniorityYears / 2) * 0.03)}</td>
-                      <td className="p-3 text-right">-</td>
-                      <td className="p-3 text-right">-</td>
-                    </tr>
-                  )}
-
-                  <tr>
-                    <td className="p-3 font-sans text-white">Indemnités Forfaitaires (Transport & Panier)</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">Fixe</td>
-                    <td className="p-3 text-right text-emerald-400 font-bold">+{formatMoney(100)}</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">-</td>
-                  </tr>
-
-                  <tr className="bg-slate-950/40">
-                    <td className="p-3 font-sans text-amber-300">CNSS Régime Général (Pensions & Risques)</td>
-                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary)}</td>
-                    <td className="p-3 text-right">5% sal. / 13% pat.</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right text-amber-400 font-bold">-{formatMoney(simulation.socialDeductions)}</td>
-                    <td className="p-3 text-right text-indigo-400">+{formatMoney(simulation.grossSalary * 0.13)}</td>
-                  </tr>
-
-                  <tr className="bg-slate-950/40">
-                    <td className="p-3 font-sans text-rose-300">IPR (Impôt Professionnel sur Rémunérations - DGI)</td>
-                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary - simulation.socialDeductions)}</td>
-                    <td className="p-3 text-right">Barème DGI</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right text-rose-400 font-bold">-{formatMoney(simulation.taxDeductions)}</td>
-                    <td className="p-3 text-right">-</td>
-                  </tr>
-
-                  <tr className="bg-slate-950/60">
-                    <td className="p-3 font-sans text-slate-400">INPP (3%) & ONEM (0.2%) Patronal RDC</td>
-                    <td className="p-3 text-right">{formatMoney(simulation.grossSalary)}</td>
-                    <td className="p-3 text-right">3.2% total</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right">-</td>
-                    <td className="p-3 text-right text-indigo-400">+{formatMoney(simulation.grossSalary * 0.032)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <PayslipTable data={simulationExport} variant="dark" />
 
             <div className="flex flex-col sm:flex-row justify-between items-center p-4 bg-slate-950 rounded-xl border border-slate-800 text-xs gap-3">
               <div>
-                <span className="text-slate-400 block font-sans">Mode de versement certifié :</span>
-                <span className="text-white font-bold">Virement Bancaire Rawbank • Compte 01002-39201928019-88</span>
+                <span className="text-slate-400 block font-sans">Mode de versement :</span>
+                <span className="text-white font-bold">{simContract ? `${simContract.paymentMode} • ${simContract.bankName || 'Banque non renseignée'}` : 'Aucun contrat pour ce collaborateur'}</span>
               </div>
               <div className="text-right">
                 <span className="text-slate-400 block font-sans">Montant Net Net Décompté :</span>
@@ -2333,9 +2205,18 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Mois de paie</label>
+                <input
+                  type="month"
+                  value={overtimeForm.month}
+                  onChange={e => setOvertimeForm({ ...overtimeForm, month: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                />
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="text-slate-400 block mb-1">Jour (+30%)</label>
+                  <label className="text-slate-400 block mb-1">Jour (+{config.overtimeRates?.firstBracketRate ?? 0} %)</label>
                   <input
                     type="number"
                     value={overtimeForm.dayHours}
@@ -2344,7 +2225,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Nuit (+50%)</label>
+                  <label className="text-slate-400 block mb-1">Nuit (+{config.overtimeRates?.secondBracketRate ?? 0} %)</label>
                   <input
                     type="number"
                     value={overtimeForm.nightHours}
@@ -2353,7 +2234,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Férié (+100%)</label>
+                  <label className="text-slate-400 block mb-1">Férié (+{config.overtimeRates?.weekendHolidayRate ?? 0} %)</label>
                   <input
                     type="number"
                     value={overtimeForm.holidayHours}
@@ -2368,22 +2249,30 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
               <button
                 onClick={() => {
                   const u = users.find(usr => usr.id === overtimeForm.userId);
-                  const total = (overtimeForm.dayHours * 6.5 * 1.3) + (overtimeForm.nightHours * 6.5 * 1.5) + (overtimeForm.holidayHours * 6.5 * 2.0);
+                  const contract = contracts.find(c => c.userId === overtimeForm.userId);
+                  if (!contract) {
+                    window.alert('Ce collaborateur n\'a pas de contrat : impossible de calculer son taux horaire.');
+                    return;
+                  }
+                  const cur = contract.salaryCurrency === 'CDF' ? 'CDF' : 'USD';
+                  const hourlyRate = hourlyRateOf(contract, config);
+                  const total = roundMoney(overtimeAmountFor(overtimeForm, hourlyRate, config), cur);
                   setOvertimeRecords(prev => [{
-                    id: `ot-${Date.now()}`,
+                    id: `ot-${overtimeForm.userId}-${Date.now()}`,
                     userId: overtimeForm.userId,
                     userName: u?.name || 'Agent',
-                    month: '2026-09',
+                    month: overtimeForm.month,
                     dayHours: overtimeForm.dayHours,
                     nightHours: overtimeForm.nightHours,
                     holidayHours: overtimeForm.holidayHours,
-                    hourlyRate: 6.5,
-                    calculatedAmountUSD: total,
-                    calculatedAmountCDF: total * exchangeRate,
-                    currency: 'USD',
+                    hourlyRate: roundMoney(hourlyRate, cur),
+                    calculatedAmountUSD: cur === 'USD' ? total : roundMoney(convert(total, 'CDF', 'USD', exchangeRate), 'USD'),
+                    calculatedAmountCDF: cur === 'CDF' ? total : roundMoney(convert(total, 'USD', 'CDF', exchangeRate), 'CDF'),
+                    currency: cur,
                     status: 'approuve',
                     reason: overtimeForm.reason
                   }, ...prev]);
+                  onLogAction?.('Saisie Heures Supplémentaires', `${u?.name} : ${overtimeForm.dayHours} h jour, ${overtimeForm.nightHours} h nuit, ${overtimeForm.holidayHours} h fériés (${payMonthLabel(overtimeForm.month)}) = ${formatPayslipMoney(total, cur)}.`, 'admin');
                   setModalAction(null);
                 }}
                 className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-bold"
@@ -2742,11 +2631,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
 
               <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
-                    exportPayslipToCSV(exportData);
-                    if (onLogAction) onLogAction('Export Fiche de Paie CSV', `Export CSV bulletin de ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
+                  onClick={() => activeDocData.content?.payslip && void downloadPayslip(activeDocData.content.payslip, 'csv')}
                   title="Exporter les rubriques salariales en CSV (Excel)"
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition active:scale-95"
                 >
@@ -2755,11 +2640,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
-                    exportPayslipToPDF(exportData, true);
-                    if (onLogAction) onLogAction('Export Spécimen PDF', `Génération Spécimen PDF pour ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
+                  onClick={() => activeDocData.content?.payslip && void downloadPayslip(activeDocData.content.payslip, 'specimen')}
                   title="Télécharger le Spécimen avec filigrane d'essai"
                   className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition active:scale-95"
                 >
@@ -2768,12 +2649,9 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    const exportData = getPayslipExportDataForUser(simSelectedUserId, activeDocData.content);
-                    exportPayslipToPDF(exportData, false);
-                    if (onLogAction) onLogAction('Export Fiche de Paie PDF', `Génération PDF officiel de ${exportData.employeeName} (${exportData.matricule})`, 'document');
-                  }}
-                  title="Générer et télécharger le bulletin officiel en format PDF A4 certifié RDC"
+                  onClick={() => activeDocData.content?.payslip && void downloadPayslip(activeDocData.content.payslip, 'pdf')}
+                  title="Télécharger le bulletin en PDF"
+                  disabled={String(activeDocData.ref || '').startsWith('SIM-')}
                   className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1.5 transition active:scale-95"
                 >
                   <FileText className="w-3.5 h-3.5" />
@@ -2805,9 +2683,9 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-slate-900 tracking-tight">{currentOrg.name}</h2>
-                    <p className="text-[11px] text-slate-600 font-medium">Télécoms • VSAT • Réseaux & Intégration Technologique</p>
+                    <p className="text-[11px] text-slate-600 font-medium">{currentOrg.headquarters || ''}</p>
                     <p className="text-[10px] text-slate-500 font-mono">
-                      RCCM: {currentOrg.rccm || 'CD/KNG/RCCM/18-B-01290'} • Id. Nat: {currentOrg.idNat || '01-83-N45201L'} • N° Impôt: {currentOrg.numImpot || 'A1934892Z'}
+                      RCCM : {currentOrg.rccm || currentOrg.registrationNumber || 'Non renseigné'} • Id. Nat : {currentOrg.idNat || 'Non renseigné'} • N° Impôt : {currentOrg.numImpot || 'Non renseigné'}
                     </p>
                   </div>
                 </div>
@@ -2841,7 +2719,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                   Monsieur / Madame {activeDocData.content?.userName}, Matricule {activeDocData.content?.matricule},
                 </p>
                 <p>
-                  est engagé(e) au sein de notre établissement en qualité de cadre sous contrat de travail depuis le <strong>{activeDocData.content?.startDate || '15 Janvier 2020'}</strong>.
+                  est engagé(e) au sein de notre établissement sous contrat de travail depuis le <strong>{activeDocData.content?.startDate || '…………'}</strong>.
                 </p>
                 <p>
                   Durant son activité, l'intéressé(e) a fait preuve de loyauté, d'assiduité et de compétence technique dans l'accomplissement des missions qui lui sont confiées.
@@ -2849,7 +2727,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 <p>En foi de quoi, la présente attestation lui est délivrée pour servir et valoir ce que de droit.</p>
                 <div className="pt-6 text-right font-bold">
                   Pour la Direction Générale,<br />
-                  <span className="text-indigo-900 font-extrabold">{currentOrg.directorGeneral || 'Junior MONYA'}</span>
+                  <span className="text-indigo-900 font-extrabold">{currentOrg.directorGeneral || currentOrg.managerName || ''}</span>
                 </div>
               </div>
             )}
@@ -2862,7 +2740,7 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
                 </h4>
                 <p>Je soussigné(e), <strong>{activeDocData.content?.userName}</strong>, Matricule <strong>{activeDocData.content?.matricule}</strong>, reconnais avoir reçu la somme totale pour règlement définitif :</p>
                 <div className="p-3 bg-white border border-slate-300 rounded font-mono text-sm font-bold text-emerald-800">
-                  Total Net Décompté : {formatMoney(Number(activeDocData.content?.baseSalary || 1500) * 1.5)}
+                  Total Net Décompté : {activeDocData.content?.amount != null ? formatMoney(Number(activeDocData.content.amount), activeDocData.content?.currency) : '…………'}
                 </div>
                 <ul className="list-disc pl-5 space-y-1">
                   <li>Prorata du dernier mois de traitement salarial</li>
@@ -2896,133 +2774,68 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
             )}
 
             {/* CORPS DU BULLETIN OFFICIEL DE PAIE STANDARD (A4) */}
-            {(activeDocData.docType === 'bulletin' || !['attestation', 'solde', 'sanction'].includes(activeDocData.docType)) && (
+            {(activeDocData.docType === 'bulletin' || !['attestation', 'solde', 'sanction'].includes(activeDocData.docType)) && (() => {
+              const ps: PayslipExportData | undefined = activeDocData.content?.payslip;
+              if (!ps) {
+                return <p className="text-sm text-slate-600">Aucune donnée de bulletin à afficher.</p>;
+              }
+              const isSimulation = String(ps.ref).startsWith('SIM-');
+              return (
               <>
                 <div className="grid grid-cols-2 gap-4 text-xs p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
                   <div className="space-y-1">
-                    <div><strong>Nom de l'Agent :</strong> {users.find(u => u.id === simSelectedUserId)?.name || 'Collaborateur'}</div>
-                    <div><strong>Fonction / Emploi :</strong> {users.find(u => u.id === simSelectedUserId)?.roleTitle || 'Cadre Supérieur'}</div>
-                    <div><strong>Matricule Interne :</strong> MAT-2026-RHEMA</div>
-                    <div><strong>Ancienneté de service :</strong> {simSeniorityYears} an(s)</div>
+                    <div><strong>Nom de l'agent :</strong> {ps.employeeName}</div>
+                    <div><strong>Fonction :</strong> {ps.roleTitle}</div>
+                    <div><strong>Matricule :</strong> {ps.matricule}</div>
+                    <div><strong>Ancienneté :</strong> {ps.seniorityYears ?? 0} an(s)</div>
                   </div>
                   <div className="space-y-1">
-                    <div><strong>N° Immatriculation CNSS :</strong> CNSS-CD-9982410</div>
-                    <div><strong>Période de Paie :</strong> Septembre 2026</div>
-                    <div><strong>Devise Contractuelle :</strong> {config.currency === 'USD' ? 'Dollar Américain ($ USD)' : 'Franc Congolais (CDF)'}</div>
-                    <div><strong>Charges de famille :</strong> {simDependents} enfant(s) à charge</div>
+                    <div><strong>N° CNSS :</strong> {ps.cnssNumber}</div>
+                    <div><strong>Période de paie :</strong> {ps.period}</div>
+                    <div><strong>Devise :</strong> {ps.currency === 'USD' ? 'Dollar américain (USD)' : 'Franc congolais (CDF)'}</div>
+                    <div><strong>Enfants à charge :</strong> {ps.dependents ?? 0}</div>
                   </div>
                 </div>
 
-                <table className="w-full text-xs border border-slate-300">
-                  <thead className="bg-slate-100 font-bold border-b border-slate-300 text-slate-800">
-                    <tr>
-                      <th className="p-2.5 text-left">Rubriques Rémunératrices & Déductions</th>
-                      <th className="p-2.5 text-right">Base</th>
-                      <th className="p-2.5 text-right">Taux / Formule</th>
-                      <th className="p-2.5 text-right text-emerald-800">Gains (+)</th>
-                      <th className="p-2.5 text-right text-rose-800">Retenues (-)</th>
-                      <th className="p-2.5 text-right text-slate-700">Part Patronale</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
-                    <tr>
-                      <td className="p-2 font-sans font-medium text-slate-900">Salaire de Base Conventionnel</td>
-                      <td className="p-2 text-right">{formatMoney(simBaseSalary)}</td>
-                      <td className="p-2 text-right">100%</td>
-                      <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(simBaseSalary)}</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right">-</td>
-                    </tr>
-
-                    {simSeniorityYears >= 2 && (
-                      <tr>
-                        <td className="p-2 font-sans font-medium text-slate-900">Prime d'Ancienneté ({simSeniorityYears} ans)</td>
-                        <td className="p-2 text-right">{formatMoney(simBaseSalary)}</td>
-                        <td className="p-2 text-right">{Math.floor(simSeniorityYears / 2) * 3}%</td>
-                        <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(simBaseSalary * Math.floor(simSeniorityYears / 2) * 0.03)}</td>
-                        <td className="p-2 text-right">-</td>
-                        <td className="p-2 text-right">-</td>
-                      </tr>
-                    )}
-
-                    <tr>
-                      <td className="p-2 font-sans font-medium text-slate-900">Indemnités Conventionnelles (Transport/Logement)</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right">Fixe</td>
-                      <td className="p-2 text-right text-emerald-700 font-bold">+{formatMoney(100)}</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right">-</td>
-                    </tr>
-
-                    <tr className="bg-slate-50">
-                      <td className="p-2 font-sans text-slate-900">Cotisation CNSS Salarié (Pensions & Risques)</td>
-                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary)}</td>
-                      <td className="p-2 text-right">5% sal. / 13% pat.</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right text-rose-700 font-bold">-{formatMoney(simulation.socialDeductions)}</td>
-                      <td className="p-2 text-right text-slate-700 font-bold">+{formatMoney(simulation.grossSalary * 0.13)}</td>
-                    </tr>
-
-                    <tr className="bg-slate-50">
-                      <td className="p-2 font-sans text-slate-900">IPR (Impôt Professionnel sur Rémunérations - DGI)</td>
-                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary - simulation.socialDeductions)}</td>
-                      <td className="p-2 text-right">Barème DGI RDC</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right text-rose-700 font-bold">-{formatMoney(simulation.taxDeductions)}</td>
-                      <td className="p-2 text-right">-</td>
-                    </tr>
-
-                    <tr className="bg-slate-100/50">
-                      <td className="p-2 font-sans text-slate-700">Cotisations Patronales INPP (3%) & ONEM (0.2%)</td>
-                      <td className="p-2 text-right">{formatMoney(simulation.grossSalary)}</td>
-                      <td className="p-2 text-right">3.2% total</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right">-</td>
-                      <td className="p-2 text-right text-slate-700 font-bold">+{formatMoney(simulation.grossSalary * 0.032)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <PayslipTable data={ps} variant="light" />
 
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-slate-900 text-white rounded-xl">
                   <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">NET À PAYER À L'AGENT (VIREMENT BANCAIRE)</span>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Net à payer</span>
                     <span className="text-2xl font-bold text-emerald-400 font-mono mt-0.5 block">
-                      {formatMoney(simulation.netSalary)}
+                      {formatPayslipMoney(ps.netSalary, ps.currency)}
                     </span>
-                    <span className="text-xs text-slate-300 font-mono">
-                      Contrevaleur BCC : {config.currency === 'USD' ? `${(simulation.netSalary * exchangeRate).toLocaleString()} CDF` : `${(simulation.netSalary / exchangeRate).toFixed(2)} $`}
-                    </span>
+                    {ps.counterValueCDF != null && ps.currency === 'USD' && (
+                      <span className="text-xs text-slate-300 font-mono">
+                        Contre-valeur : {formatPayslipMoney(ps.counterValueCDF, 'CDF')}
+                      </span>
+                    )}
                   </div>
                   <div className="text-right text-xs text-slate-300 space-y-1">
-                    <div>Coût global employeur : <strong>{formatMoney(simulation.grossSalary * 1.162)}</strong></div>
-                    {docPreviewMode === 'specimen' ? (
+                    <div>Coût total employeur : <strong>{formatPayslipMoney(ps.totalEmployerCost, ps.currency)}</strong></div>
+                    {docPreviewMode === 'specimen' || isSimulation ? (
                       <div className="text-amber-400 font-bold flex items-center justify-end gap-1">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                        <span>SPÉCIMEN RH (SANS EFFET BANCAIRE)</span>
+                        <span>{isSimulation ? 'SIMULATION — SANS VALEUR' : 'SPÉCIMEN (SANS EFFET)'}</span>
                       </div>
                     ) : (
-                      <div className="text-emerald-400 font-bold flex items-center justify-end gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Scellé SHA-256 : d892bc018ae82103fca91</span>
+                      <div className="text-[10px] text-slate-400">
+                        Une empreinte SHA-256 du contenu est ajoutée au PDF et au CSV téléchargés.
                       </div>
                     )}
-                    <div className="text-[10px] text-slate-400">
-                      {docPreviewMode === 'specimen'
-                        ? 'Épreuve d\'essai non négociable - Simulation interne RH'
-                        : 'Bulletin officiel scellé et certifié conforme par la Direction Générale'}
-                    </div>
                   </div>
                 </div>
               </>
-            )}
+              );
+            })()}
 
             {/* Pied de page officiel RHEMA BUSINESS */}
             <footer className="pt-3 border-t-2 border-slate-200 text-[10px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
               <div>
-                <span className="font-bold text-slate-800">{currentOrg.name}</span> • RCCM: {currentOrg.rccm || 'CD/KNG/RCCM/18-B-01290'}
+                <span className="font-bold text-slate-800">{currentOrg.name}</span> • RCCM : {currentOrg.rccm || currentOrg.registrationNumber || 'Non renseigné'}
               </div>
               <div>
-                Avenue de la Justice, Gombe, Kinshasa - RDC • Plateforme Certifiée RH
+                {currentOrg.headquarters || ''}
               </div>
             </footer>
 

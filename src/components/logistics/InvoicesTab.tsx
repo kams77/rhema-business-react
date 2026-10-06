@@ -1,4 +1,6 @@
 // src/components/logistics/InvoicesTab.tsx
+import { invoiceBankDetails, orgBankAccounts } from '../../lib/bank';
+import { contentHashSync } from '../../lib/integrity';
 import React, { useState } from 'react';
 import type { ProformaInvoiceItem, NetToPayInvoiceItem, User, Organization, PurchaseOrderItem } from '../../types';
 import { 
@@ -66,7 +68,8 @@ export const InvoicesTab: React.FC<Props> = ({
   const [invClientTax, setInvClientTax] = useState('RCCM: CD/KN/RCCM/20-B-001 | IdNat: 01-83-N44100');
   const [invSubtotal, setInvSubtotal] = useState<number>(10000);
   const [invAdvance, setInvAdvance] = useState<number>(2000);
-  const [invBank, setInvBank] = useState<'rawbank' | 'equity'>('rawbank');
+  const bankAccounts = orgBankAccounts(organization);
+  const [invBank, setInvBank] = useState<string>(bankAccounts[0]?.id || '');
 
   const filteredProformas = proformas.filter(p => 
     p.proformaNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -160,19 +163,7 @@ export const InvoicesTab: React.FC<Props> = ({
       netToPayUSD: netUSD,
       netToPayCDF: netUSD * 2850,
       currencyRate: 2850,
-      bankDetails: invBank === 'rawbank' ? {
-        bankName: 'RAWBANK KINSHASA (Siège Gombe)',
-        accountNumberUSD: '05100-01004419201-88 USD',
-        accountNumberCDF: '05100-01004419201-99 CDF',
-        swiftBic: 'RAWBCDZX',
-        ibanOrRib: 'CD68 0510 0010 0441 9201 88'
-      } : {
-        bankName: 'EQUITY BCDC RDC (Agence Libération)',
-        accountNumberUSD: '00012-44100982-14 USD',
-        accountNumberCDF: '00012-44100982-15 CDF',
-        swiftBic: 'BCDCCDKI',
-        ibanOrRib: 'CD68 0001 2441 0098 2140 12'
-      },
+      bankDetails: invoiceBankDetails(organization, invBank),
       paymentStatus: invAdvance > 0 ? 'partiellement_payee' : 'en_attente',
       paidAmountUSD: invAdvance,
       remainingBalanceUSD: netUSD,
@@ -187,13 +178,15 @@ export const InvoicesTab: React.FC<Props> = ({
           registeredByAgent: currentUser.name
         }
       ] : [],
-      electronicSealHash: `sha256-fac-${Date.now()}-rhema-cert`,
+      electronicSealHash: '',
       preparedByAgentId: currentUser.id,
       preparedByAgentName: `${currentUser.name} (Agent de Service)`,
       serviceName: currentUser.departmentName || 'Service Facturation',
       isOfficialDocumentEmitted: true
     };
 
+    // Empreinte SHA-256 réelle du contenu de la facture.
+    newInv.electronicSealHash = contentHashSync({ ...newInv, electronicSealHash: undefined });
     onCreateNetInvoice(newInv);
     setShowCreateInvoiceModal(false);
   };
@@ -738,14 +731,19 @@ export const InvoicesTab: React.FC<Props> = ({
               </div>
               <div>
                 <label className="text-[11px] text-slate-300 font-semibold block mb-1">Banque de Règlement RDC</label>
-                <select
-                  value={invBank}
-                  onChange={(e) => setInvBank(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                >
-                  <option value="rawbank">RAWBANK KINSHASA</option>
-                  <option value="equity">EQUITY BCDC RDC</option>
-                </select>
+                {bankAccounts.length > 0 ? (
+                  <select
+                    value={invBank}
+                    onChange={(e) => setInvBank(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bankName}</option>)}
+                  </select>
+                ) : (
+                  <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
+                    Aucune coordonnée bancaire : le DG doit les saisir dans « Identité & Logo ». La facture affichera « Non renseigné ».
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-5">

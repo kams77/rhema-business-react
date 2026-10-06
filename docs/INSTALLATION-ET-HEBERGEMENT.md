@@ -125,6 +125,12 @@ indispensable pour la connexion.
 
 Mode démo : `docker build --build-arg VITE_DEMO_MODE=true -t rhema-business .`
 
+### Option D — Synology avec base de données MariaDB (données partagées)
+
+Pour que tous les collaborateurs travaillent sur les **mêmes données**, utilisez le mode serveur :
+application + serveur Node.js + MariaDB, en un seul projet Container Manager.
+Guide complet : **[SYNOLOGY.md](SYNOLOGY.md)**.
+
 ### À éviter
 
 - **Vercel (offre gratuite « Hobby »)** : réservée à un usage personnel non commercial.

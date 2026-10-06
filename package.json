@@ -8,7 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "server": "node server/index.mjs",
+    "server:memoire": "node server/index.mjs --memoire",
+    "test:api": "node server/tests/api.test.mjs",
+    "test:paie": "esbuild src/lib/__tests__/payroll.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/payroll.test.mjs --log-level=error && node node_modules/.cache/payroll.test.mjs",
+    "test:droits": "node server/tests/permissions.test.mjs",
+    "test:integrite": "esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/integrity.test.mjs --log-level=error && node node_modules/.cache/integrity.test.mjs && node server/tests/audit-chain.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -22,7 +28,8 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "mysql2": "^3.11.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

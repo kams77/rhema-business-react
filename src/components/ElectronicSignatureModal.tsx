@@ -20,6 +20,10 @@ import {
   Key, 
   AlertCircle
 } from 'lucide-react';
+import { API_MODE } from '../config';
+import { api } from '../lib/api';
+import { checkUserPassword } from '../lib/auth';
+import { contentHash, shortHash } from '../lib/integrity';
 
 export interface SignatureData {
   signedBy: string;
@@ -35,6 +39,29 @@ export interface SignatureData {
     timestampChecked: boolean;
     sealedAt: string;
     token: string;
+    /** Identité confirmée par le mot de passe du signataire au moment de signer. */
+    identityVerified?: 'mot_de_passe';
+    /** Origine de l'heure de signature : serveur de l'entreprise ou poste de travail. */
+    timestampSource?: 'serveur' | 'poste';
+    signerUserId?: string;
+  };
+}
+
+/** Contenu du document couvert par l'empreinte de signature (toute modification change l'empreinte). */
+export function signedDocumentContent(doc: DocumentItem) {
+  return {
+    id: doc.id,
+    title: doc.title,
+    referenceNumber: doc.referenceNumber,
+    category: doc.category,
+    subtype: doc.subtype,
+    amount: doc.amount,
+    currency: doc.currency,
+    description: doc.description,
+    targetUserId: doc.targetUserId,
+    targetEntityId: doc.targetEntityId,
+    createdAt: doc.createdAt,
+    authorId: doc.authorId,
   };
 }
 
@@ -70,11 +97,12 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
   const [typedStyle, setTypedStyle] = useState<number>(1);
 
   // Consentement et sécurité
-  const [legalConsent, setLegalConsent] = useState(true);
-  const [securityPin, setSecurityPin] = useState('2026');
-  const [pinInput, setPinInput] = useState('2026');
+  const [legalConsent, setLegalConsent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
 
-  // Animation de vérification probante
+  // Étapes de vérification affichées
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyStep, setVerifyStep] = useState<number>(0);
   const [verifyProgress, setVerifyProgress] = useState<number>(0);
@@ -174,7 +202,7 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
   };
 
   // Génération de l'image de la signature selon le mode
-  const generateSignatureImage = (): string => {
+  const generateSignatureImage = (hash: string, signedAt: string): string => {
     if (activeMode === 'draw' && canvasRef.current && hasDrawn) {
       return canvasRef.current.toDataURL('image/png');
     }
@@ -209,8 +237,8 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
       // Mention d'accréditation
       ctx.fillStyle = '#64748b';
       ctx.font = '10px "Courier New", monospace';
-      ctx.fillText(`Signé par ${currentUser.roleTitle} • RHEMA BUSINESS`, 20, 105);
-      ctx.fillText(`Horodatage certifié • RDC Code Numérique`, 20, 120);
+      ctx.fillText(`Signé par ${currentUser.roleTitle} • ${organization.name}`.slice(0, 60), 20, 105);
+      ctx.fillText(`${signedAt} • ${shortHash(hash)}`, 20, 120);
 
       return canvas.toDataURL('image/png');
     }
@@ -230,7 +258,7 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
 
     ctx.fillStyle = '#1e3a8a';
     ctx.font = 'bold 12px "Arial", sans-serif';
-    ctx.fillText('SCEAU OFFICIEL RHEMA BUSINESS RDC', 25, 40);
+    ctx.fillText(`VISA ÉLECTRONIQUE • ${organization.name.toUpperCase()}`.slice(0, 48), 25, 40);
 
     ctx.fillStyle = '#047857';
     ctx.font = 'bold 13px "Courier New", monospace';
@@ -239,28 +267,58 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
     ctx.fillStyle = '#475569';
     ctx.font = '10px "Arial", sans-serif';
     ctx.fillText(`Fonction : ${currentUser.roleTitle}`, 25, 85);
-    ctx.fillText(`Certificat ID : RHEMA-PKI-${Date.now().toString(36).toUpperCase()}`, 25, 102);
-    ctx.fillText(`Kinshasa, RDC • Scellé Inviolable SHA-256`, 25, 118);
+    ctx.fillText(`Signé le : ${signedAt}`, 25, 102);
+    ctx.fillText(`Empreinte : ${shortHash(hash)}`, 25, 118);
 
     return canvas.toDataURL('image/png');
   };
 
-  // Déclencheur du circuit de vérification cryptographique
-  const handleStartVerification = () => {
-    if (!legalConsent) return;
+  // Vérification réelle : mot de passe du signataire, horodatage, empreinte SHA-256 du document.
+  const handleStartVerification = async () => {
+    if (!legalConsent || isChecking) return;
     if (activeMode === 'draw' && !hasDrawn) return;
+    if (!password) {
+      setAuthError('Saisissez votre mot de passe pour confirmer votre identité.');
+      return;
+    }
+    setAuthError(null);
+    setIsChecking(true);
 
-    const signatureImg = generateSignatureImage();
-    const hash = `SHA256:7f83b165${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}fe49a`;
+    let signedAt: string;
+    let timestampSource: 'serveur' | 'poste';
+    try {
+      if (API_MODE) {
+        const r = await api.verifyPassword(password);
+        signedAt = r.serverTime;
+        timestampSource = 'serveur';
+      } else {
+        if (!(await checkUserPassword(currentUser, password))) {
+          setAuthError('Mot de passe incorrect.');
+          return;
+        }
+        signedAt = new Date().toLocaleString('fr-FR');
+        timestampSource = 'poste';
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Vérification impossible.');
+      return;
+    } finally {
+      setIsChecking(false);
+      setPassword('');
+    }
+
+    const hash = await contentHash({
+      document: signedDocumentContent(document),
+      signer: { id: currentUser.id, name: currentUser.name, roleTitle: currentUser.roleTitle },
+      signedAt,
+      signatureType: activeMode,
+    });
     setGeneratedHash(hash);
-
-    const now = new Date();
-    const dateFormatted = `${now.toLocaleDateString('fr-FR')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-
+    const signatureImg = generateSignatureImage(hash, signedAt);
     const sigData: SignatureData = {
       signedBy: `${currentUser.name} (${currentUser.roleTitle})`,
       role: currentUser.roleTitle,
-      signedAt: dateFormatted,
+      signedAt,
       certificateHash: hash,
       signatureImage: signatureImg,
       signatureType: activeMode,
@@ -269,8 +327,11 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
         sha256Checked: true,
         rbacChecked: true,
         timestampChecked: true,
-        sealedAt: now.toISOString(),
-        token: `RHEMA-PROOF-${Date.now().toString(36).toUpperCase()}`
+        sealedAt: new Date().toISOString(),
+        token: `SIG-${hash.slice(0, 12).toUpperCase()}`,
+        identityVerified: 'mot_de_passe',
+        timestampSource,
+        signerUserId: currentUser.id,
       }
     };
 
@@ -317,14 +378,14 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm sm:text-base font-bold text-white tracking-wide">
-                  Signature Électronique Certifiée & Scellement
+                  Signature électronique
                 </h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                  Loi RDC / OHADA
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                  Signature simple
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Authentification forte de l'utilisateur connecté et scellement d'intégrité SHA-256
+                Identité confirmée par votre mot de passe • empreinte SHA-256 du document
               </p>
             </div>
           </div>
@@ -359,13 +420,13 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
 
               <h4 className="text-lg font-bold text-white tracking-tight">
                 {verificationDone 
-                  ? 'Document Officiellement Scellé & Signé !' 
-                  : 'Vérification Cryptographique & Scellement en cours...'}
+                  ? 'Signature prête à être appliquée' 
+                  : 'Préparation de la signature…'}
               </h4>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
                 {verificationDone 
-                  ? 'Le document a été validé avec succès par les services de confiance RHEMA BUSINESS.' 
-                  : 'Calcul des empreintes numériques, audit des habilitations et apposition du certificat probant.'}
+                  ? 'Votre identité a été confirmée et l\'empreinte du document calculée.' 
+                  : 'Vérification du mot de passe et calcul de l\'empreinte du document.'}
               </p>
             </div>
 
@@ -399,10 +460,10 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   ) : (
                     <Fingerprint className="w-4 h-4 text-slate-600 shrink-0" />
                   )}
-                  <span className="text-xs font-bold">1. Calcul SHA-256 & Intégrité</span>
+                  <span className="text-xs font-bold">1. Empreinte SHA-256 du document</span>
                 </div>
                 <p className="text-[10px] mt-1 font-mono text-slate-400 truncate">
-                  {verifyStep >= 1 ? generatedHash || 'Calcul en cours...' : 'En attente'}
+                  {verifyStep >= 1 ? shortHash(generatedHash) : 'En attente'}
                 </p>
               </div>
 
@@ -420,14 +481,14 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   ) : (
                     <Shield className="w-4 h-4 text-slate-600 shrink-0" />
                   )}
-                  <span className="text-xs font-bold">2. Habilitation RBAC</span>
+                  <span className="text-xs font-bold">2. Identité confirmée</span>
                 </div>
                 <p className="text-[10px] mt-1 text-slate-400 truncate">
-                  {verifyStep >= 2 ? `Rôle validé : ${currentUser.roleTitle}` : 'En attente'}
+                  {verifyStep >= 2 ? `Mot de passe vérifié • ${currentUser.roleTitle}` : 'En attente'}
                 </p>
               </div>
 
-              {/* Étape 3 : Horodatage RFC 3161 */}
+              {/* Étape 3 : Horodatage */}
               <div className={`p-3.5 rounded-xl border transition-all ${
                 verifyStep >= 3 
                   ? 'bg-slate-950/80 border-emerald-500/40 text-emerald-300' 
@@ -441,14 +502,14 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   ) : (
                     <Clock className="w-4 h-4 text-slate-600 shrink-0" />
                   )}
-                  <span className="text-xs font-bold">3. Horodatage RFC 3161</span>
+                  <span className="text-xs font-bold">3. Horodatage</span>
                 </div>
                 <p className="text-[10px] mt-1 text-slate-400 truncate">
-                  {verifyStep >= 3 ? `Kinshasa UTC+1 : ${finalSignatureData?.signedAt}` : 'En attente'}
+                  {verifyStep >= 3 ? `${finalSignatureData?.signedAt} (${finalSignatureData?.verificationAudit.timestampSource === 'serveur' ? 'heure du serveur' : 'heure du poste'})` : 'En attente'}
                 </p>
               </div>
 
-              {/* Étape 4 : Sceau Inviolable */}
+              {/* Étape 4 : Prêt à signer */}
               <div className={`p-3.5 rounded-xl border transition-all ${
                 verifyStep >= 4 
                   ? 'bg-slate-950/80 border-emerald-500/40 text-emerald-300' 
@@ -460,10 +521,10 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   ) : (
                     <Key className="w-4 h-4 text-slate-600 shrink-0" />
                   )}
-                  <span className="text-xs font-bold">4. Scellement Inviolable</span>
+                  <span className="text-xs font-bold">4. Prêt à signer</span>
                 </div>
                 <p className="text-[10px] mt-1 text-slate-400 truncate">
-                  {verifyStep >= 4 ? 'Certificat X.509 virtuel appliqué' : 'En attente'}
+                  {verifyStep >= 4 ? 'Toute modification ultérieure changera l\'empreinte' : 'En attente'}
                 </p>
               </div>
             </div>
@@ -474,20 +535,20 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-emerald-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Certificat de Visa Électronique n° {finalSignatureData.verificationAudit.token}</span>
+                    <span>Visa électronique {finalSignatureData.verificationAudit.token}</span>
                   </span>
                   <span className="font-mono text-[10px] text-emerald-400 bg-emerald-900/40 px-2 py-0.5 rounded border border-emerald-500/30">
-                    CONFORME RDC
+                    {shortHash(finalSignatureData.certificateHash)}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Signataire certifié :</span>
+                    <span className="text-slate-500 block text-[10px]">Signataire :</span>
                     <strong className="text-white">{finalSignatureData.signedBy}</strong>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Horodatage officiel :</span>
+                    <span className="text-slate-500 block text-[10px]">Signé le :</span>
                     <strong className="text-white font-mono">{finalSignatureData.signedAt}</strong>
                   </div>
                 </div>
@@ -517,7 +578,7 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                 </button>
               ) : (
                 <div className="text-xs text-slate-500 italic">
-                  Veuillez patienter pendant la génération du certificat...
+                  Veuillez patienter…
                 </div>
               )}
             </div>
@@ -555,7 +616,7 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   <p className="font-bold text-emerald-300 text-sm">{currentUser.name}</p>
                   <div className="text-slate-400 text-[11px] space-y-0.5">
                     <p>{currentUser.roleTitle} — <span className="text-slate-300 font-medium">{organization.name}</span></p>
-                    <p className="text-[10px] font-mono text-slate-500">Matricule: {currentUser.matricule || 'RHEMA-USR-2026'}</p>
+                    <p className="text-[10px] font-mono text-slate-500">Matricule: {currentUser.matricule || 'Non renseigné'}</p>
                   </div>
                 </div>
               </div>
@@ -631,8 +692,8 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                     <Award className={`w-4 h-4 ${activeMode === 'certificate' ? 'text-indigo-400' : 'text-slate-500'}`} />
                     {activeMode === 'certificate' && <Check className="w-3.5 h-3.5 text-indigo-400" />}
                   </div>
-                  <span className="text-xs font-bold">3. Sceau d'Autorité</span>
-                  <span className="text-[10px] text-slate-400">Direction & RH certifiés</span>
+                  <span className="text-xs font-bold">3. Visa d'entreprise</span>
+                  <span className="text-[10px] text-slate-400">Cachet au nom de l'organisation</span>
                 </button>
               </div>
             </div>
@@ -775,9 +836,9 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                     <Award className="w-6 h-6 text-amber-400" />
                   </div>
                   <div>
-                    <h5 className="font-bold text-white text-xs">Sceau d'Entreprise Direction & RH RDC</h5>
+                    <h5 className="font-bold text-white text-xs">Visa électronique de l'organisation</h5>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      Génère un tampon probant avec les identifiants fiscaux RCCM, Id.Nat et le certificat d'accréditation de {currentUser.name}.
+                      Génère un cachet au nom de l'organisation, avec le nom du signataire ({currentUser.name}), la date et l'empreinte du document.
                     </p>
                   </div>
                 </div>
@@ -792,8 +853,8 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                     <span className="text-emerald-400">{currentUser.name} ({currentUser.roleTitle})</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Standard de chiffrement :</span>
-                    <span className="text-indigo-400">RSA-4096 / SHA-256 Scellé</span>
+                    <span className="text-slate-500">Intégrité :</span>
+                    <span className="text-indigo-400">Empreinte SHA-256 du contenu</span>
                   </div>
                 </div>
               </div>
@@ -809,26 +870,29 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                   className="mt-0.5 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 bg-slate-950"
                 />
                 <span className="text-[11px] text-slate-300 leading-relaxed">
-                  J'atteste sur l'honneur être <strong>{currentUser.name}</strong>, dûment habilité(e) en qualité de <strong>{currentUser.roleTitle}</strong>, et j'appose ma signature électronique avec pleine valeur probante et force exécutoire conformément à la loi RDC sur les transactions électroniques.
+                  J'atteste être <strong>{currentUser.name}</strong>, habilité(e) en qualité de <strong>{currentUser.roleTitle}</strong>, et je signe électroniquement ce document. Il s'agit d'une signature électronique simple (identité confirmée par mot de passe, empreinte SHA-256 du contenu), et non d'une signature qualifiée délivrée par un prestataire agréé.
                 </span>
               </label>
 
-              <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/80 text-xs">
-                <div className="flex items-center gap-2">
+              <div className="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/80 text-xs space-y-1.5">
+                <label htmlFor="signature-password" className="flex items-center gap-2 text-slate-300 text-[11px] font-semibold">
                   <Key className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-slate-400 text-[11px]">Code PIN de confirmation rapide :</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    maxLength={6}
-                    value={pinInput}
-                    onChange={e => setPinInput(e.target.value)}
-                    placeholder="PIN"
-                    className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-mono text-xs text-white focus:outline-none focus:border-emerald-500 tracking-widest"
-                  />
-                  <span className="text-[10px] text-slate-500 font-mono">(défaut: 2026)</span>
-                </div>
+                  Confirmez votre identité avec votre mot de passe
+                </label>
+                <input
+                  id="signature-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={e => { setPassword(e.target.value); setAuthError(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter') void handleStartVerification(); }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+                {authError && (
+                  <p role="alert" className="text-[11px] text-rose-300 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {authError}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -844,16 +908,16 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
 
               <button
                 type="button"
-                disabled={!legalConsent || (activeMode === 'draw' && !hasDrawn)}
-                onClick={handleStartVerification}
+                disabled={!legalConsent || !password || isChecking || (activeMode === 'draw' && !hasDrawn)}
+                onClick={() => void handleStartVerification()}
                 className={`px-5 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 shadow-lg transition active:scale-95 ${
-                  legalConsent && (activeMode !== 'draw' || hasDrawn)
+                  legalConsent && password && !isChecking && (activeMode !== 'draw' || hasDrawn)
                     ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30'
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                 }`}
               >
                 <Lock className="w-3.5 h-3.5" />
-                <span>Lancer la Vérification & Apposer la Signature</span>
+                <span>{isChecking ? 'Vérification…' : 'Vérifier et signer'}</span>
               </button>
             </div>
           </div>

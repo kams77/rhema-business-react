@@ -62,7 +62,24 @@ Dans les deux modes :
 
 > Le chiffrement du navigateur (Web Crypto) exige une connexion **HTTPS** ou `http://localhost`.
 
-## Données et sauvegardes
+## Deux façons de stocker les données
+
+| | **Mode navigateur** (`VITE_BACKEND=local`, défaut) | **Mode serveur** (`VITE_BACKEND=api`) |
+|---|---|---|
+| Où sont les données | Dans le navigateur de chaque poste | Base **MariaDB / MySQL** sur votre serveur |
+| Partage entre collègues | ❌ | ✅ tout le monde voit les mêmes données |
+| Connexion | Vérifiée dans le navigateur | Vérifiée par le serveur (cookie sécurisé) |
+| Installation | Hébergement statique (Cloudflare Pages…) | Docker : `docker compose up -d --build` |
+| Guide | [docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md) | [docs/SYNOLOGY.md](docs/SYNOLOGY.md) |
+
+En mode serveur, deux personnes peuvent modifier le même module en même temps : leurs
+changements sont **fusionnés automatiquement**, et chacun voit ceux des autres en moins de 20 secondes.
+
+Pour essayer le serveur sans base de données : `npm run build` puis `npm run server:memoire` (ouvrir http://localhost:8080)
+(données perdues à l'arrêt, code d'installation : `essai`), avec `VITE_BACKEND=api` dans `.env`
+avant la compilation.
+
+## Données et sauvegardes (mode navigateur)
 
 Les données sont enregistrées **dans le navigateur** (`localStorage`, clés `rhema:v1:*`) :
 elles survivent au rechargement mais ne sont **pas partagées** entre ordinateurs ni navigateurs.
@@ -78,11 +95,11 @@ exportez une sauvegarde puis supprimez les documents volumineux (logos, scans).
 
 ## ⚠️ Limites actuelles
 
-Cette version fonctionne **entièrement côté navigateur**, sans serveur ni base de données.
-Elle convient à une démonstration ou à un poste unique. Pour un usage réel à plusieurs postes,
-il faut ajouter un backend (par exemple l'API Laravel décrite dans l'onglet « Laravel ») qui
-assure l'authentification, les droits d'accès et le stockage partagé : dans le navigateur, un
-utilisateur averti peut toujours lire ou modifier les données locales.
+- **Mode navigateur** : les données restent sur chaque poste ; un utilisateur averti peut lire ou
+  modifier le stockage local. Convient à une démonstration ou à un poste unique.
+- **Mode serveur (étape 1)** : les comptes et le journal sont dans de vraies tables ; les autres
+  modules sont enregistrés module par module (colonne JSON versionnée). Prochaine étape : des
+  tables détaillées par module (contrats, bulletins, factures, stocks…).
 
 ## Structure du projet
 
@@ -94,13 +111,25 @@ src/
 ├── components/             # Écrans et fenêtres (un fichier par module)
 │   ├── logistics/          # Onglets du module logistique
 │   └── invitations/        # Invitations inter-entités
-├── data/                   # Données de démonstration
+├── data/                   # Données de démonstration (mode navigateur)
 ├── hooks/
 │   └── usePersistentState.ts   # useState enregistré dans le navigateur
 ├── lib/
-│   ├── auth.ts             # Hachage des mots de passe, session
-│   └── storage.ts          # Stockage local, export / import de sauvegarde
+│   ├── auth.ts             # Hachage des mots de passe, session (mode navigateur)
+│   ├── storage.ts          # Stockage local, export / import de sauvegarde
+│   ├── api.ts              # Appels au serveur (mode serveur)
+│   ├── remoteStore.ts      # Synchronisation des données avec le serveur
+│   └── merge.ts            # Fusion des modifications simultanées
 └── utils/                  # Droits (rbac), exports PDF/CSV, identifiants
+server/                     # Serveur Node.js (API + MariaDB/MySQL)
+├── index.mjs               # Démarrage et configuration (variables d'environnement)
+├── app.mjs                 # Routes : connexion, données, installation, sauvegarde
+├── auth.mjs                # Mots de passe et sessions
+├── db-mysql.mjs            # Tables et requêtes MariaDB / MySQL
+├── db-memory.mjs           # Stockage en mémoire (essais, tests)
+├── Dockerfile              # Image du serveur
+└── tests/api.test.mjs      # Tests de l'API
+docker-compose.yml          # Application + MariaDB (Synology, serveur Linux)
 ```
 
 ## Déploiement
