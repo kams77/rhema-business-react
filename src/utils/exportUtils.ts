@@ -2,6 +2,14 @@
 import { jsPDF } from 'jspdf';
 import type { AuditLog, Organization, EmployeeContract, User, PayrollRunPeriod, DocumentItem } from '../types';
 
+/** Ligne détaillée d'un bulletin (gain, retenue ou charge patronale). */
+export interface PayslipExportLine {
+  label: string;
+  base: string;
+  rate?: number;
+  amount: number;
+}
+
 export interface PayslipExportData {
   orgName: string;
   rccm?: string;
@@ -36,8 +44,16 @@ export interface PayslipExportData {
   employerINPP: number;
   employerONEM: number;
   totalEmployerCost: number;
+  /** Empreinte SHA-256 réelle du contenu (voir src/lib/payslipDocument.ts). */
   sha256Hash?: string;
+  /** Lignes détaillées calculées par le moteur de paie (prioritaires sur les totaux ci-dessus). */
+  earnings?: PayslipExportLine[];
+  deductions?: PayslipExportLine[];
+  employerLines?: PayslipExportLine[];
 }
+
+/** Valeur affichée quand une information n'est pas renseignée (jamais de valeur inventée). */
+const orNA = (v?: string) => (v && v.trim() ? v : 'Non renseigné');
 
 /**
  * Téléchargement helper pour fichiers texte / CSV avec encodage UTF-8 BOM
@@ -248,8 +264,8 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(203, 213, 225);
-  doc.text('Télécoms • VSAT • Réseaux & Intégration Technologique • Kinshasa - RD CONGO', margin + 25, currentY + 15);
-  doc.text(`RCCM: ${data.rccm || 'CD/KNG/RCCM/20-A-01120'} | ID.NAT: ${data.idNat || '01-83-N45201L'} | N° IMPÔT: ${data.numImpot || 'A1934892Z'}`, margin + 25, currentY + 19.5);
+  doc.text(orNA(data.headquarters), margin + 25, currentY + 15);
+  doc.text(`RCCM: ${orNA(data.rccm)} | ID.NAT: ${orNA(data.idNat)} | N° IMPÔT: ${orNA(data.numImpot)}`, margin + 25, currentY + 19.5);
 
   currentY += 28;
 
@@ -316,7 +332,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 
   doc.text(`N° CNSS : `, margin + 4, currentY + 27);
   doc.setFont('courier', 'bold');
-  doc.text(data.cnssNumber || 'CNSS-CD-9982410', margin + 30, currentY + 27);
+  doc.text(orNA(data.cnssNumber), margin + 30, currentY + 27);
 
   // Right Box: Période & Modalités
   const rightX = margin + colWidth + 4;
@@ -340,10 +356,10 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.text(data.date, rightX + 32, currentY + 17);
 
   doc.text(`Banque / Compte : `, rightX + 4, currentY + 22);
-  doc.text(`${data.bankName || 'Rawbank'} (${data.accountNumber || 'Compte Entreprise'})`, rightX + 32, currentY + 22);
+  doc.text(`${orNA(data.bankName)} (${orNA(data.accountNumber)})`, rightX + 32, currentY + 22);
 
   doc.text(`Charges familiales : `, rightX + 4, currentY + 27);
-  doc.text(`${data.dependents || 0} enfant(s) à charge (${data.seniorityYears || 1} an(s) d'ancienneté)`, rightX + 32, currentY + 27);
+  doc.text(`${data.dependents || 0} enfant(s) à charge (${data.seniorityYears || 0} an(s) d'ancienneté)`, rightX + 32, currentY + 27);
 
   currentY += 36;
 
@@ -363,15 +379,21 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 
   const fmt = (num: number) => num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const tableRows = [
-    { label: 'Salaire de base conventionnel', base: '100% contractuel', gain: fmt(data.baseSalary), ded: '-' },
-    ...(data.seniorityBonus && data.seniorityBonus > 0 ? [{ label: `Prime d'ancienneté (${data.seniorityYears} ans)`, base: 'Barème légal', gain: fmt(data.seniorityBonus), ded: '-' }] : []),
-    ...(data.allowances && data.allowances > 0 ? [{ label: 'Indemnités conventionnelles (Logement/Transport)', base: 'Montant forfaitaire', gain: fmt(data.allowances), ded: '-' }] : []),
-    ...(data.overtimeAmount && data.overtimeAmount > 0 ? [{ label: 'Heures supplémentaires majorées (RDC)', base: 'Conforme art. 119 CT', gain: fmt(data.overtimeAmount), ded: '-' }] : []),
-    { label: 'Cotisation CNSS Salarié (Pensions, Risques, Famille)', base: '5.0% sur brut taxable', gain: '-', ded: fmt(data.socialDeductionCNSS) },
-    { label: 'IPR - Impôt Professionnel sur les Rémunérations (DGI)', base: 'Barème progressif 3% à 40%', gain: '-', ded: fmt(data.taxDeductionIPR) },
-    ...(data.advanceDeduction && data.advanceDeduction > 0 ? [{ label: 'Remboursement acompte sur salaire quinzaine', base: 'Retenue directe', gain: '-', ded: fmt(data.advanceDeduction) }] : []),
-  ];
+  // Lignes détaillées du moteur de paie (taux réellement appliqués) ; ancien format en secours.
+  const tableRows = data.earnings && data.deductions
+    ? [
+        ...data.earnings.map(l => ({ label: l.label, base: l.base, gain: fmt(l.amount), ded: '-' })),
+        ...data.deductions.map(l => ({ label: l.label, base: l.base, gain: '-', ded: fmt(l.amount) })),
+      ]
+    : [
+        { label: 'Salaire de base', base: 'Contrat', gain: fmt(data.baseSalary), ded: '-' },
+        ...(data.seniorityBonus && data.seniorityBonus > 0 ? [{ label: `Prime d'ancienneté (${data.seniorityYears} ans)`, base: 'Configuration', gain: fmt(data.seniorityBonus), ded: '-' }] : []),
+        ...(data.allowances && data.allowances > 0 ? [{ label: 'Primes et indemnités', base: 'Configuration', gain: fmt(data.allowances), ded: '-' }] : []),
+        ...(data.overtimeAmount && data.overtimeAmount > 0 ? [{ label: 'Heures supplémentaires', base: 'Majorations configurées', gain: fmt(data.overtimeAmount), ded: '-' }] : []),
+        { label: 'Cotisations sociales salariales', base: 'Taux configurés', gain: '-', ded: fmt(data.socialDeductionCNSS) },
+        { label: 'Impôt sur les rémunérations', base: 'Barème configuré', gain: '-', ded: fmt(data.taxDeductionIPR) },
+        ...(data.advanceDeduction && data.advanceDeduction > 0 ? [{ label: 'Remboursement d\'avance', base: 'Avance validée', gain: '-', ded: fmt(data.advanceDeduction) }] : []),
+      ];
 
   tableRows.forEach((r, idx) => {
     if (idx % 2 === 0) {
@@ -381,9 +403,11 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(15, 23, 42);
-    doc.text(r.label, margin + 4, currentY + 4.5);
+    doc.text(doc.splitTextToSize(r.label, 86)[0] || '', margin + 4, currentY + 4.5);
     doc.setTextColor(100, 116, 139);
-    doc.text(r.base, margin + 92, currentY + 4.5);
+    doc.setFontSize(6.5);
+    doc.text(doc.splitTextToSize(r.base, 29)[0] || '', margin + 92, currentY + 4.5);
+    doc.setFontSize(7.5);
 
     if (r.gain !== '-') {
       doc.setFont('courier', 'bold');
@@ -419,14 +443,14 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(15, 23, 42);
-  doc.text(`TOTAL SALAIRE BRUT IMPOSABLE :`, margin + 4, currentY + 5.5);
+  doc.text(`TOTAL SALAIRE BRUT :`, margin + 4, currentY + 5.5);
   doc.setFont('courier', 'bold');
   doc.setTextColor(79, 70, 229);
   doc.text(`${fmt(data.grossSalary)} ${data.currency}`, margin + 64, currentY + 5.5);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`TOTAL RETENUES (CNSS + IPR) :`, margin + 4, currentY + 10.5);
+  doc.text(`TOTAL RETENUES :`, margin + 4, currentY + 10.5);
   doc.setFont('courier', 'bold');
   doc.setTextColor(225, 29, 72);
   doc.text(`-${fmt(data.totalDeductions)} ${data.currency}`, margin + 64, currentY + 10.5);
@@ -455,14 +479,16 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105);
-  doc.text('CHARGES PATRONALES OBLIGATOIRES EN RDC (HORS SALAIRE NET) :', margin + 4, currentY + 5);
+  doc.text('CHARGES PATRONALES (HORS SALAIRE NET) :', margin + 4, currentY + 5);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(51, 65, 85);
-  doc.text(`• CNSS Patronale (13%) : ${fmt(data.employerCNSS)} ${data.currency}`, margin + 4, currentY + 10);
-  doc.text(`• INPP (3%) : ${fmt(data.employerINPP)} ${data.currency}`, margin + 62, currentY + 10);
-  doc.text(`• ONEM (0.2%) : ${fmt(data.employerONEM)} ${data.currency}`, margin + 112, currentY + 10);
+  const employerText = (data.employerLines && data.employerLines.length
+    ? data.employerLines.map(l => `${l.label.split(' - ')[0].split(' (')[0]} (${l.rate ?? ''} %) : ${fmt(l.amount)}`)
+    : [`Cotisations patronales : ${fmt(data.totalEmployerCost - data.grossSalary)}`]
+  ).join('  •  ');
+  doc.text(doc.splitTextToSize(employerText, pageWidth - margin * 2 - 8)[0] || '', margin + 4, currentY + 10);
   doc.setFont('helvetica', 'bold');
   doc.text(`COÛT GLOBAL SALARIAL : ${fmt(data.totalEmployerCost)} ${data.currency}`, margin + 4, currentY + 14);
 
@@ -494,7 +520,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.text(
     isSpecimen 
       ? 'Épreuve d\'essai non négociable - Aucun droit au paiement' 
-      : 'Signature certifiée & scellée électroniquement', 
+      : 'Signature et cachet de l\'employeur', 
     margin + 6, 
     currentY + 12
   );
@@ -510,8 +536,8 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.setTextColor(isSpecimen ? 217 : 79, isSpecimen ? 119 : 70, isSpecimen ? 6 : 229);
   doc.text(
     isSpecimen 
-      ? `SPÉCIMEN-HASH: TEST-${data.matricule}-${Date.now().toString(36)}` 
-      : `HASH: ${data.sha256Hash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}`, 
+      ? 'SPÉCIMEN : document sans valeur' 
+      : (data.sha256Hash ? `Empreinte SHA-256 du contenu : ${data.sha256Hash.slice(0, 32)}…` : ''), 
     margin + 6, 
     currentY + 22
   );
@@ -540,8 +566,8 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   doc.setTextColor(148, 163, 184);
   doc.text(
     isSpecimen 
-      ? `${data.orgName} • SPÉCIMEN RH • Conformité Code du Travail RDC (Loi n° 16/010) • Document de test` 
-      : `${data.orgName} • Conformité Code du Travail RDC (Loi n° 16/010) • Bulletin scellé pour archivage légal d'entreprise`, 
+      ? `${data.orgName} • SPÉCIMEN • Document de test sans valeur` 
+      : `${data.orgName} • Bulletin de paie • Calculé selon les paramètres de paie de l'organisation`, 
     margin, 
     footerY + 2
   );
@@ -552,36 +578,34 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 }
 
 export function exportPayslipToCSV(data: PayslipExportData, filename?: string) {
+  const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const row = (...cells: unknown[]) => cells.map(q).join(';');
   const lines = [
-    `ORGANISATION;${data.orgName}`,
-    `RCCM;${data.rccm || 'CD/KNG/RCCM/20-A-01120'}`,
-    `ID. NAT;${data.idNat || '01-83-N45201L'}`,
-    `N° IMPÔT;${data.numImpot || 'A1934892Z'}`,
-    `RÉFÉRENCE BULLETIN;${data.ref}`,
-    `PÉRIODE;${data.period}`,
-    `DATE D'ÉMISSION;${data.date}`,
-    `SALARIÉ;${data.employeeName}`,
-    `MATRICULE;${data.matricule}`,
-    `FONCTION;${data.roleTitle}`,
-    `N° CNSS;${data.cnssNumber || 'CNSS-CD-9982410'}`,
-    `BANQUE;${data.bankName || 'Rawbank'}`,
-    `COMPTE;${data.accountNumber || 'Compte Virement'}`,
-    `DEVISE;${data.currency}`,
-    `SALAIRE DE BASE;${data.baseSalary}`,
-    `PRIME D'ANCIENNETÉ;${data.seniorityBonus || 0}`,
-    `INDEMNITÉS;${data.allowances || 0}`,
-    `HEURES SUPPLÉMENTAIRES;${data.overtimeAmount || 0}`,
-    `SALAIRE BRUT TOTAL;${data.grossSalary}`,
-    `COTISATION CNSS SALARIÉ (5%);-${data.socialDeductionCNSS}`,
-    `IPR DGI RETENUE;-${data.taxDeductionIPR}`,
-    `ACOMPTE DÉDUIT;-${data.advanceDeduction || 0}`,
-    `TOTAL DÉDUCTIONS;-${data.totalDeductions}`,
-    `NET À PAYER;${data.netSalary}`,
-    `CNSS PATRONALE (13%);${data.employerCNSS}`,
-    `INPP PATRONAL (3%);${data.employerINPP}`,
-    `ONEM PATRONAL (0.2%);${data.employerONEM}`,
-    `COÛT GLOBAL ENTREPRISE;${data.totalEmployerCost}`,
-    `EMPREINTE SHA-256;${data.sha256Hash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}`
+    row('ORGANISATION', data.orgName),
+    row('RCCM', orNA(data.rccm)),
+    row('ID. NAT', orNA(data.idNat)),
+    row('N° IMPÔT', orNA(data.numImpot)),
+    row('RÉFÉRENCE BULLETIN', data.ref),
+    row('PÉRIODE', data.period),
+    row("DATE D'ÉMISSION", data.date),
+    row('SALARIÉ', data.employeeName),
+    row('MATRICULE', data.matricule),
+    row('FONCTION', data.roleTitle),
+    row('N° CNSS', orNA(data.cnssNumber)),
+    row('BANQUE', orNA(data.bankName)),
+    row('COMPTE', orNA(data.accountNumber)),
+    row('DEVISE', data.currency),
+    '',
+    row('RUBRIQUE', 'BASE / TAUX', 'GAIN', 'RETENUE', 'CHARGE PATRONALE'),
+    ...(data.earnings || []).map(l => row(l.label, l.base, l.amount, '', '')),
+    ...(data.deductions || []).map(l => row(l.label, l.base, '', l.amount, '')),
+    ...(data.employerLines || []).map(l => row(l.label, l.base, '', '', l.amount)),
+    '',
+    row('SALAIRE BRUT', data.grossSalary),
+    row('TOTAL RETENUES', data.totalDeductions),
+    row('NET À PAYER', data.netSalary),
+    row('COÛT TOTAL EMPLOYEUR', data.totalEmployerCost),
+    row('EMPREINTE SHA-256 DU CONTENU', data.sha256Hash || ''),
   ];
 
   const targetName = filename || `bulletin_paie_${data.matricule}_${data.period.replace(/\s+/g, '_')}.csv`;
@@ -592,106 +616,64 @@ export function exportPayslipToCSV(data: PayslipExportData, filename?: string) {
 // 3. EXPORT DU LIVRE DE PAIE MENSUEL DE TOUS LES SALARIÉS (CSV & PDF)
 // ============================================================================
 
-export function exportPayrollRunToCSV(
-  run: PayrollRunPeriod,
-  contracts: EmployeeContract[],
-  users: User[],
-  filename?: string
-) {
-  const headers = [
-    'Période',
-    'Matricule',
-    'Nom & Postnom',
-    'Fonction',
-    'Type Contrat',
-    'Devise',
-    'Salaire Base',
-    'Indemnités',
-    'Salaire Brut',
-    'Cotisation CNSS (5%)',
-    'IPR Déduit (DGI)',
-    'Salaire Net Payé',
-    'CNSS Patronale (13%)',
-    'INPP (3%)',
-    'ONEM (0.2%)',
-    'Coût Total Employeur',
-    'Mode Règlement',
-    'Banque / Numéro'
-  ];
-
-  const rows = contracts.map(c => {
-    const user = users.find(u => u.id === c.userId);
-    const gross = c.baseSalary + 100;
-    const cnssSal = gross * 0.05;
-    const ipr = (gross - cnssSal) * 0.15;
-    const net = gross - cnssSal - ipr;
-    const cnssPat = gross * 0.13;
-    const inpp = gross * 0.03;
-    const onem = gross * 0.002;
-    const totalCost = gross + cnssPat + inpp + onem;
-
-    return [
-      `"${run.month}"`,
-      `"${c.matricule}"`,
-      `"${user?.name || c.employeeCode}"`,
-      `"${user?.roleTitle || c.categoryPro}"`,
-      `"${c.contractType}"`,
-      `"${c.salaryCurrency}"`,
-      c.baseSalary,
-      100,
-      gross,
-      cnssSal.toFixed(2),
-      ipr.toFixed(2),
-      net.toFixed(2),
-      cnssPat.toFixed(2),
-      inpp.toFixed(2),
-      onem.toFixed(2),
-      totalCost.toFixed(2),
-      `"${c.paymentMode}"`,
-      `"${c.bankName} - ${c.bankAccountNumber}"`
-    ];
-  });
-
-  const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\r\n');
-  const targetName = filename || `livre_paie_mensuel_${run.month}.csv`;
-  downloadBlob(csv, targetName);
+/** Ligne du livre de paie : contrat, salarié et bulletin calculé par le moteur de paie. */
+export interface PayrollBookRow {
+  contract: EmployeeContract;
+  user?: User;
+  payslip: {
+    currency: string;
+    baseSalary: number;
+    totalAllowances: number;
+    seniorityBonus: number;
+    overtimeAmount: number;
+    grossSalary: number;
+    totalEmployeeContributions: number;
+    totalTaxes: number;
+    advanceDeduction: number;
+    netSalary: number;
+    totalEmployerContributions: number;
+    totalEmployerCost: number;
+  };
 }
 
-export function exportPayrollRunToPDF(
-  run: PayrollRunPeriod,
-  contracts: EmployeeContract[],
-  users: User[],
-  org: Organization,
-  filename?: string
-) {
-  const doc = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4',
-  });
+export function exportPayrollRunToCSV(run: PayrollRunPeriod, rows: PayrollBookRow[], filename?: string) {
+  const q = (v: unknown) => (typeof v === 'number' ? String(v) : `"${String(v ?? '').replace(/"/g, '""')}"`);
+  const headers = [
+    'Période', 'Matricule', 'Nom & Postnom', 'Fonction', 'Type Contrat', 'Devise', 'Salaire Base',
+    'Ancienneté', 'Primes & indemnités', 'Heures sup.', 'Salaire Brut', 'Cotisations salariales',
+    'Impôt', 'Avances', 'Net à payer', 'Charges patronales', 'Coût Total Employeur', 'Mode Règlement', 'Banque / Numéro',
+  ];
+  const lines = rows.map(({ contract: c, user, payslip: p }) =>
+    [
+      run.month, c.matricule, user?.name || c.employeeCode, user?.roleTitle || c.categoryPro, c.contractType, p.currency,
+      p.baseSalary, p.seniorityBonus, p.totalAllowances, p.overtimeAmount, p.grossSalary, p.totalEmployeeContributions,
+      p.totalTaxes, p.advanceDeduction, p.netSalary, p.totalEmployerContributions, p.totalEmployerCost,
+      c.paymentMode, [c.bankName, c.bankAccountNumber].filter(Boolean).join(' - '),
+    ].map(q).join(';')
+  );
+  const csv = [headers.map(q).join(';'), ...lines].join('\r\n');
+  downloadBlob(csv, filename || `livre_paie_mensuel_${run.month}.csv`);
+}
 
+export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRow[], org: Organization, filename?: string) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 12;
   let currentY = 14;
 
-  // Header
   doc.setFillColor(15, 23, 42);
   doc.rect(margin, currentY, pageWidth - margin * 2, 22, 'F');
-
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(255, 255, 255);
-  doc.text(`${org.name.toUpperCase()} - ÉTAT RÉCAPITULATIF DE LA PAIE (${run.month})`, margin + 6, currentY + 9);
-
+  doc.text(`${org.name.toUpperCase()} - LIVRE DE PAIE (${run.month})`, margin + 6, currentY + 9);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(203, 213, 225);
-  doc.text(`Statut : ${run.status.toUpperCase()} • Effectifs : ${contracts.length} agents • Scellé SHA-256 : ${run.hash || 'sha256-rb-run'} • Conforme Code du Travail RDC`, margin + 6, currentY + 16);
-
+  doc.text(`Statut : ${run.status.toUpperCase()} • Effectif : ${rows.length} • Calculé selon les paramètres de paie de l'organisation`, margin + 6, currentY + 16);
   currentY += 28;
 
-  // Table header
   const drawHeader = () => {
     doc.setFillColor(30, 41, 59);
     doc.rect(margin, currentY, pageWidth - margin * 2, 7, 'F');
@@ -702,80 +684,61 @@ export function exportPayrollRunToPDF(
     doc.text('COLLABORATEUR & FONCTION', margin + 30, currentY + 4.8);
     doc.text('SALAIRE BASE', margin + 98, currentY + 4.8);
     doc.text('SALAIRE BRUT', margin + 128, currentY + 4.8);
-    doc.text('CNSS SAL. (5%)', margin + 158, currentY + 4.8);
-    doc.text('IPR DGI', margin + 188, currentY + 4.8);
+    doc.text('COTIS. SAL.', margin + 158, currentY + 4.8);
+    doc.text('IMPÔT', margin + 188, currentY + 4.8);
     doc.text('NET À PAYER', margin + 215, currentY + 4.8);
     doc.text('CHARGES PATR.', margin + 245, currentY + 4.8);
     currentY += 8;
   };
-
   drawHeader();
 
-  contracts.forEach((c, idx) => {
+  const f = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  rows.forEach(({ contract: c, user, payslip: p }, idx) => {
     if (currentY > pageHeight - 20) {
       doc.addPage();
       currentY = 14;
       drawHeader();
     }
-
-    const user = users.find(u => u.id === c.userId);
-    const gross = c.baseSalary + 100;
-    const cnssSal = gross * 0.05;
-    const ipr = (gross - cnssSal) * 0.15;
-    const net = gross - cnssSal - ipr;
-    const employerTotal = gross * 0.162;
-
     if (idx % 2 === 0) {
       doc.setFillColor(248, 250, 252);
       doc.rect(margin, currentY, pageWidth - margin * 2, 7.5, 'F');
     }
-
     doc.setFontSize(7.5);
     doc.setFont('courier', 'bold');
     doc.setTextColor(79, 70, 229);
-    doc.text(c.matricule, margin + 2, currentY + 5);
-
+    doc.text(c.matricule || '', margin + 2, currentY + 5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(15, 23, 42);
-    doc.text(doc.splitTextToSize(user?.name || c.employeeCode, 65)[0] || '', margin + 30, currentY + 4);
+    doc.text(doc.splitTextToSize(user?.name || c.employeeCode || '', 65)[0] || '', margin + 30, currentY + 4);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
     doc.setTextColor(100, 116, 139);
-    doc.text(doc.splitTextToSize(user?.roleTitle || c.categoryPro, 65)[0] || '', margin + 30, currentY + 6.8);
-
+    doc.text(doc.splitTextToSize(user?.roleTitle || c.categoryPro || '', 65)[0] || '', margin + 30, currentY + 6.8);
     doc.setFontSize(7.5);
     doc.setFont('courier', 'normal');
     doc.setTextColor(30, 41, 59);
-    doc.text(`${c.baseSalary.toLocaleString()} ${c.salaryCurrency}`, margin + 98, currentY + 5);
-    doc.text(`${gross.toLocaleString()} ${c.salaryCurrency}`, margin + 128, currentY + 5);
-
+    doc.text(`${f(p.baseSalary)} ${p.currency}`, margin + 98, currentY + 5);
+    doc.text(`${f(p.grossSalary)} ${p.currency}`, margin + 128, currentY + 5);
     doc.setTextColor(225, 29, 72);
-    doc.text(`-${cnssSal.toFixed(0)}`, margin + 158, currentY + 5);
-    doc.text(`-${ipr.toFixed(0)}`, margin + 188, currentY + 5);
-
+    doc.text(`-${f(p.totalEmployeeContributions)}`, margin + 158, currentY + 5);
+    doc.text(`-${f(p.totalTaxes)}`, margin + 188, currentY + 5);
     doc.setFont('courier', 'bold');
     doc.setTextColor(16, 185, 129);
-    doc.text(`${net.toFixed(0)} ${c.salaryCurrency}`, margin + 215, currentY + 5);
-
+    doc.text(`${f(p.netSalary)} ${p.currency}`, margin + 215, currentY + 5);
     doc.setFont('courier', 'normal');
     doc.setTextColor(71, 85, 105);
-    doc.text(`+${employerTotal.toFixed(0)}`, margin + 245, currentY + 5);
-
+    doc.text(`+${f(p.totalEmployerContributions)}`, margin + 245, currentY + 5);
     currentY += 8;
   });
 
-  // Total summary footer
   currentY = Math.min(currentY + 6, pageHeight - 14);
   doc.setDrawColor(203, 213, 225);
   doc.line(margin, currentY, pageWidth - margin, currentY);
-
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(`Archivage certifié conforme • ${org.name} • Période ${run.month} • Visa Direction Générale & DRH`, margin, currentY + 4.5);
-
-  const targetName = filename || `livre_paie_officiel_${run.month}.pdf`;
-  doc.save(targetName);
+  doc.text(`${org.name} • Période ${run.month} • Édité le ${new Date().toLocaleDateString('fr-FR')}`, margin, currentY + 4.5);
+  doc.save(filename || `livre_paie_${run.month}.pdf`);
 }
 
 // ============================================================================
@@ -796,7 +759,7 @@ export function exportOfficialDocumentToCSV(docItem: DocumentItem, orgName = 'RH
     `DESCRIPTION;${docItem.description || ''}`,
     `SIGNATAIRE ÉLECTRONIQUE;${docItem.electronicSignature?.signedBy || 'En attente'}`,
     `HORODATAGE SIGNATURE;${docItem.electronicSignature?.signedAt || 'N/A'}`,
-    `EMPREINTE SHA-256;${docItem.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}`
+    `EMPREINTE SHA-256;${docItem.electronicSignature?.certificateHash || 'Non signé'}`
   ];
 
   const targetName = `${docItem.referenceNumber}_archivage.csv`;
@@ -838,7 +801,7 @@ export function exportOfficialDocumentToPDF(
   doc.setFontSize(7.5);
   doc.setTextColor(203, 213, 225);
   doc.text('Document Officiel Numérique • République Démocratique du Congo', margin + 25, currentY + 15);
-  doc.text(`RCCM: ${org.rccm || 'CD/KNG/RCCM/20-A-01120'} | ID.NAT: ${org.idNat || '01-83-N45201L'} | N° IMPÔT: ${org.numImpot || 'A1934892Z'}`, margin + 25, currentY + 19.5);
+  doc.text(`RCCM: ${orNA(org.rccm || org.registrationNumber)} | ID.NAT: ${orNA(org.idNat)} | N° IMPÔT: ${orNA(org.numImpot)}`, margin + 25, currentY + 19.5);
 
   currentY += 30;
 
@@ -925,7 +888,7 @@ export function exportOfficialDocumentToPDF(
 
   doc.setFont('courier', 'bold');
   doc.setTextColor(79, 70, 229);
-  doc.text(`EMPREINTE CRYPTOGRAPHIQUE : ${docItem.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}`, margin + 6, currentY + 23);
+  doc.text(`EMPREINTE SHA-256 : ${docItem.electronicSignature?.certificateHash || 'Document non signé'}`, margin + 6, currentY + 23);
 
   // Inclusion de l'empreinte graphique de la signature si présente
   if (docItem.electronicSignature?.signatureImage) {
@@ -1003,7 +966,7 @@ export function exportApprovalSlipToPDF(
   doc.setFontSize(7.5);
   doc.setTextColor(203, 213, 225);
   doc.text('Portail Entreprise • Circuit de Visa & Approbations Hiérarchiques Multi-Niveaux', margin + 25, currentY + 15);
-  doc.text(`RCCM: ${org.rccm || 'CD/KNG/RCCM/20-A-01120'} | ID.NAT: ${org.idNat || '01-83-N45201L'} | Kinshasa - RD CONGO`, margin + 25, currentY + 19.5);
+  doc.text(`RCCM: ${orNA(org.rccm || org.registrationNumber)} | ID.NAT: ${orNA(org.idNat)} | ${orNA(org.headquarters)}`, margin + 25, currentY + 19.5);
 
   currentY += 30;
 
@@ -1138,7 +1101,7 @@ export function exportApprovalSlipToPDF(
   doc.setFont('courier', 'bold');
   doc.setTextColor(79, 70, 229);
   doc.text(
-    `EMPREINTE SÉCURISÉE : ${task.electronicSignature?.hash || `SHA256:wf-${task.id}-7f83b1657ff1fc53b92c451da`}`, 
+    `EMPREINTE SHA-256 : ${task.electronicSignature?.hash || 'Non signé'}`, 
     margin + 6, 
     currentY + 23
   );

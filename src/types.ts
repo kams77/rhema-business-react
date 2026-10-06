@@ -117,6 +117,8 @@ export interface DocumentItem {
   createdAt: string;
   status: 'brouillon' | 'en_revue' | 'approuve' | 'signe' | 'rejete';
   size: string;
+  /** Bulletin de paie : données complètes calculées par le moteur de paie (pour réimpression). */
+  payslipData?: import('./utils/exportUtils').PayslipExportData;
   fileType: string;
   targetEntityId?: string;
   targetEntityName?: string;
@@ -336,6 +338,11 @@ export interface PayrollRunPeriod {
   validatedAt?: string;
   closureHash?: string;
   hash?: string;
+  /** Prime exceptionnelle versée à tous pour la période (devise de la période). */
+  extraBonus?: number;
+  /** Qui a réellement validé / confirmé chaque étape (identifiant du compte). */
+  validatedByDRHUserId?: string;
+  bankTransferConfirmedByUserId?: string;
 }
 
 export interface PayrollAllowance {

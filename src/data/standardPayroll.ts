@@ -2,6 +2,7 @@
 // Paramétrage conforme au Code du Travail & Fiscalité RDC (CNSS, IPR, INPP, ONEM)
 // Devises autorisées : USD ($) et CDF (Franc Congolais) uniquement
 
+import { computePayslip } from '../lib/payroll';
 import type { 
   PayrollSystemConfig, 
   PayrollAllowance, 
@@ -144,7 +145,11 @@ export const STANDARD_SOCIAL_CONTRIBUTIONS: PayrollSocialContribution[] = [
 ];
 
 /**
- * Barème Fiscal IPR (Impôt Professionnel sur les Rémunérations - RDC)
+ * Barème fiscal par défaut (montants MENSUELS, dans la devise de la configuration).
+ *
+ * ⚠️ MODÈLE À FAIRE VALIDER : ces tranches sont un exemple de départ, pas le barème officiel.
+ * La fiscalité des salaires en RDC a été réformée (loi n° 23/053). Saisissez dans l'onglet
+ * « Barème Fiscal » les tranches, taux et abattements fournis par votre comptable.
  */
 export const STANDARD_TAX_BRACKETS: PayrollTaxBracket[] = [
   { id: 'tb-1', min: 0, max: 200, rate: 3 },     // 0 à 200 $ (ou équivalent CDF) -> 3%
@@ -234,134 +239,45 @@ export interface PayslipSimulationResult {
 }
 
 /**
- * Calcul précis du bulletin conforme RDC (USD ou CDF)
+ * Simulation d'un bulletin (écran « Simulateur ») : délègue au moteur unique src/lib/payroll.ts,
+ * utilisé aussi par les bulletins officiels et l'envoi mensuel.
  */
 export function calculatePayslipSimulation(
   config: PayrollSystemConfig,
   baseSalary: number = 1200,
   seniorityYears: number = 4,
-  dependentsCount: number = 2
+  dependentsCount: number = 2,
+  exchangeRate: number = DEFAULT_EXCHANGE_RATE_USD_CDF
 ): PayslipSimulationResult {
-  const safeBase = Math.max(0, baseSalary || 0);
-
-  // 1. Prime d'ancienneté (3% tous les 2 ans selon standard RDC)
-  const seniorityBonus = Math.round(
-    safeBase * (Math.floor((seniorityYears || 0) / 2) * ((config.seniorityBonusPerTwoYearsPercent || 3) / 100))
-  );
-
-  // 2. Primes actives
-  const activeAllowances = config.allowances
-    .filter(a => a.isActive)
-    .map(a => {
-      const amount = a.type === 'fixe' ? a.defaultValue : Math.round(safeBase * (a.defaultValue / 100));
-      return {
-        name: a.name,
-        code: a.code,
-        amount,
-        isTaxable: a.isTaxable,
-        isSubjectToSocial: a.isSubjectToSocialContributions,
-      };
-    });
-
-  const totalAllowances = activeAllowances.reduce((acc, curr) => acc + curr.amount, 0);
-  const grossSalary = safeBase + seniorityBonus + totalAllowances;
-
-  // Assiette cotisations sociales
-  const socialAllowancesTotal = activeAllowances
-    .filter(a => a.isSubjectToSocial)
-    .reduce((acc, curr) => acc + curr.amount, 0);
-  const grossSocialBase = safeBase + seniorityBonus + socialAllowancesTotal;
-
-  // 3. Cotisations sociales salariales (CNSS 5% + Mutuelle 2%)
-  const employeeContributions = config.socialContributions
-    .filter(sc => sc.isActive && sc.employeeRate > 0)
-    .map(sc => {
-      const base = sc.ceilingAmount ? Math.min(grossSocialBase, sc.ceilingAmount) : grossSocialBase;
-      const amount = Math.round(base * (sc.employeeRate / 100));
-      return {
-        name: sc.name,
-        code: sc.code,
-        rate: sc.employeeRate,
-        base,
-        amount,
-      };
-    });
-
-  const totalEmployeeContributions = employeeContributions.reduce((acc, c) => acc + c.amount, 0);
-
-  // Charges patronales (CNSS 13%, INPP 3%, ONEM 0.2%, Mutuelle 4%)
-  const employerContributions = config.socialContributions
-    .filter(sc => sc.isActive && sc.employerRate > 0)
-    .map(sc => {
-      const base = sc.ceilingAmount ? Math.min(grossSocialBase, sc.ceilingAmount) : grossSocialBase;
-      const amount = Math.round(base * (sc.employerRate / 100));
-      return {
-        name: sc.name,
-        code: sc.code,
-        rate: sc.employerRate,
-        base,
-        amount,
-      };
-    });
-
-  const totalEmployerContributions = employerContributions.reduce((acc, c) => acc + c.amount, 0);
-
-  // 4. Assiette Fiscale IPR
-  const taxableAllowancesTotal = activeAllowances
-    .filter(a => a.isTaxable)
-    .reduce((acc, curr) => acc + curr.amount, 0);
-
-  const grossTaxableSalary = safeBase + seniorityBonus + taxableAllowancesTotal;
-  const taxableNet = Math.max(0, grossTaxableSalary - totalEmployeeContributions);
-
-  // 5. Calcul IPR Barème progressif RDC
-  let iprTax = 0;
-  if (config.taxConfig.type === 'progressif') {
-    for (const bracket of config.taxConfig.brackets) {
-      if (taxableNet > bracket.min) {
-        const bracketCap = bracket.max !== null ? bracket.max : taxableNet;
-        const taxableAmountInBracket = Math.min(taxableNet, bracketCap) - bracket.min;
-        if (taxableAmountInBracket > 0) {
-          iprTax += Math.round(taxableAmountInBracket * (bracket.rate / 100));
-        }
-      }
-    }
-  } else {
-    iprTax = Math.round(taxableNet * ((config.taxConfig.flatRate || 15) / 100));
-  }
-
-  // Réduction pour enfants à charge
-  const dependentCredit = Math.min(iprTax, (dependentsCount || 0) * (config.taxConfig.creditPerDependentChild || 10));
-  iprTax = Math.max(0, iprTax - dependentCredit);
-
-  const localTax = config.taxConfig.localDevelopmentTax || 0;
-  const totalTaxes = iprTax + localTax;
-
-  // 6. Net à payer & Coût global employeur
-  const netPay = Math.max(0, grossSalary - totalEmployeeContributions - totalTaxes);
-  const totalEmployerCost = grossSalary + totalEmployerContributions;
-
+  const p = computePayslip({
+    config,
+    baseSalary,
+    currency: config.currency === 'CDF' ? 'CDF' : 'USD',
+    exchangeRate,
+    seniorityYears,
+    dependents: dependentsCount,
+  });
   return {
-    baseSalary: safeBase,
-    seniorityBonus,
-    activeAllowances,
-    grossSalary,
-    grossTaxableSalary,
-    grossSocialSalary: grossSocialBase,
-    employeeContributions,
-    totalEmployeeContributions,
-    employerContributions,
-    totalEmployerContributions,
-    taxableNet,
-    irppTax: iprTax,
-    dependentCredit,
-    localTax,
-    totalTaxes,
-    netPay,
-    netSalary: netPay,
-    socialDeductions: totalEmployeeContributions,
-    taxDeductions: totalTaxes,
-    totalEmployerCost,
+    baseSalary: p.baseSalary,
+    seniorityBonus: p.seniorityBonus,
+    activeAllowances: p.allowances,
+    grossSalary: p.grossSalary,
+    grossTaxableSalary: p.grossTaxableSalary,
+    grossSocialSalary: p.grossSocialSalary,
+    employeeContributions: p.employeeContributions,
+    totalEmployeeContributions: p.totalEmployeeContributions,
+    employerContributions: p.employerContributions,
+    totalEmployerContributions: p.totalEmployerContributions,
+    taxableNet: p.taxableNet,
+    irppTax: p.incomeTax,
+    dependentCredit: p.dependentCredit,
+    localTax: p.localTax,
+    totalTaxes: p.totalTaxes,
+    netPay: p.netSalary,
+    netSalary: p.netSalary,
+    socialDeductions: p.totalEmployeeContributions,
+    taxDeductions: p.totalTaxes,
+    totalEmployerCost: p.totalEmployerCost,
   };
 }
 
