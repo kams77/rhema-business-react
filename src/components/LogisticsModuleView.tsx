@@ -1,4 +1,5 @@
 // src/components/LogisticsModuleView.tsx
+import { contentHashSync } from '../lib/integrity';
 import React, { useState } from 'react';
 import type { 
   User, 
@@ -161,9 +162,10 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         signedBy: currentUser.name,
         signedAt: new Date().toISOString(),
         role: currentUser.roleTitle,
-        certificateHash: `sha256-cert-log-rdc-${Date.now()}`
+        certificateHash: ''
       }
     };
+    docItem.electronicSignature!.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
     setPrintableDoc(docItem);
     if (onLogAction) {
       onLogAction('Émission Rapport Logistique Certifié', `Document ${refNum} (${title}) imprimé.`, 'document');
@@ -261,9 +263,10 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         signedBy: currentUser.name,
         signedAt: new Date().toISOString(),
         role: currentUser.roleTitle,
-        certificateHash: `sha256-rhema-${Date.now()}-cert-conforme-rdc`
+        certificateHash: ''
       }
     };
+    docItem.electronicSignature!.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
 
     setPrintableDoc(docItem);
     if (onLogAction) {

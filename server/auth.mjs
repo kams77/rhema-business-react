@@ -69,3 +69,53 @@ export function safeEqualStrings(a, b) {
   const y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
+
+/** Sérialisation stable (clés triées), identique à src/lib/integrity.ts. */
+export function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value)
+    .filter(k => value[k] !== undefined)
+    .sort()
+    .map(k => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+    .join(',')}}`;
+}
+
+export const sha256 = text => crypto.createHash('sha256').update(String(text)).digest('hex');
+
+export const AUDIT_GENESIS = 'GENESIS';
+
+/** Empreinte chaînée d'une entrée de journal : SHA-256(empreinte précédente + contenu). */
+export function chainHash(prevHash, entry) {
+  const { hash: _h, prevHash: _p, ...content } = entry;
+  return sha256(`${prevHash}|${canonicalJson(content)}`);
+}
+
+/** Recalcule la chaîne d'empreintes d'une liste d'entrées (ordre chronologique). */
+export function rechain(entries, startHash = AUDIT_GENESIS) {
+  let prev = startHash;
+  return entries.map(e => {
+    const out = { ...e, prevHash: prev };
+    out.hash = chainHash(prev, out);
+    prev = out.hash;
+    return out;
+  });
+}
+
+/**
+ * Vérifie la chaîne (entrées du plus ancien au plus récent). Les entrées antérieures
+ * à la mise en place du chaînage (sans prevHash, en tête de journal) sont comptées à part.
+ */
+export function verifyChain(entries) {
+  let start = 0;
+  while (start < entries.length && typeof entries[start].prevHash !== 'string') start++;
+  let prev = AUDIT_GENESIS;
+  for (let i = start; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.prevHash !== prev || e.hash !== chainHash(prev, e)) {
+      return { ok: false, count: entries.length - start, legacy: start, brokenAt: i };
+    }
+    prev = e.hash;
+  }
+  return { ok: true, count: entries.length - start, legacy: start, lastHash: prev === AUDIT_GENESIS ? null : prev };
+}

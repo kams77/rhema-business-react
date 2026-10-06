@@ -19,6 +19,7 @@ RUN apk add --no-cache tzdata \
  && npm install mysql2@3 --no-audit --no-fund \
  && npm cache clean --force
 COPY server/*.mjs ./server/
+COPY shared/*.mjs ./shared/
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 8080

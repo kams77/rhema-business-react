@@ -303,6 +303,24 @@ export async function createMysqlDb(config) {
       const [rows] = await pool.query('SELECT entry FROM audit_logs ORDER BY seq DESC LIMIT ?', [limit]);
       return rows.map(r => JSON.parse(r.entry));
     },
+    async existingAuditIds(ids) {
+      const found = new Set();
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        if (!chunk.length) continue;
+        const [rows] = await pool.query('SELECT id FROM audit_logs WHERE id IN (?)', [chunk]);
+        for (const r of rows) found.add(r.id);
+      }
+      return found;
+    },
+    async lastAuditHash() {
+      const [rows] = await pool.query('SELECT entry FROM audit_logs ORDER BY seq DESC LIMIT 1');
+      return rows[0] ? JSON.parse(rows[0].entry).hash || null : null;
+    },
+    async listAuditLogsAsc() {
+      const [rows] = await pool.query('SELECT entry FROM audit_logs ORDER BY seq ASC');
+      return rows.map(r => JSON.parse(r.entry));
+    },
     async auditVersion() {
       const [rows] = await pool.query('SELECT COALESCE(MAX(seq), 0) AS v FROM audit_logs');
       return Number(rows[0].v);

@@ -1,5 +1,6 @@
 // src/components/DocumentsView.tsx
 import React, { useState } from 'react';
+import { shortHash } from '../lib/integrity';
 import type { 
   DocumentItem, 
   Organization, 
@@ -218,25 +219,20 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   };
 
   // Action : Viser et signer électroniquement avec vérification probante
-  const handleSignDocument = (docId: string, customSigData?: SignatureData) => {
-    const hash = customSigData?.certificateHash || `SHA256:doc-${docId}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  const handleSignDocument = (docId: string, sig: SignatureData) => {
+    // La signature vient toujours de la fenêtre de signature : mot de passe vérifié et empreinte réelle.
+    const hash = sig.certificateHash;
     const updates: Partial<DocumentItem> = {
       status: 'signe',
       electronicSignature: {
-        signedBy: customSigData?.signedBy || `${currentUser.name} (${currentUser.roleTitle})`,
-        signedAt: customSigData?.signedAt || `${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        role: customSigData?.role || currentUser.roleTitle,
+        signedBy: sig.signedBy,
+        signedAt: sig.signedAt,
+        role: sig.role,
         certificateHash: hash,
-        signatureImage: customSigData?.signatureImage,
-        signatureType: customSigData?.signatureType || 'draw',
-        legalConsent: customSigData ? customSigData.legalConsent : true,
-        verificationAudit: customSigData?.verificationAudit || {
-          sha256Checked: true,
-          rbacChecked: true,
-          timestampChecked: true,
-          sealedAt: new Date().toISOString(),
-          token: `RHEMA-PROOF-${Date.now().toString(36).toUpperCase()}`
-        }
+        signatureImage: sig.signatureImage,
+        signatureType: sig.signatureType,
+        legalConsent: sig.legalConsent,
+        verificationAudit: sig.verificationAudit,
       }
     };
 
@@ -244,7 +240,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       onUpdateDocument(docId, updates);
     }
     if (onLogAction) {
-      onLogAction('Visa & Signature Électronique Certifiée', `Document #${docId} vérifié, visé et scellé par ${currentUser.name} (Hash: ${hash})`, 'security');
+      onLogAction('Signature Électronique', `Document #${docId} signé par ${currentUser.name} après confirmation du mot de passe (empreinte ${shortHash(hash)}).`, 'security');
     }
     if (selectedDoc && selectedDoc.id === docId) {
       setSelectedDoc(prev => prev ? { ...prev, ...updates } : null);
@@ -286,8 +282,6 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     const isPayslip = selectedSubtype === 'bulletin_de_paie' || accreditationLevel === 'strict_confidentiel';
     const acc = getRolesByAccreditation(accreditationLevel);
 
-    const isDirectSigned = initialStatus === 'signe';
-    const signHash = isDirectSigned ? `SHA256:7f83b1657ff1fc53b${Math.random().toString(36).substring(2, 8)}` : undefined;
 
     onAddDocument({
       title: title.trim(),
@@ -309,12 +303,6 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       currency: numAmount !== undefined ? currency : undefined,
       isConfidentialPayslip: isPayslip,
       description: description.trim(),
-      electronicSignature: isDirectSigned ? {
-        signedBy: `${currentUser.name} (${currentUser.roleTitle})`,
-        signedAt: `${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString()}`,
-        role: currentUser.roleTitle,
-        certificateHash: signHash || 'SHA256:7f83b1657ff1fc53b',
-      } : undefined,
       allowedRoles: acc.allowed,
       permissions: {
         viewRoles: acc.allowed,
@@ -354,7 +342,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
             Documents Officiels, Traçabilité & Circuit de Visa
           </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-3xl leading-relaxed">
-            Émission, visa hiérarchique et scellement électronique des pièces financières, logistiques et RH. Chaque pièce intègre obligatoirement l'en-tête officiel, le pied de page légal et le scellé SHA-256 de RHEMA BUSINESS.
+            Émission, visa hiérarchique et scellement électronique des pièces financières, logistiques et RH. Chaque pièce intègre l'en-tête officiel et, une fois signée, l'empreinte SHA-256 de son contenu.
           </p>
         </div>
 
@@ -402,7 +390,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Scellés & Signés</span>
+            <span>Signés</span>
           </button>
 
           <button
@@ -570,7 +558,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                       className="p-2 rounded-lg bg-emerald-950/20 hover:bg-emerald-950/40 border border-emerald-500/20 hover:border-emerald-500/40 text-[10px] text-emerald-300 font-mono flex items-center justify-between gap-1.5 cursor-pointer transition group"
                       title="Cliquer pour inspecter le certificat de scellement électronique et l'audit probant"
                     >
-                      <span className="truncate">✓ Scellé SHA-256 : {doc.electronicSignature.certificateHash?.slice(0, 18)}...</span>
+                      <span className="truncate">✓ Signé • {shortHash(doc.electronicSignature.certificateHash)}</span>
                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 whitespace-nowrap group-hover:bg-emerald-500/30">
                         Certificat
                       </span>
@@ -947,9 +935,6 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   >
                     <option value="en_revue">Soumettre au Visa (En Revue)</option>
                     <option value="brouillon">Enregistrer comme Brouillon</option>
-                    {currentUser.role === 'dg' && (
-                      <option value="signe">Signature Directe DG (Scellé)</option>
-                    )}
                   </select>
                 </div>
               </div>

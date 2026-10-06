@@ -134,15 +134,15 @@ Les données de la base sont conservées.
 | « Serveur indisponible » dans le navigateur | Le conteneur `rhema-app` n'est pas démarré ; consultez son journal. |
 | « Code d'installation incorrect » | Il doit être identique à `SETUP_CODE` dans `docker-compose.yml`. |
 | Un compte est verrouillé | Le DG le réactive dans *Gestion & CRUD Agents* (bouton de statut). |
-| Le DG est verrouillé | Un autre compte DG peut le réactiver ; sinon, voir « Débloquer un compte DG » ci-dessous. |
+| Le DG est bloqué après 5 mots de passe erronés | Le blocage du DG est **temporaire (15 minutes)** : attendez, puis reconnectez-vous. En cas de besoin, voir « Débloquer un compte DG » ci-dessous. |
 
 Journaux : *Container Manager → Conteneur → rhema-app → Détails → Journal*.
 
-**Débloquer un compte DG** (connexion SSH au NAS, puis, en remplaçant l'email) :
+**Débloquer un compte DG** sans attendre (connexion SSH au NAS, puis, en remplaçant l'email) :
 
 ```bash
 sudo docker exec rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema -e \
-  "UPDATE users SET status=\"actif\", failed_attempts=0 WHERE login_email=\"dg@votre-entreprise.cd\""'
+  "UPDATE users SET status=\"actif\", failed_attempts=0, profile=JSON_REMOVE(profile, \"$.lockedUntil\") WHERE login_email=\"dg@votre-entreprise.cd\""'
 ```
 
 ---

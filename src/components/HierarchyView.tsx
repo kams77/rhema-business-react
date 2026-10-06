@@ -103,7 +103,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
                 🏢 ENTREPRISE
               </span>
               <span className="text-xs text-slate-400 font-mono">
-                RCCM/20-A-01120
+                {organization.rccm || organization.registrationNumber || 'RCCM non renseigné'}
               </span>
             </div>
             <h1 className="text-xl font-bold text-white mt-1">

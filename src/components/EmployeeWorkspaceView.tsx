@@ -1042,7 +1042,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             id: 'org-1',
             name: 'RHEMA BUSINESS RDC',
             type: 'entreprise',
-            registrationNumber: 'RCCM/20-A-01120',
+            registrationNumber: '',
             headquarters: 'Kinshasa - RD CONGO',
             email: 'contact@rhemabusiness.com',
             phone: '+243 81 279 1228',

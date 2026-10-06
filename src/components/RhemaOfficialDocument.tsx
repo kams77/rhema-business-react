@@ -24,7 +24,7 @@ interface RhemaOfficialDocumentProps {
   currentUser?: User;
   entities?: HierarchicalEntity[];
   onClose: () => void;
-  onSignDocument?: (docId: string, signatureData?: SignatureData) => void;
+  onSignDocument?: (docId: string, signatureData: SignatureData) => void;
 }
 
 export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
@@ -183,12 +183,11 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                   </div>
 
                   <div className="text-[11px] text-slate-600 space-y-0.5 mt-2">
-                    <p>Prestataire : <strong>RHEMA BUSINESS</strong></p>
-                    <p>Adresse : 1B, Av . Bangala</p>
-                    <p>RCCM/20-A-01120</p>
-                    <p>Id. Nat : 01-H5300-N65775Q</p>
-                    <p>Numéro Impôt : A2166190U</p>
-                    <p>Kinshasa-Kintambo</p>
+                    <p>Prestataire : <strong>{organization.name}</strong></p>
+                    <p>Adresse : {organization.headquarters || 'Non renseigné'}</p>
+                    <p>RCCM : {organization.rccm || organization.registrationNumber || 'Non renseigné'}</p>
+                    <p>Id. Nat : {organization.idNat || 'Non renseigné'}</p>
+                    <p>Numéro Impôt : {organization.numImpot || 'Non renseigné'}</p>
                   </div>
                 </div>
 
@@ -307,16 +306,16 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                           className="h-10 max-w-[180px] object-contain"
                         />
                         <span className="text-[9px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
-                          SCELLÉ RDC
+                          SIGNÉ
                         </span>
                       </div>
                     )}
 
                     <p className="text-[10px] font-mono text-slate-600 mt-1 truncate">
-                      {docState.electronicSignature?.certificateHash || 'SHA256:7f83b1657ff1fc53b92c451da74d39f284b'}
+                      {docState.electronicSignature?.certificateHash ? `Empreinte SHA-256 : ${docState.electronicSignature.certificateHash}` : 'Document non signé'}
                     </p>
                     <div className="text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded border border-emerald-300 inline-block">
-                      ✓ Sceau d'entreprise inviolable & vérifié
+                      ✓ Identité du signataire confirmée par mot de passe
                     </div>
                   </div>
                 ) : (
@@ -379,14 +378,14 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
   );
 };
 
-export const RhemaDocumentFooter: React.FC = () => {
+export const RhemaDocumentFooter: React.FC<{ organization: Organization }> = ({ organization }) => {
   return (
     <footer className="pt-4 border-t-2 border-slate-100 text-[10px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
       <div>
-        <span className="font-bold text-slate-800">RHEMA BUSINESS RDC SARL</span> • RCCM/20-A-01120 • Id. Nat. 01-83-N88201B
+        <span className="font-bold text-slate-800">{organization.name}</span> • RCCM : {organization.rccm || organization.registrationNumber || 'Non renseigné'} • Id. Nat : {organization.idNat || 'Non renseigné'}
       </div>
       <div>
-        N°1B, Avenue Bangala, Q/Salongo, C/Kintambo, Kinshasa • contact@rhemabusiness.com
+        {[organization.headquarters, organization.email].filter(Boolean).join(' • ')}
       </div>
     </footer>
   );

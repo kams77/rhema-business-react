@@ -8,7 +8,10 @@ export interface AuditLog {
   category: 'auth' | 'document' | 'task' | 'security' | 'hierarchy' | 'admin';
   details: string;
   ip: string;
+  /** Empreinte SHA-256 chaînée : SHA-256(prevHash + contenu). */
   hash: string;
+  /** Empreinte de l'entrée précédente (« GENESIS » pour la première). */
+  prevHash?: string;
 }
 
 export type OrganizationType = 'entreprise' | 'etablissement' | 'ong';
@@ -66,6 +69,10 @@ export interface User {
   phone?: string;
   canCreateSubAgents: boolean;
   canApproveServiceDocuments?: boolean;
+  /** Accès à la paie accordé (true) ou retiré (false) explicitement par le DG. */
+  canManagePayroll?: boolean;
+  /** Blocage temporaire (comptes DG) : horodatage de fin, en millisecondes. */
+  lockedUntil?: number;
 }
 
 export interface Organization {
@@ -91,6 +98,17 @@ export interface Organization {
   hasServices: boolean;
   description: string;
   createdAt: string;
+  /** Coordonnées bancaires officielles (renseignées par le DG), imprimées sur les factures. */
+  bankAccounts?: OrganizationBankAccount[];
+}
+
+export interface OrganizationBankAccount {
+  id: string;
+  bankName: string;
+  accountNumberUSD: string;
+  accountNumberCDF: string;
+  swiftBic: string;
+  ibanOrRib: string;
 }
 
 export type DocumentCategory = 
@@ -117,6 +135,8 @@ export interface DocumentItem {
   createdAt: string;
   status: 'brouillon' | 'en_revue' | 'approuve' | 'signe' | 'rejete';
   size: string;
+  /** Bulletin de paie : données complètes calculées par le moteur de paie (pour réimpression). */
+  payslipData?: import('./utils/exportUtils').PayslipExportData;
   fileType: string;
   targetEntityId?: string;
   targetEntityName?: string;
@@ -336,6 +356,11 @@ export interface PayrollRunPeriod {
   validatedAt?: string;
   closureHash?: string;
   hash?: string;
+  /** Prime exceptionnelle versée à tous pour la période (devise de la période). */
+  extraBonus?: number;
+  /** Qui a réellement validé / confirmé chaque étape (identifiant du compte). */
+  validatedByDRHUserId?: string;
+  bankTransferConfirmedByUserId?: string;
 }
 
 export interface PayrollAllowance {
