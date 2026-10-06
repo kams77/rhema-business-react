@@ -66,6 +66,8 @@ export interface User {
   phone?: string;
   canCreateSubAgents: boolean;
   canApproveServiceDocuments?: boolean;
+  /** Accès à la paie accordé (true) ou retiré (false) explicitement par le DG. */
+  canManagePayroll?: boolean;
 }
 
 export interface Organization {

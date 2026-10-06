@@ -75,7 +75,10 @@ export const remoteStore = {
   },
 
   has: (key: string) => values.has(key),
-  get: <T,>(key: string, fallback: T): T => (values.has(key) ? (values.get(key) as T) : fallback),
+  get: <T,>(key: string, fallback: T): T => {
+    const v = values.get(key);
+    return v === undefined || v === null ? fallback : (v as T);
+  },
 
   subscribe(key: string, cb: Listener) {
     if (!listeners.has(key)) listeners.set(key, new Set());

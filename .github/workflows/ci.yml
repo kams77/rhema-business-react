@@ -23,6 +23,9 @@ jobs:
       - name: Installation des dépendances
         run: npm install --no-audit --no-fund
 
+      - name: Tests du moteur de paie
+        run: npx --yes esbuild src/lib/__tests__/payroll.test.ts --bundle --platform=node --format=esm --outfile=/tmp/payroll.test.mjs --log-level=error && node /tmp/payroll.test.mjs
+
       - name: Vérification TypeScript
         id: tsc
         run: |
@@ -99,6 +102,7 @@ jobs:
           DB_DRIVER=memory SETUP_CODE=ci-memoire PORT=8090 node server/index.mjs &
           sleep 2
           BASE_URL=http://localhost:8090 SETUP_CODE=ci-memoire node server/tests/api.test.mjs
+          BASE_URL=http://localhost:8090 node server/tests/permissions.test.mjs
 
       - name: Démarrage de la pile complète (application + MariaDB)
         env:
@@ -115,7 +119,9 @@ jobs:
           curl -fsS http://localhost:8080/api/health
 
       - name: Tests de l'API sur MariaDB
-        run: BASE_URL=http://localhost:8080 SETUP_CODE=ci-installation node server/tests/api.test.mjs
+        run: |
+          BASE_URL=http://localhost:8080 SETUP_CODE=ci-installation node server/tests/api.test.mjs
+          BASE_URL=http://localhost:8080 node server/tests/permissions.test.mjs
 
       - name: Les données survivent au redémarrage
         env:

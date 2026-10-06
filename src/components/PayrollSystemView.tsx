@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
-import { titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
+import { isPayrollStaff } from '../utils/rbac';
 import type { 
   PayrollSystemConfig, 
   PayrollAllowance, 
@@ -150,11 +150,8 @@ export const PayrollSystemView: React.FC<PayrollSystemViewProps> = ({
   };
 
   // Droits Direction & DRH
-  const isHR =
-    currentUser.role === 'dg' ||
-    currentUser.role === 'chef_departement' ||
-    currentUser.role === 'directeur' ||
-    titleHasAny(currentUser.roleTitle, ['pdg', 'dg', 'president', 'financier', 'daf', ...HR_TITLE_TERMS]);
+  // Gestion de la paie : même règle que le serveur (shared/access.mjs).
+  const isHR = isPayrollStaff(currentUser);
 
 
   // Configuration avec devises strictes USD / CDF

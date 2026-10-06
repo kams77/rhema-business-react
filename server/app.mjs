@@ -16,6 +16,17 @@ import {
   validatePasswordStrength,
   verifyPassword,
 } from './auth.mjs';
+import {
+  canAccessLogistics,
+  canManageAccount,
+  canSeeDocument,
+  canSeeInvitation,
+  canSeeInvitationNotification,
+  canWriteDocument,
+  isManager,
+  isPayrollStaff,
+  isSecurityStaff,
+} from '../shared/access.mjs';
 
 const COOKIE = 'rhema_session';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -283,19 +294,132 @@ export function createApp({ db, config }) {
     return out;
   }
 
-  async function readKey(key) {
-    if (key === 'users') return { value: (await db.listUsers()).map(toClientUser), version: await usersVersion() };
-    if (key === 'auditLogs') return { value: await db.listAuditLogs(AUDIT_LIMIT), version: await db.auditVersion() };
-    const d = await db.getData(key);
-    return d ? { value: JSON.parse(d.value), version: d.version } : { value: null, version: 0 };
+  // --- règles d'accès par donnée ---------------------------------------------
+  // Les mêmes règles que les écrans (shared/access.mjs), appliquées par le serveur :
+  // ce que l'écran cache, l'API ne le renvoie pas, et ce qu'il interdit, l'API le refuse.
+
+  /** Données de paie : réservées à la Direction / RH ; un salarié ne voit que ses propres lignes. */
+  const PAYROLL_OWN_ROWS = new Set(['contracts', 'payroll.contracts', 'payroll.leaves', 'payroll.advances', 'payroll.overtime', 'payroll.disciplinary']);
+  const PAYROLL_STAFF_ONLY = new Set(['payroll.runs', 'payroll.exchangeRate', 'payrollConfigs']);
+
+  /** Utilisateur au format des règles d'accès (champs du profil inclus). */
+  const accessUser = u => toClientUser(u);
+
+  async function loadEntities() {
+    const d = await db.getData('entities');
+    try {
+      const list = d ? JSON.parse(d.value) : [];
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
   }
+
+  /**
+   * Politique d'une donnée pour un utilisateur :
+   * - read  : 'all' | 'none' | fonction de filtre des lignes visibles
+   * - write : false | true | fonction « peut écrire cette ligne »
+   */
+  function policyFor(key, user, entities) {
+    const u = accessUser(user);
+    const own = row => row && row.userId === u.id;
+    if (PAYROLL_OWN_ROWS.has(key)) {
+      return isPayrollStaff(u) ? { read: 'all', write: true } : { read: own, write: false };
+    }
+    if (PAYROLL_STAFF_ONLY.has(key)) return isPayrollStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
+    if (key === 'securityAlerts') return isSecurityStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
+    if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
+    if (key === 'entities') return { read: 'all', write: isManager(u) };
+    if (key === 'documents') {
+      return {
+        read: d => canSeeDocument(u, d, entities),
+        write: d => canWriteDocument(u, d, entities),
+      };
+    }
+    if (key === 'invitations') {
+      return { read: inv => canSeeInvitation(u, inv, entities), write: inv => canSeeInvitation(u, inv, entities) };
+    }
+    if (key === 'invitationNotifications') {
+      // Une notification est créée par l'invitant pour le destinataire, puis marquée lue par celui-ci.
+      return { read: n => canSeeInvitationNotification(u, n), write: () => true };
+    }
+    if (key.startsWith('logistics.')) return { read: 'all', write: canAccessLogistics(u) };
+    // Données opérationnelles partagées (tâches, workflows…).
+    return { read: 'all', write: true };
+  }
+
+  /** Applique la règle de lecture à une valeur (undefined = donnée non communiquée). */
+  function applyRead(policy, _key, value) {
+    if (policy.read === 'all') return value;
+    if (policy.read === 'none') return undefined;
+    return Array.isArray(value) ? value.filter(row => policy.read(row)) : undefined;
+  }
+
+  /**
+   * Écriture d'une liste filtrée : l'utilisateur ne modifie que les lignes qu'il voit ;
+   * les lignes qui lui sont cachées sont conservées telles quelles, à leur place.
+   */
+  function mergeFilteredWrite(policy, previous, incoming) {
+    if (!Array.isArray(incoming)) throw new HttpError(400, 'Liste attendue.');
+    const prev = Array.isArray(previous) ? previous : [];
+    const prevById = new Map(prev.filter(r => r && typeof r.id === 'string').map(r => [r.id, r]));
+    const hiddenIds = new Set(prev.filter(r => !policy.read(r)).map(r => r.id));
+    const kept = [];
+    const seen = new Set();
+    for (const row of incoming) {
+      if (!row || typeof row !== 'object' || typeof row.id !== 'string') throw new HttpError(400, 'Chaque élément doit avoir un identifiant.');
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      if (hiddenIds.has(row.id)) continue; // ligne invisible pour cet utilisateur : on n'y touche pas
+      const before = prevById.get(row.id);
+      const changed = !before || JSON.stringify(before) !== JSON.stringify(row);
+      if (changed && !(typeof policy.write === 'function' ? policy.write(row) : policy.write)) {
+        throw new HttpError(403, 'Vous n\'avez pas le droit d\'enregistrer cet élément.');
+      }
+      kept.push(row);
+    }
+    // Suppressions : seulement des lignes que l'utilisateur pouvait modifier.
+    for (const before of prev) {
+      if (!before || hiddenIds.has(before.id) || seen.has(before.id)) continue;
+      if (!(typeof policy.write === 'function' ? policy.write(before) : policy.write)) {
+        throw new HttpError(403, 'Vous n\'avez pas le droit de supprimer cet élément.');
+      }
+    }
+    // Reconstitution : lignes cachées remises à leur position d'origine.
+    const result = [...kept];
+    prev.forEach((row, index) => {
+      if (hiddenIds.has(row.id)) result.splice(Math.min(index, result.length), 0, row);
+    });
+    return result;
+  }
+
+  async function readKey(key, session) {
+    if (key === 'users') return { value: (await db.listUsers()).map(toClientUser), version: await usersVersion() };
+    if (key === 'auditLogs') {
+      const visible = isSecurityStaff(accessUser(session.user)) ? await db.listAuditLogs(AUDIT_LIMIT) : [];
+      return { value: visible, version: await db.auditVersion() };
+    }
+    const d = await db.getData(key);
+    const raw = d ? JSON.parse(d.value) : null;
+    const policy = policyFor(key, session.user, await loadEntities());
+    return { value: raw === null ? null : applyRead(policy, key, raw) ?? null, version: d?.version ?? 0 };
+  }
+
+  /** Champs d'un compte qui comptent pour décider s'il a été modifié. */
+  const accountSignature = u => JSON.stringify([
+    u.email.toLowerCase(), u.name, u.role, u.status, u.matricule ?? null, u.employeeCode ?? null,
+    u.organizationId ?? null, u.failedAttempts ?? 0, u.profile ?? {},
+  ]);
 
   /** Synchronise l'annuaire envoyé par l'application avec la table « users ». */
   async function syncUsers(session, incoming) {
     const requester = session.user;
+    const me = accessUser(requester);
     if (requester.role === 'agent') throw new HttpError(403, 'Seuls les responsables peuvent modifier l\'annuaire.');
     if (!Array.isArray(incoming)) throw new HttpError(400, 'Liste de comptes attendue.');
+    const entities = await loadEntities();
     const existing = new Map((await db.listUsers()).map(u => [u.id, u]));
+    const isDG = requester.role === 'dg';
     const ids = new Set();
     const emails = new Set();
     const result = [];
@@ -307,27 +431,36 @@ export function createApp({ db, config }) {
       ids.add(c.id);
       emails.add(email);
       const prev = existing.get(c.id);
-      if (requester.role !== 'dg') {
-        // Un responsable ne peut ni attribuer le rôle DG, ni modifier un compte de Direction Générale.
-        if (c.role === 'dg' && prev?.role !== 'dg') {
-          throw new HttpError(403, 'Seule la Direction Générale peut attribuer le rôle DG.');
+      const next = await fromClientUser(c, prev, { allowHash: false });
+
+      if (!isDG && (!prev || accountSignature(prev) !== accountSignature(next))) {
+        // Un responsable ne gère que des comptes de rang inférieur, dans son périmètre, avant ET après modification.
+        if (prev?.id === requester.id) throw new HttpError(403, 'Vous ne pouvez pas modifier votre propre compte ici (rôle, statut, droits).');
+        if (prev && !canManageAccount(me, accessUser(prev), entities)) {
+          throw new HttpError(403, `Vous n'avez pas autorité sur le compte de ${prev.name}.`);
         }
-        if (prev?.role === 'dg') {
-          const changed = ['email', 'name', 'role', 'status'].some(f => String(c[f] ?? '') !== String(toClientUser(prev)[f] ?? ''));
-          if (changed) throw new HttpError(403, 'Seule la Direction Générale peut modifier un compte DG.');
+        if (!canManageAccount(me, toClientUser(next), entities)) {
+          throw new HttpError(403, `Vous ne pouvez pas attribuer ce rôle ou ce périmètre à ${next.name}.`);
+        }
+        // Droits sensibles : réservés au DG.
+        if ((next.profile?.canManagePayroll ?? null) !== (prev?.profile?.canManagePayroll ?? null)) {
+          throw new HttpError(403, 'Seule la Direction Générale peut attribuer l\'accès à la paie.');
         }
       }
-      result.push(await fromClientUser(c, prev, { allowHash: false }));
+      result.push(next);
     }
     for (const prev of existing.values()) {
       if (!ids.has(prev.id)) {
         if (prev.id === requester.id) throw new HttpError(400, 'Vous ne pouvez pas supprimer votre propre compte.');
-        if (prev.role === 'dg' && requester.role !== 'dg') throw new HttpError(403, 'Seule la Direction Générale peut supprimer un compte DG.');
+        if (!isDG && !canManageAccount(me, accessUser(prev), entities)) {
+          throw new HttpError(403, `Vous n'avez pas autorité pour supprimer le compte de ${prev.name}.`);
+        }
       }
     }
-    // Le compte du demandeur ne peut pas être suspendu par lui-même.
+    // Le demandeur ne peut ni se suspendre ni changer son propre rôle.
     const self = result.find(u => u.id === requester.id);
     if (self && self.status !== 'actif') throw new HttpError(400, 'Vous ne pouvez pas suspendre votre propre compte.');
+    if (self && self.role !== requester.role) throw new HttpError(403, 'Vous ne pouvez pas changer votre propre rôle.');
     if (!result.some(u => u.role === 'dg' && u.status === 'actif')) {
       throw new HttpError(400, 'L\'annuaire doit conserver au moins un compte DG actif.');
     }
@@ -512,16 +645,18 @@ export function createApp({ db, config }) {
 
     // ----- Données (session obligatoire) -----
     if (p === '/api/data' && method === 'GET') {
-      await requireSession(req);
+      const s = await requireSession(req);
+      const entities = await loadEntities();
       const values = {};
       const versions = {};
       for (const row of await db.getAllData()) {
         if (row.key.startsWith('_')) continue;
-        values[row.key] = JSON.parse(row.value);
         versions[row.key] = row.version;
+        const visible = applyRead(policyFor(row.key, s.user, entities), row.key, JSON.parse(row.value));
+        if (visible !== null && visible !== undefined) values[row.key] = visible;
       }
       for (const key of ['users', 'auditLogs']) {
-        const r = await readKey(key);
+        const r = await readKey(key, s);
         values[key] = r.value;
         versions[key] = r.version;
       }
@@ -571,7 +706,7 @@ export function createApp({ db, config }) {
       if (!DATA_KEY_RE.test(key)) throw new HttpError(400, 'Nom de donnée invalide.');
       const s = await requireSession(req);
 
-      if (method === 'GET') return sendJson(req, res, 200, await readKey(key));
+      if (method === 'GET') return sendJson(req, res, 200, await readKey(key, s));
 
       if (method === 'PUT') {
         const body = await readJson(req);
@@ -580,7 +715,23 @@ export function createApp({ db, config }) {
         if (key === 'auditLogs') {
           // Journal en ajout seul : les entrées existantes ne sont jamais modifiées ni supprimées.
           const list = Array.isArray(body.value) ? body.value : [];
-          const entries = list.filter(e => e && typeof e === 'object' && typeof e.id === 'string' && e.id.length <= 120).slice(0, AUDIT_LIMIT);
+          // L'auteur, l'heure et l'adresse sont fixés par le serveur : impossible d'écrire au nom d'un autre.
+          const me = accessUser(s.user);
+          const entries = list
+            .filter(e => e && typeof e === 'object' && typeof e.id === 'string' && e.id.length <= 120)
+            .slice(0, AUDIT_LIMIT)
+            .map(e => ({
+              id: `${e.id}`,
+              timestamp: nowStamp(),
+              userId: me.id,
+              userName: me.name,
+              userRole: me.roleTitle || me.role,
+              action: String(e.action ?? '').slice(0, 200),
+              category: ['auth', 'document', 'task', 'security', 'hierarchy', 'admin'].includes(e.category) ? e.category : 'admin',
+              details: String(e.details ?? '').slice(0, 2000),
+              ip: clientIp(req) || 'inconnue',
+              hash: '',
+            }));
           await db.addAuditLogs(entries.reverse());
           return sendJson(req, res, 200, { version: await db.auditVersion() });
         }
@@ -594,14 +745,32 @@ export function createApp({ db, config }) {
           return sendJson(req, res, 200, { version: await usersVersion() });
         }
 
-        if (key === 'organizations') requireDG(s);
-        const json = JSON.stringify(body.value);
+        const entities = await loadEntities();
+        const policy = policyFor(key, s.user, entities);
+        const current = await db.getData(key);
+        const expected = Number(body.version) || 0;
+        if ((current?.version ?? 0) !== expected) {
+          const raw = current ? JSON.parse(current.value) : null;
+          return sendJson(req, res, 409, {
+            error: 'conflict',
+            value: raw === null ? null : applyRead(policy, key, raw) ?? null,
+            version: current?.version ?? 0,
+          });
+        }
+        let value = body.value;
+        if (typeof policy.read === 'function') {
+          // Liste filtrée : seules les lignes visibles et autorisées sont prises en compte.
+          value = mergeFilteredWrite(policy, current ? JSON.parse(current.value) : [], body.value);
+        } else if (!policy.write) {
+          throw new HttpError(403, 'Vous n\'avez pas le droit de modifier ces données.');
+        }
+        const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
-        const r = await db.putData(key, json, Number(body.version) || 0, s.user.id);
+        const r = await db.putData(key, json, expected, s.user.id);
         if (!r.ok) {
           return sendJson(req, res, 409, {
             error: 'conflict',
-            value: r.current.value === null ? null : JSON.parse(r.current.value),
+            value: r.current.value === null ? null : applyRead(policy, key, JSON.parse(r.current.value)) ?? null,
             version: r.current.version,
           });
         }
