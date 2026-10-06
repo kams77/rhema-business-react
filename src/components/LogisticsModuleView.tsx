@@ -1,5 +1,6 @@
 // src/components/LogisticsModuleView.tsx
 import { contentHashSync } from '../lib/integrity';
+import { todayLocal } from '../lib/dates';
 import React, { useState } from 'react';
 import type { 
   User, 
@@ -144,7 +145,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       authorName: currentUser.name,
       authorRole: currentUser.role,
       authorEntity: currentUser.departmentName || 'Département Logistique & Opérations',
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: todayLocal(),
       status: 'signe',
       size: '320 KB',
       fileType: 'PDF',
@@ -245,7 +246,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       authorName: currentUser.name,
       authorRole: currentUser.role,
       authorEntity: currentUser.departmentName || 'Service Logistique',
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: todayLocal(),
       status: 'signe',
       size: '280 KB',
       fileType: 'PDF',
@@ -578,6 +579,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           catalog={catalog}
           hubs={hubs}
           stocks={stocks}
+          orders={orders}
           onCreateOrder={onCreateOrder}
           onNavigateToTab={(target) => setActiveTab(target)}
           onPrintOfficialDoc={(title, desc, ref, amount) => handlePrintCustomDoc(title, desc, ref, amount)}

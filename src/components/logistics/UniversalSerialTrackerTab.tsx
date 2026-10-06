@@ -1,5 +1,7 @@
 // src/components/logistics/UniversalSerialTrackerTab.tsx
 import React, { useState, useMemo } from 'react';
+import { todayLocal } from '../../lib/dates';
+import { downloadTextFile } from '../../lib/csv';
 import type { HubStockItem, LogisticsHub, DeliveryNoteItem, PurchaseOrderItem, User } from '../../types';
 import { 
   Barcode, 
@@ -44,7 +46,8 @@ interface SerialItemRecord {
   locationRack: string;
   unitPriceUSD: number;
   status: 'en_stock' | 'deployee_site' | 'en_transit' | 'reserve' | 'sav_maintenance';
-  warrantyMonthsRemaining: number;
+  /** Garantie restante en mois (null = non renseignée). */
+  warrantyMonthsRemaining: number | null;
   deliveryNoteNumber?: string;
   purchaseOrderNumber?: string;
   lastInspectionDate: string;
@@ -101,9 +104,9 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
           locationRack: stock.locationRack || `RACK-${idx + 1}`,
           unitPriceUSD: stock.unitPriceUSD,
           status,
-          warrantyMonthsRemaining: 24 - (idx % 12),
-          purchaseOrderNumber: 'BC-VSAT-2026-001',
-          lastInspectionDate: stock.lastAuditDate || '2026-09-25'
+          warrantyMonthsRemaining: null,
+          purchaseOrderNumber: undefined,
+          lastInspectionDate: stock.lastAuditDate || ''
         });
       });
     });
@@ -124,7 +127,7 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
               locationRack: 'En Service Actif',
               unitPriceUSD: 1850,
               status: bl.status === 'en_transit' ? 'en_transit' : 'deployee_site',
-              warrantyMonthsRemaining: 18 - (idx % 8),
+              warrantyMonthsRemaining: null,
               deliveryNoteNumber: bl.deliveryNumber,
               purchaseOrderNumber: bl.purchaseOrderNumber,
               lastInspectionDate: bl.date
@@ -196,19 +199,12 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
       `"${r.hubName}"`,
       `"${r.locationRack}"`,
       `"${r.status}"`,
-      r.warrantyMonthsRemaining,
+      r.warrantyMonthsRemaining ?? '',
       `"${r.deliveryNoteNumber || 'N/A'}"`,
       `"${r.purchaseOrderNumber || 'N/A'}"`
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `registre_sn_rhema_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadTextFile(`registre_sn_rhema_${todayLocal()}.csv`, [headers.join(','), ...rows.map(e => e.join(','))].join('\n'));
   };
 
   return (
@@ -383,10 +379,10 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
             <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80">
               <div className="text-[10px] text-slate-400 uppercase font-bold">Garantie & Conformité</div>
               <div className="font-mono text-sm font-bold text-emerald-400 mt-0.5">
-                {selectedSerialRecord.warrantyMonthsRemaining} mois restants
+                {selectedSerialRecord.warrantyMonthsRemaining === null ? 'Non renseignée' : `${selectedSerialRecord.warrantyMonthsRemaining} mois restants`}
               </div>
               <div className="text-[10px] text-slate-400 mt-1">
-                Dernier contrôle : {selectedSerialRecord.lastInspectionDate}
+                Dernier contrôle : {selectedSerialRecord.lastInspectionDate || 'non renseigné'}
               </div>
             </div>
           </div>
@@ -502,7 +498,7 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
                     {item.locationRack}
                   </td>
                   <td className="p-3 text-center font-mono text-emerald-400 font-bold">
-                    {item.warrantyMonthsRemaining} mois
+                    {item.warrantyMonthsRemaining === null ? '—' : `${item.warrantyMonthsRemaining} mois`}
                   </td>
                   <td className="p-3 text-center">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${

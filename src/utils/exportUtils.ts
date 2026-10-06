@@ -1,5 +1,6 @@
 // src/utils/exportUtils.ts
 import { jsPDF } from 'jspdf';
+import { todayLocal } from '../lib/dates';
 import type { AuditLog, Organization, EmployeeContract, User, PayrollRunPeriod, DocumentItem } from '../types';
 
 /** Ligne détaillée d'un bulletin (gain, retenue ou charge patronale). */
@@ -90,7 +91,7 @@ export function exportAuditLogsToCSV(logs: AuditLog[], filename?: string) {
   ]);
 
   const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\r\n');
-  const targetName = filename || `journal_audit_rhema_${new Date().toISOString().slice(0, 10)}.csv`;
+  const targetName = filename || `journal_audit_rhema_${todayLocal()}.csv`;
   downloadBlob(csv, targetName);
 }
 
@@ -223,7 +224,7 @@ export function exportAuditLogsToPDF(
   doc.setTextColor(100, 116, 139);
   doc.text(`Document certifié inaltérable • République Démocratique du Congo • ${orgName} • Archivage Légal SHA-256`, margin, currentY + 4);
 
-  const targetName = filename || `journal_audit_immuable_rhema_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const targetName = filename || `journal_audit_immuable_rhema_${todayLocal()}.pdf`;
   doc.save(targetName);
 }
 

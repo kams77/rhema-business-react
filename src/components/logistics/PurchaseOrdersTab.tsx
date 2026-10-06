@@ -1,5 +1,9 @@
 // src/components/logistics/PurchaseOrdersTab.tsx
 import React, { useState } from 'react';
+import { addDaysLocal, todayLocal } from '../../lib/dates';
+import { useRate } from '../../lib/exchangeRate';
+import { formatCDF, round2, usdToCdf } from '../../lib/money';
+import { nextReference } from '../../lib/sequence';
 import type { PurchaseOrderItem, LogisticsItem, User, Organization } from '../../types';
 import { 
   Plus, 
@@ -48,7 +52,8 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
   const [supplierAddress, setSupplierAddress] = useState('');
   const [destinationSite, setDestinationSite] = useState('Site Minier Tenke Fungurume (Lualaba)');
   const [category, setCategory] = useState<'vsat' | 'energie_solaire' | 'hybride'>('vsat');
-  const [deliveryDueDate, setDeliveryDueDate] = useState('2026-10-25');
+  const rate = useRate();
+  const [deliveryDueDate, setDeliveryDueDate] = useState(() => addDaysLocal(21));
   const [paymentTerms, setPaymentTerms] = useState('50% à la commande par virement, 50% après recette');
   const [notes, setNotes] = useState('');
   
@@ -132,9 +137,9 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
     setOrderLines(prev => prev.filter((_, idx) => idx !== index));
   };
 
-  const currentTotalHT = orderLines.reduce((acc, l) => acc + l.totalUSD, 0);
-  const currentVAT = currentTotalHT * 0.16;
-  const currentTotalTTC = currentTotalHT + currentVAT;
+  const currentTotalHT = round2(orderLines.reduce((acc, l) => acc + l.totalUSD, 0));
+  const currentVAT = round2(currentTotalHT * 0.16);
+  const currentTotalTTC = round2(currentTotalHT + currentVAT);
 
   const handleSubmitOrder = (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,9 +147,9 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
 
     const newOrder: PurchaseOrderItem = {
       id: `bc-${Date.now()}`,
-      orderNumber: `BC-${category === 'vsat' ? 'VSAT' : category === 'energie_solaire' ? 'SOLAR' : 'HYB'}-2026-${String(orders.length + 1).padStart(3, '0')}`,
+      orderNumber: nextReference(`BC-${category === 'vsat' ? 'VSAT' : category === 'energie_solaire' ? 'SOLAR' : 'HYB'}`, orders.map(o => o.orderNumber)),
       organizationId: organization.id,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocal(),
       deliveryDueDate,
       category,
       supplierName: supplierName || 'Fournisseur Agréé RDC',
@@ -158,7 +163,7 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
       vatAmount_USD: currentVAT,
       totalTTC_USD: currentTotalTTC,
       currency: 'USD',
-      exchangeRate: 2850,
+      exchangeRate: rate,
       paymentTerms,
       status: currentUser.role === 'agent' ? 'en_attente_approbation' : 'approuve',
       createdByAgentId: currentUser.id,
@@ -434,7 +439,7 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
                   <span>${selectedOrder.totalTTC_USD.toLocaleString()} USD</span>
                 </div>
                 <div className="text-[11px] text-slate-400">
-                  ~ {(selectedOrder.totalTTC_USD * 2850).toLocaleString()} CDF
+                  ~ {formatCDF(usdToCdf(selectedOrder.totalTTC_USD, selectedOrder.exchangeRate || rate))}
                 </div>
               </div>
             </div>

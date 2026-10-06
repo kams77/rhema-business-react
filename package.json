@@ -14,6 +14,7 @@
     "test:api": "node server/tests/api.test.mjs",
     "test:paie": "esbuild src/lib/__tests__/payroll.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/payroll.test.mjs --log-level=error && node node_modules/.cache/payroll.test.mjs",
     "test:droits": "node server/tests/permissions.test.mjs",
+    "test:donnees": "esbuild src/lib/__tests__/donnees.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/donnees.test.mjs --log-level=error && node node_modules/.cache/donnees.test.mjs",
     "test:integrite": "esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/integrity.test.mjs --log-level=error && node node_modules/.cache/integrity.test.mjs && node server/tests/audit-chain.test.mjs"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 // src/components/DataBackupModal.tsx
 // Sauvegarde locale : export / import d'un fichier JSON et remise à zéro des données.
 import React, { useRef, useState } from 'react';
+import { todayLocal } from '../lib/dates';
 import { Database, Download, Upload, RotateCcw, X, AlertTriangle, CheckCircle2, Lock } from 'lucide-react';
 import {
   downloadBackup,
@@ -46,7 +47,7 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `rhema-sauvegarde-serveur-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `rhema-sauvegarde-serveur-${todayLocal()}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         setInfo('Sauvegarde du serveur téléchargée. Conservez ce fichier en lieu sûr : il contient toutes les données de l\'entreprise.');

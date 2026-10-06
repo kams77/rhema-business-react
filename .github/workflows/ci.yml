@@ -29,6 +29,12 @@ jobs:
       - name: Tests des empreintes SHA-256
         run: npx --yes esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=/tmp/integrity.test.mjs --log-level=error && node /tmp/integrity.test.mjs
 
+      - name: Tests des données (montants, CSV, numérotation, dates, pointages)
+        run: |
+          npx --yes esbuild src/lib/__tests__/donnees.test.ts --bundle --platform=node --format=esm --outfile=/tmp/donnees.test.mjs --log-level=error
+          node /tmp/donnees.test.mjs
+          TZ=Africa/Kinshasa node /tmp/donnees.test.mjs
+
       - name: Vérification TypeScript
         id: tsc
         run: |

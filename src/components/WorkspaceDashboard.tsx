@@ -44,9 +44,13 @@ import {
   ExternalLink,
   AlertTriangle
 } from 'lucide-react';
-import { DEFAULT_EXCHANGE_RATE_USD_CDF } from '../data/standardPayroll';
+import { useRate } from '../lib/exchangeRate';
 import { canViewHubActivities } from '../utils/rbac';
 import { initialHubs, initialHubStocks, initialStockMovements } from '../data/initialLogisticsData';
+import { demoSeed, usePersistentState } from '../hooks/usePersistentState';
+import { DEMO_MODE } from '../config';
+import { isPayrollStaff } from '../utils/rbac';
+import type { LogisticsHub, HubStockItem, StockMovementItem } from '../types';
 
 interface WorkspaceDashboardProps {
   entities: HierarchicalEntity[];
@@ -79,7 +83,13 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
   const [selectedEntityFilter, setSelectedEntityFilter] = useState<string>('all');
   const [perfMetric, setPerfMetric] = useState<'productivity' | 'tasks_sla' | 'quality'>('productivity');
   const [activeDeptLine, setActiveDeptLine] = useState<'all' | 'operations' | 'finance' | 'governance'>('all');
-  const exchangeRate = DEFAULT_EXCHANGE_RATE_USD_CDF; // 2850 CDF
+  const exchangeRate = useRate();
+  // Masses et moyennes salariales : réservées à la paie / RH / DG.
+  const canSeeSalaries = !!currentUser && isPayrollStaff(currentUser);
+  // Hubs logistiques réels (mêmes données que le module Logistique).
+  const [hubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', () => demoSeed(initialHubs));
+  const [hubStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', () => demoSeed(initialHubStocks));
+  const [hubMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', () => demoSeed(initialStockMovements));
 
   // Données d'évolution des performances et de la productivité sur les 6 derniers mois
   const monthlyTrendData = useMemo(() => {
@@ -127,40 +137,44 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
   // 1. CALCULS DE LA RÉPARTITION DES EFFECTIFS PAR DÉPARTEMENT
   // =========================================================================
   const workforceByDepartment = useMemo(() => {
-    // Entités déclarées de niveau 'departement'
     const depts = entities.filter(e => e.level === 'departement');
-
-    // Effectif déclaré dans la structure organisationnelle
+    const byId = new Map(entities.map(e => [e.id, e]));
+    // Département de rattachement d'un utilisateur (en remontant l'organigramme).
+    const deptOf = (u: User): string | undefined => {
+      if (u.departementId) return u.departementId;
+      let cur = byId.get(u.serviceId || u.divisionId || u.directionId || '');
+      for (let i = 0; cur && i < 10; i++) {
+        if (cur.level === 'departement') return cur.id;
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+      }
+      return undefined;
+    };
+    const activeUsers = users.filter(u => u.status !== 'suspendu');
     const data = depts.map((d, idx) => {
-      // Directions rattachées
-      const subDirections = entities.filter(e => e.level === 'direction' && e.parentId === d.id);
-      const subCount = subDirections.reduce((acc, sub) => acc + (sub.agentCount || 0), 0);
-      const totalCount = d.agentCount || subCount || 20;
-
-      // Utilisateurs applicatifs assignés
-      const systemUsersCount = users.filter(u => u.departementId === d.id).length;
-
+      const members = activeUsers.filter(u => u.role !== 'dg' && deptOf(u) === d.id);
       return {
         id: d.id,
         name: d.name.replace('Département ', ''),
         shortName: d.code.replace('DEPT-', ''),
-        agentsCount: totalCount,
-        systemUsersCount: systemUsersCount || 5,
+        agentsCount: members.length,
+        systemUsersCount: members.length,
+        userIds: members.map(u => u.id),
         color: COLORS[idx % COLORS.length]
       };
     });
-
-    // Ajouter la Direction Générale
-    const dgUsersCount = users.filter(u => u.role === 'dg').length || 2;
-    data.push({
-      id: 'dg-lead',
-      name: 'Direction Générale (Gouvernance)',
-      shortName: 'DG',
-      agentsCount: 4,
-      systemUsersCount: dgUsersCount,
-      color: '#8B5CF6'
-    });
-
+    // Direction générale et comptes non rattachés à un département.
+    const others = activeUsers.filter(u => u.role === 'dg' || !deptOf(u) || !depts.some(d => d.id === deptOf(u)));
+    if (others.length > 0) {
+      data.push({
+        id: 'dg-lead',
+        name: 'Direction Générale & non rattachés',
+        shortName: 'DG',
+        agentsCount: others.length,
+        systemUsersCount: others.length,
+        userIds: others.map(u => u.id),
+        color: '#8B5CF6'
+      });
+    }
     return data;
   }, [entities, users]);
 
@@ -169,82 +183,40 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
   }, [workforceByDepartment]);
 
   // =========================================================================
-  // 2. CALCULS DU RATIO SALARIAL PAR ENTITÉ & DÉPARTEMENT
+  // 2. CALCULS DU RATIO SALARIAL PAR ENTITÉ & DÉPARTEMENT (contrats réels uniquement)
   // =========================================================================
   const salaryRatioByEntity = useMemo(() => {
-    // Normaliser tous les salaires des contrats en USD
     const userSalaryMap: Record<string, number> = {};
-    contracts.forEach(c => {
-      let salUSD = c.baseSalary;
-      if (c.salaryCurrency === 'CDF') {
-        salUSD = c.baseSalary / exchangeRate;
-      }
-      userSalaryMap[c.userId] = salUSD;
+    contracts.filter(c => c.active !== false).forEach(c => {
+      userSalaryMap[c.userId] = c.salaryCurrency === 'CDF' ? c.baseSalary / exchangeRate : c.baseSalary;
     });
-
-    // Regrouper par département
-    const dafUserIds = users.filter(u => u.departementId === 'dept-daf').map(u => u.id);
-    const opsUserIds = users.filter(u => u.departementId === 'dept-ops').map(u => u.id);
-    const dgUserIds = users.filter(u => u.role === 'dg').map(u => u.id);
-
-    const calcTotalSalary = (uIds: string[], defaultTotal: number) => {
-      let sum = 0;
-      let count = 0;
-      uIds.forEach(id => {
-        if (userSalaryMap[id]) {
-          sum += userSalaryMap[id];
-          count++;
-        }
-      });
-      return count > 0 ? sum : defaultTotal;
-    };
-
-    const dafMass = calcTotalSalary(dafUserIds, 8550);
-    const opsMass = calcTotalSalary(opsUserIds, 7000);
-    const dgMass = calcTotalSalary(dgUserIds, 6300);
-
-    const totalMass = dafMass + opsMass + dgMass;
-
-    // Ratios salariaux
-    const entityStats = [
-      {
-        entityId: 'dept-daf',
-        name: 'Admin. & Finances (DAF)',
-        payrollMassUSD: dafMass,
-        payrollMassDisplay: currency === 'CDF' ? dafMass * exchangeRate : dafMass,
-        ratioPercent: Number(((dafMass / totalMass) * 100).toFixed(1)),
-        avgSalaryUSD: Math.round(dafMass / (dafUserIds.length || 5)),
-        headcount: workforceByDepartment.find(w => w.id === 'dept-daf')?.agentsCount || 28,
-        color: '#6366F1'
-      },
-      {
-        entityId: 'dept-ops',
-        name: 'Opérations & VSAT (DOP)',
-        payrollMassUSD: opsMass,
-        payrollMassDisplay: currency === 'CDF' ? opsMass * exchangeRate : opsMass,
-        ratioPercent: Number(((opsMass / totalMass) * 100).toFixed(1)),
-        avgSalaryUSD: Math.round(opsMass / (opsUserIds.length || 4)),
-        headcount: workforceByDepartment.find(w => w.id === 'dept-ops')?.agentsCount || 42,
-        color: '#0EA5E9'
-      },
-      {
-        entityId: 'dg-lead',
-        name: 'Direction Générale (DG)',
-        payrollMassUSD: dgMass,
-        payrollMassDisplay: currency === 'CDF' ? dgMass * exchangeRate : dgMass,
-        ratioPercent: Number(((dgMass / totalMass) * 100).toFixed(1)),
-        avgSalaryUSD: Math.round(dgMass / (dgUserIds.length || 2)),
-        headcount: 4,
-        color: '#8B5CF6'
-      }
-    ];
-
+    const groups = workforceByDepartment.map(w => {
+      const salaries = w.userIds.map(id => userSalaryMap[id]).filter((v): v is number => typeof v === 'number');
+      return { w, mass: salaries.reduce((a, b) => a + b, 0), count: salaries.length };
+    });
+    const totalMass = groups.reduce((a, g) => a + g.mass, 0);
+    const paidCount = Object.keys(userSalaryMap).length;
+    const entityStats = groups.map(({ w, mass, count }) => ({
+      entityId: w.id,
+      name: w.name,
+      payrollMassUSD: mass,
+      payrollMassDisplay: currency === 'CDF' ? mass * exchangeRate : mass,
+      ratioPercent: totalMass > 0 ? Number(((mass / totalMass) * 100).toFixed(1)) : 0,
+      avgSalaryUSD: count > 0 ? Math.round(mass / count) : 0,
+      headcount: w.agentsCount,
+      color: w.color
+    }));
     return {
       entityStats,
       totalMassUSD: totalMass,
-      avgSalaryOverallUSD: Math.round(totalMass / (contracts.length || 11))
+      avgSalaryOverallUSD: paidCount > 0 ? Math.round(Object.values(userSalaryMap).reduce((a, b) => a + b, 0) / paidCount) : 0
     };
-  }, [contracts, users, workforceByDepartment, currency, exchangeRate]);
+  }, [contracts, workforceByDepartment, currency, exchangeRate]);
+
+  const topCostEntity = useMemo(
+    () => [...salaryRatioByEntity.entityStats].sort((a, b) => b.payrollMassUSD - a.payrollMassUSD)[0],
+    [salaryRatioByEntity]
+  );
 
   // =========================================================================
   // 3. RÉPARTITION SALARIALE PAR CATÉGORIE PROFESSIONNELLE
@@ -336,7 +308,7 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
           </div>
 
           <div className="text-[11px] font-mono text-slate-500 bg-sky-50 border border-sky-200 px-3 py-1.5 rounded-xl">
-            Taux BCC : 1 USD = {exchangeRate.toLocaleString()} CDF
+            Taux : 1 USD = {exchangeRate.toLocaleString('fr-FR')} CDF
           </div>
         </div>
       </div>
@@ -357,10 +329,13 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
             <span className="text-xs font-medium text-emerald-600">Collaborateurs</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-            <span>DOP (42)</span> • <span>DAF (28)</span> • <span>DG (4)</span>
+            {workforceByDepartment.length === 0
+              ? <span>Aucun compte rattaché</span>
+              : workforceByDepartment.slice(0, 3).map((w, i) => <span key={w.id}>{i > 0 ? ' • ' : ''}{w.shortName} ({w.agentsCount})</span>)}
           </div>
         </div>
 
+        {canSeeSalaries && (<>
         {/* KPI 2 : Masse Salariale Mensuelle */}
         <div className="bg-white rounded-2xl border border-sky-200 p-4 shadow-sm hover:shadow-md transition">
           <div className="flex items-center justify-between">
@@ -375,7 +350,7 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
             </span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            Conforme déclarations trimestrielles CNSS
+            Somme des salaires de base des contrats actifs
           </div>
         </div>
 
@@ -393,29 +368,30 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
             </span>
             <span className="text-[11px] text-slate-500">/ agent</span>
           </div>
-          <div className="text-[11px] text-emerald-600 font-semibold mt-1">
-            Supérieur au SMIG légal RDC
+          <div className="text-[11px] text-slate-400 mt-1">
+            Salaire de base moyen (contrats actifs)
           </div>
         </div>
 
         {/* KPI 4 : Ratio Salarial Opérations / Support */}
         <div className="bg-white rounded-2xl border border-sky-200 p-4 shadow-sm hover:shadow-md transition">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Ratio DAF vs Opérations</span>
+            <span className="text-xs font-semibold text-slate-500">Entité la plus coûteuse</span>
             <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
               <Scale className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-black text-purple-900 font-mono">
-              {salaryRatioByEntity.entityStats[0].ratioPercent}% / {salaryRatioByEntity.entityStats[1].ratioPercent}%
+              {topCostEntity && topCostEntity.payrollMassUSD > 0 ? `${topCostEntity.ratioPercent}%` : '—'}
             </span>
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Équilibre budgétaire télécoms & logistique
+          <div className="text-[11px] text-slate-400 mt-1 truncate">
+            {topCostEntity && topCostEntity.payrollMassUSD > 0 ? `${topCostEntity.name} — part de la masse salariale` : 'Aucun contrat enregistré'}
           </div>
         </div>
 
+        </>)}
       </div>
 
       {/* SECTION GRAPHIQUES RECHARTS (2 COLONNES) */}
@@ -474,13 +450,14 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
               <div key={d.id} className="p-2 rounded-xl bg-slate-50 border border-slate-100">
                 <span className="text-slate-500 text-[10px] block font-semibold">{d.shortName}</span>
                 <span className="text-base font-bold text-slate-900 font-mono mt-0.5 block">{d.agentsCount}</span>
-                <span className="text-[10px] text-slate-400">{((d.agentsCount / totalHeadcount) * 100).toFixed(1)}%</span>
+                <span className="text-[10px] text-slate-400">{((d.agentsCount / (totalHeadcount || 1)) * 100).toFixed(1)}%</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* GRAPHIQUE 2 : RATIO DE LA MASSE SALARIALE PAR ENTITÉ (% ET MONTANT) */}
+        {canSeeSalaries && (
+        <>{/* GRAPHIQUE 2 : RATIO DE LA MASSE SALARIALE PAR ENTITÉ (% ET MONTANT) */}
         <div className="bg-white rounded-3xl border border-sky-200 p-6 shadow-sm flex flex-col justify-between">
           <div className="mb-4">
             <div className="flex items-center justify-between">
@@ -548,10 +525,13 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
             ))}
           </div>
         </div>
+        </>
+        )}
 
       </div>
 
-      {/* GRAPHIQUE ÉVOLUTION DES PERFORMANCES ET PRODUCTIVITÉ (LINECHART RECHARTS) */}
+      {/* GRAPHIQUE ÉVOLUTION DES PERFORMANCES (données de démonstration : aucun indicateur réel n'existe encore) */}
+      {DEMO_MODE && (
       <div className="bg-white rounded-3xl border border-sky-200 p-6 shadow-sm">
         
         {/* En-tête avec titre, métriques et filtres */}
@@ -797,7 +777,10 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
 
       </div>
 
+      )}
+
       {/* GRAPHIQUE 3 : COMPARAISON SALAIRE MOYEN & EFFECTIF PAR CATÉGORIE PROFESSIONNELLE */}
+      {canSeeSalaries && (<>
       <div className="bg-white rounded-3xl border border-sky-200 p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
           <div>
@@ -898,7 +881,7 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
                   </td>
                   <td className="p-3.5 text-center text-slate-700">{e.headcount} agents</td>
                   <td className="p-3.5 text-center text-slate-600 font-sans">
-                    {((e.headcount / totalHeadcount) * 100).toFixed(1)}%
+                    {((e.headcount / (totalHeadcount || 1)) * 100).toFixed(1)}%
                   </td>
                   <td className="p-3.5 text-right font-bold text-indigo-900">
                     {formatVal(e.payrollMassUSD)}
@@ -923,12 +906,14 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
         </div>
       </div>
 
+      </>)}
+
       {/* ========================================================================= */}
       {/* SECTION RÉSERVÉE : ACTIVITÉS & DISPONIBILITÉS DES 6 HUBS PROVINCIAUX      */}
       {/* RÈGLE STRICTE : SEULS LES RESPONSABLES LOGISTIQUE, TECHNIQUE ET LE DG    */}
       {/* PEUVENT VISUALISER LES ACTIVITÉS DE CES DERNIERS.                        */}
       {/* ========================================================================= */}
-      {currentUser && canViewHubActivities(currentUser) && (
+      {currentUser && canViewHubActivities(currentUser) && hubs.length > 0 && (
         <div className="bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 rounded-3xl border border-amber-500/30 p-6 shadow-xl space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div className="flex items-center gap-3">
@@ -938,7 +923,7 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-base font-black text-white tracking-tight">
-                    Activités & Indicateurs Stratégiques des 6 Hubs Provinciaux (RDC)
+                    Activités & Indicateurs des Hubs Provinciaux ({hubs.length})
                   </h4>
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/40 flex items-center gap-1">
                     <ShieldCheck className="w-3 h-3 text-amber-400" />
@@ -964,10 +949,10 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
 
           {/* Grille des 6 Hubs Provinciaux */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {initialHubs.map(hub => {
-              const hubStocks = initialHubStocks.filter(s => s.hubId === hub.id);
-              const totalVal = hubStocks.reduce((acc, s) => acc + s.totalValueUSD, 0);
-              const alertCount = hubStocks.filter(s => s.status === 'alerte_basse' || s.status === 'rupture').length;
+            {hubs.map(hub => {
+              const stocksOfHub = hubStocks.filter(s => s.hubId === hub.id);
+              const totalVal = stocksOfHub.reduce((acc, s) => acc + s.totalValueUSD, 0);
+              const alertCount = stocksOfHub.filter(s => s.status === 'alerte_basse' || s.status === 'rupture').length;
               const hasAlert = alertCount > 0;
 
               return (
@@ -1031,7 +1016,7 @@ export const WorkspaceDashboard: React.FC<WorkspaceDashboardProps> = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-              {initialStockMovements.map(mvt => (
+              {hubMovements.map(mvt => (
                 <div key={mvt.id} className="p-2.5 bg-slate-900 rounded-xl border border-slate-800 text-xs space-y-1">
                   <div className="flex justify-between items-center text-[10px]">
                     <span className="font-mono font-bold text-indigo-300">{mvt.movementNumber}</span>

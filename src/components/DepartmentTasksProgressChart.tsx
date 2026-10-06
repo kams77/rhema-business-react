@@ -32,6 +32,87 @@ import {
   FileCheck
 } from 'lucide-react';
 import type { TaskItem, HierarchicalEntity, User } from '../types';
+import { DEMO_MODE } from '../config';
+import { addDaysLocal, todayLocal } from '../lib/dates';
+
+const DONE_STATUSES: TaskItem['status'][] = ['validee_terminee', 'termine'];
+
+/** Date de fin d'une tâche : signature, sinon dernière étape cochée (AAAA-MM-JJ si lisible). */
+function completionDate(t: TaskItem): string | null {
+  const stamps = [t.signature?.timestamp, ...t.steps.map(s => s.completedAt)].filter(Boolean) as string[];
+  const iso = stamps
+    .map(v => {
+      const m = /(\d{4})-(\d{2})-(\d{2})/.exec(v) || null;
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      const f = /(\d{2})\/(\d{2})\/(\d{4})/.exec(v);
+      return f ? `${f[3]}-${f[2]}-${f[1]}` : null;
+    })
+    .filter(Boolean) as string[];
+  return iso.sort().pop() ?? null;
+}
+
+/** Synthèse réelle des tâches (production) : aucune courbe inventée. */
+const RealTasksSummary: React.FC<{ tasks: TaskItem[]; entities: HierarchicalEntity[]; className?: string }> = ({ tasks, entities, className = '' }) => {
+  const today = todayLocal();
+  const since = addDaysLocal(-30);
+  const done = tasks.filter(t => DONE_STATUSES.includes(t.status));
+  const doneLast30 = done.filter(t => { const d = completionDate(t); return d !== null && d >= since; }).length;
+  const open = tasks.filter(t => !DONE_STATUSES.includes(t.status));
+  const late = open.filter(t => t.dueDate && t.dueDate < today).length;
+  const counts: Array<[string, number, string]> = [
+    ['À faire', tasks.filter(t => t.status === 'a_faire').length, 'text-slate-700'],
+    ['En cours', tasks.filter(t => t.status === 'en_cours').length, 'text-sky-700'],
+    ['En attente d’approbation', tasks.filter(t => t.status === 'en_attente_approbation').length, 'text-amber-700'],
+    ['Bloquées', tasks.filter(t => t.status === 'bloquee').length, 'text-rose-700'],
+    ['Terminées', done.length, 'text-emerald-700'],
+  ];
+  const byEntity = entities
+    .map(e => ({ e, total: tasks.filter(t => t.assignedEntityId === e.id).length, done: done.filter(t => t.assignedEntityId === e.id).length }))
+    .filter(x => x.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6);
+  return (
+    <div className={`bg-white rounded-3xl border border-sky-200 p-6 shadow-sm space-y-4 ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+          <BarChart3 className="w-4 h-4 text-sky-600" /> Avancement des tâches
+        </h3>
+        <span className="text-[11px] text-slate-500">
+          {doneLast30} terminée(s) ces 30 derniers jours • {late} en retard
+        </span>
+      </div>
+      {tasks.length === 0 ? (
+        <p className="text-xs text-slate-400">Aucune tâche enregistrée pour le moment.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {counts.map(([label, n, color]) => (
+              <div key={label} className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                <div className="text-[10px] text-slate-500 font-semibold">{label}</div>
+                <div className={`text-xl font-black font-mono ${color}`}>{n}</div>
+              </div>
+            ))}
+          </div>
+          {byEntity.length > 0 && (
+            <div className="space-y-1.5">
+              {byEntity.map(({ e, total, done: d }) => (
+                <div key={e.id} className="text-xs">
+                  <div className="flex justify-between text-slate-600">
+                    <span className="truncate">{e.name}</span>
+                    <span className="font-mono">{d}/{total}</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500" style={{ width: `${Math.round((d / total) * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 interface DepartmentTasksProgressChartProps {
   tasks?: TaskItem[];
@@ -264,6 +345,18 @@ const RECENT_COMPLETED_TASKS = [
 ];
 
 export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChartProps> = ({
+  tasks = [],
+  entities = [],
+  users = [],
+  currentUser,
+  className = ''
+}) => {
+  if (!DEMO_MODE) return <RealTasksSummary tasks={tasks} entities={entities} className={className} />;
+  return <DemoDepartmentTasksProgressChart tasks={tasks} entities={entities} users={users} currentUser={currentUser} className={className} />;
+};
+
+/** Version de démonstration (courbes illustratives). */
+const DemoDepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChartProps> = ({
   tasks = [],
   entities = [],
   users = [],

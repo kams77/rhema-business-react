@@ -1,5 +1,7 @@
 // src/components/logistics/HubsStockManagementTab.tsx
 import { contentHashSync } from '../../lib/integrity';
+import { localDateTime, todayLocal } from '../../lib/dates';
+import { nextReference } from '../../lib/sequence';
 import React, { useState, useMemo } from 'react';
 import type { 
   User, 
@@ -919,6 +921,7 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
           stocks={stocks}
           catalog={catalog}
           currentUser={currentUser}
+          movements={movements}
           onClose={() => setShowNewMovementModal(false)}
           onSave={(mvt) => {
             onAddMovement(mvt);
@@ -1053,7 +1056,7 @@ const AddHubModal: React.FC<AddHubModalProps> = ({ hubs, onClose, onSave }) => {
       status: 'actif',
       coverageZones: zones.split(',').map(z => z.trim()).filter(Boolean),
       securityLevel,
-      createdAt: new Date().toISOString().split('T')[0]
+      createdAt: todayLocal()
     };
 
     onSave(newHub);
@@ -1209,6 +1212,7 @@ interface NewStockMovementModalProps {
   stocks: HubStockItem[];
   catalog: LogisticsItem[];
   currentUser: User;
+  movements: StockMovementItem[];
   onClose: () => void;
   onSave: (mvt: StockMovementItem) => void;
 }
@@ -1220,6 +1224,7 @@ const NewStockMovementModal: React.FC<NewStockMovementModalProps> = ({
   stocks,
   catalog,
   currentUser,
+  movements,
   onClose,
   onSave
 }) => {
@@ -1245,7 +1250,7 @@ const NewStockMovementModal: React.FC<NewStockMovementModalProps> = ({
     const destHub = hubs.find(h => h.id === destinationHubId);
 
     const prefix = type === 'entree_fournisseur' ? 'BES' : type === 'sortie_deploiement' ? 'BSS' : 'OTIH';
-    const movementNumber = `${prefix}-2026-${Date.now().toString(36).toUpperCase()}`;
+    const movementNumber = nextReference(prefix, movements.map(m => m.movementNumber));
 
     // S/N scannés ou saisis manuellement
     const parsedSN = serialNumbersText
@@ -1282,10 +1287,10 @@ const NewStockMovementModal: React.FC<NewStockMovementModalProps> = ({
       operatorId: currentUser.id,
       operatorName: currentUser.name,
       operatorRole: currentUser.role,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocal(),
       status: type === 'transfert_inter_hub' ? 'en_transit' : 'valide',
       approvedByManagerName: currentUser.name,
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`,
+      approvedAt: localDateTime(),
       electronicSealHash: '',
       notes: notes.trim()
     };

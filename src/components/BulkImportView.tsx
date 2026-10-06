@@ -1,5 +1,13 @@
 // src/components/BulkImportView.tsx
 import { contentHashSync } from '../lib/integrity';
+import { localDateTime, todayLocal } from '../lib/dates';
+import { cellGetter, csvEscape, normalizeHeader, parseCsv, parseDateCell, parseMonthCell } from '../lib/csv';
+import { parseAmount, round2 } from '../lib/money';
+import { nextReference } from '../lib/sequence';
+import { useRate } from '../lib/exchangeRate';
+import { ATTENDANCE_KEY, periodStartForWorkingDays, summarizeAttendance, type AttendancePunch } from '../lib/attendance';
+import { usePersistentState } from '../hooks/usePersistentState';
+import { newId } from '../utils/id';
 import React, { useState, useId } from 'react';
 import { DEMO_MODE, DEMO_PASSWORD } from '../config';
 import { generateTemporaryPassword } from '../lib/auth';
@@ -72,6 +80,9 @@ interface ParsedEmployeeRow {
   compteBancaire: string;
   modePaiement: 'virement' | 'mobile_money' | 'cheque' | 'especes';
   dependentsCount: number;
+  /** Date d'embauche (AAAA-MM-JJ) : base de l'ancienneté. */
+  dateEmbauche: string;
+  entityId?: string;
   isValid: boolean;
   errors: string[];
 }
@@ -106,6 +117,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   onLogAction,
   onAddDocument,
 }) => {
+  const exchangeRate = useRate();
+  const [punches] = usePersistentState<AttendancePunch[]>(ATTENDANCE_KEY, []);
   const [activeTab, setActiveTab] = useState<BulkImportTab>('employees_csv');
 
   // Input file IDs uniques et sûrs
@@ -141,38 +154,38 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   // GABARITS CSV TÉLÉCHARGEABLES
   // =========================================================================
   const downloadEmployeeTemplate = () => {
-    const header = "matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge\n";
+    const header = "matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,date_embauche,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge\n";
+    // Lignes d'exemple (à remplacer) : les entités proposées sont celles de votre organigramme.
+    const ent1 = entities.find(e => e.level === 'service')?.name || entities[0]?.name || 'Nom exact du service';
+    const ent2 = entities.find(e => e.level === 'departement')?.name || ent1;
     const sample = [
-      "MAT-2026-101,Kalombo,Dieudonné,d.kalombo@rhemabusiness.com,+243 81 222 3344,agent,Technicien Faisceaux Hertziens,Service Déploiement VSAT,CDI,1200,USD,01-83-CNSS-991,Rawbank Kinshasa,01002-39201928019-88,virement,3",
-      "MAT-2026-102,Mwamba,Nathalie,n.mwamba@rhemabusiness.com,+243 82 333 4455,agent,Comptable Auxiliaire,Service Comptabilité & Trésorerie,CDI,950,USD,01-83-CNSS-992,Equity BCDC,00012-92019201920-12,virement,1",
-      "MAT-2026-103,Mutombo,Gabriel,g.mutombo@rhemabusiness.com,+243 99 444 5566,chef_service,Superviseur NOC Réseau,Service Support & Supervision,CDI,1600,USD,01-83-CNSS-993,Rawbank Kinshasa,01002-44910294819-22,virement,4",
-      "MAT-2026-104,Bikangi,Christian,c.bikangi@rhemabusiness.com,+243 85 555 6677,agent,Développeur Logiciel Intégration,Service Support & Supervision,CDD,800,USD,01-83-CNSS-994,Rawbank Kinshasa,01002-88291049281-99,virement,0"
+      `,Exemple,Agent,agent.exemple@votre-entreprise.cd,+243 81 000 0000,agent,Technicien,${csvEscape(ent1)},CDI,2024-03-01,"1200,00",USD,,Nom de la banque,Numéro de compte,virement,2`,
+      `,Exemple,Responsable,responsable.exemple@votre-entreprise.cd,,chef_service,Chef de service,${csvEscape(ent2)},CDD,15/01/2025,950,USD,,,,mobile_money,0`,
     ].join("\n");
 
-    const blob = new Blob([header + sample], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\uFEFF' + header + sample], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `Gabarit_Import_Employes_RDC_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `Gabarit_Import_Employes_RDC_${todayLocal()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const downloadPayrollTemplate = () => {
-    const header = "periode,matricule,nom_employe,salaire_base,primes,heures_sup,devise,taux_change_bcc,cnss_salarie_5pct,ipr_deduction,net_paye,banque,ref_virement\n";
+    const header = "periode,matricule,nom_employe,salaire_base,primes,heures_sup,devise,taux_change,cnss_salarie,ipr_deduction,net_paye,banque,ref_virement\n";
+    // Ligne d'exemple (à remplacer par les montants réellement versés) : brut − CNSS − IPR = net.
+    const sampleUser = users.find(u => u.matricule);
     const sample = [
-      "2026-08,MAT-2026-006,Eric Ndong,1500,100,75,USD,2850,75,160,1340,Rawbank Kinshasa,RAW-HIST-202608-48201",
-      "2026-08,MAT-2026-005,Sophie Traoré,1950,150,0,USD,2850,97.5,210,1792.5,Rawbank Kinshasa,RAW-HIST-202608-48202",
-      "2026-08,MAT-2026-007,Claire Mwamba,850,50,45,USD,2850,42.5,90,762.5,Equity BCDC,EQ-HIST-202608-91022",
-      "2026-07,MAT-2026-006,Eric Ndong,1500,80,60,USD,2850,75,155,1350,Rawbank Kinshasa,RAW-HIST-202607-33102"
+      `2026-08,${csvEscape(sampleUser?.matricule || 'MAT-2026-001')},${csvEscape(sampleUser?.name || 'Nom Prénom')},1500,100,0,USD,${exchangeRate},80,160,1360,Nom de la banque,Référence du virement`,
     ].join("\n");
 
-    const blob = new Blob([header + sample], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\uFEFF' + header + sample], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `Gabarit_Historique_Paie_RDC_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `Gabarit_Historique_Paie_RDC_${todayLocal()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -183,37 +196,32 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   // =========================================================================
   const parseEmployeesCSV = (csvText: string) => {
     setEmployeeImportSuccess(null);
-    const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length < 2) {
+    const { headers, rows } = parseCsv(csvText);
+    if (rows.length === 0) {
       setParsedEmployees([]);
       return;
     }
 
-    // Détection séparateur (, ou ;)
-    const sep = lines[0].includes(';') ? ';' : ',';
-    const headers = lines[0].split(sep).map(h => h.toLowerCase().replace(/["']/g, '').trim());
-
     const result: ParsedEmployeeRow[] = [];
+    // Matricules déjà pris (annuaire + lignes précédentes du fichier) pour attribuer les suivants.
+    const takenMatricules: string[] = users.map(u => u.matricule || '');
+    const seenEmails = new Set<string>();
+    const norm = (v: string) => normalizeHeader(v).replace(/_/g, ' ');
 
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(sep).map(v => v.replace(/["']/g, '').trim());
-      if (values.length < 3) continue;
+    rows.forEach((values, rowIdx) => {
+      const i = rowIdx + 1;
+      const getVal = cellGetter(headers, values);
+      const errors: string[] = [];
 
-      const getVal = (possibleKeys: string[]): string => {
-        for (const k of possibleKeys) {
-          const idx = headers.indexOf(k);
-          if (idx !== -1 && values[idx] !== undefined) return values[idx];
-        }
-        return '';
-      };
-
-      const matricule = getVal(['matricule', 'id', 'mat', 'code']) || `MAT-2026-${Math.floor(100 + Math.random() * 900)}`;
-      const nom = getVal(['nom', 'lastname', 'name']) || 'Collaborateur';
-      const prenom = getVal(['prenom', 'firstname']) || '';
-      const email = getVal(['email', 'mail']) || `${nom.toLowerCase().replace(/\s/g, '')}@rhemabusiness.com`;
-      const telephone = getVal(['telephone', 'phone', 'tel']) || '+243 81 279 1228';
+      const nom = getVal(['nom', 'lastname', 'name']);
+      const prenom = getVal(['prenom', 'firstname']);
+      const providedMatricule = getVal(['matricule', 'id', 'mat', 'code']);
+      const matricule = providedMatricule || nextReference('MAT', takenMatricules);
+      takenMatricules.push(matricule);
+      const email = getVal(['email', 'mail']).toLowerCase();
+      const telephone = getVal(['telephone', 'phone', 'tel']);
       const rawRole = getVal(['role', 'grade', 'statut']).toLowerCase();
-      
+
       let role: UserRole = 'agent';
       // Comparaison par mots entiers : « Budget » ne doit jamais donner le rôle DG.
       if (rawRole === 'dg' || titleHasAny(rawRole, ['dg', 'pdg', 'directeur general'])) role = 'dg';
@@ -222,9 +230,9 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       else if (rawRole.includes('chef_division') || titleHasAny(rawRole, ['division'])) role = 'chef_division';
       else if (rawRole.includes('chef_service') || titleHasAny(rawRole, ['service', 'chef service'])) role = 'chef_service';
 
-      const roleTitle = getVal(['intitule_poste', 'poste', 'fonction', 'title']) || 'Agent Spécialiste';
-      const nomEntite = getVal(['nom_entite', 'entite', 'service', 'departement']) || 'Service Opérationnel VSAT';
-      
+      const roleTitle = getVal(['intitule_poste', 'poste', 'fonction', 'title']) || 'Agent';
+      const nomEntite = getVal(['nom_entite', 'entite', 'service', 'departement']);
+
       const rawContract = getVal(['type_contrat', 'contrat']).toUpperCase();
       let typeContrat: ParsedEmployeeRow['typeContrat'] = 'CDI';
       if (rawContract.includes('CDD')) typeContrat = 'CDD';
@@ -232,31 +240,50 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       else if (rawContract.includes('CONSULT')) typeContrat = 'Consultant';
       else if (rawContract.includes('JOURN')) typeContrat = 'Journalier';
 
-      const salaireBase = parseFloat(getVal(['salaire_base', 'salaire', 'base', 'salary']).replace(/[^0-9.]/g, '')) || 800;
+      const salaire = parseAmount(getVal(['salaire_base', 'salaire', 'base', 'salary']));
+      const salaireBase = salaire ?? 0;
       const rawDevise = getVal(['devise', 'currency']).toUpperCase();
-      const devise: 'USD' | 'CDF' = rawDevise.includes('CDF') ? 'CDF' : 'USD';
-      const cnssNumero = getVal(['cnss_numero', 'cnss']) || `01-83-CNSS-${Math.floor(1000 + Math.random() * 9000)}`;
-      const banque = getVal(['banque', 'bank']) || 'Rawbank Kinshasa';
-      const compteBancaire = getVal(['compte_bancaire', 'compte', 'account']) || '01002-39201928019-88';
-      
+      const devise: 'USD' | 'CDF' = rawDevise.includes('CDF') || rawDevise === 'FC' ? 'CDF' : 'USD';
+      const cnssNumero = getVal(['cnss_numero', 'cnss']);
+      const banque = getVal(['banque', 'bank']);
+      const compteBancaire = getVal(['compte_bancaire', 'compte', 'account']);
+
       const rawMode = getVal(['mode_paiement', 'paiement']).toLowerCase();
       let modePaiement: ParsedEmployeeRow['modePaiement'] = 'virement';
       if (rawMode.includes('mobile') || rawMode.includes('m-pesa') || rawMode.includes('orange')) modePaiement = 'mobile_money';
-      else if (rawMode.includes('cheque')) modePaiement = 'cheque';
-      else if (rawMode.includes('espece')) modePaiement = 'especes';
+      else if (rawMode.includes('cheque') || rawMode.includes('chèque')) modePaiement = 'cheque';
+      else if (rawMode.includes('espece') || rawMode.includes('espèce')) modePaiement = 'especes';
 
-      const dependentsCount = parseInt(getVal(['personnes_charge', 'enfants', 'charges'])) || 0;
+      const rawDependents = getVal(['personnes_charge', 'enfants', 'charges']);
+      const dependentsCount = rawDependents ? Number.parseInt(rawDependents, 10) : 0;
+      if (!Number.isInteger(dependentsCount) || dependentsCount < 0) errors.push('Nombre de personnes à charge invalide');
 
-      // Validation
-      const errors: string[] = [];
+      const rawHire = getVal(['date_embauche', 'embauche', 'date_entree', 'date_debut']);
+      const parsedHire = rawHire ? parseDateCell(rawHire) : null;
+      if (rawHire && !parsedHire) errors.push(`Date d'embauche illisible : « ${rawHire} » (format AAAA-MM-JJ ou JJ/MM/AAAA)`);
+      const dateEmbauche = parsedHire || todayLocal();
+
+      // Entité : correspondance exacte du nom ou du code (sans accents ni majuscules).
+      const entityMatch = nomEntite
+        ? entities.find(e => norm(e.name) === norm(nomEntite) || (e.code && norm(e.code) === norm(nomEntite)))
+        : undefined;
+      if (!nomEntite) errors.push('Entité (service / département) obligatoire');
+      else if (!entityMatch) errors.push(`Entité inconnue dans l'organigramme : « ${nomEntite} »`);
+
+      if (salaire === null) errors.push('Salaire de base manquant ou illisible');
+      if (modePaiement === 'virement' && !compteBancaire) errors.push('Compte bancaire obligatoire pour un paiement par virement');
+      if (!email) errors.push('Email obligatoire (identifiant de connexion)');
+      else if (seenEmails.has(email)) errors.push('Email présent deux fois dans le fichier');
+      seenEmails.add(email);
+      if (providedMatricule && takenMatricules.filter(m => m.toLowerCase() === matricule.toLowerCase()).length > 1) {
+        errors.push('Matricule déjà attribué');
+      }
+
       if (!nom) errors.push("Nom obligatoire");
       if (!email.includes('@')) errors.push("Email invalide");
       if (salaireBase <= 0) errors.push("Salaire de base nul ou négatif");
       if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
         errors.push("Email déjà existant dans l'ERP");
-      }
-      if (users.some(u => u.matricule && u.matricule.toLowerCase() === matricule.toLowerCase())) {
-        errors.push("Matricule déjà attribué");
       }
 
       result.push({
@@ -277,10 +304,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         compteBancaire,
         modePaiement,
         dependentsCount,
+        dateEmbauche,
+        entityId: entityMatch?.id,
         isValid: errors.length === 0,
         errors
       });
-    }
+    });
 
     setParsedEmployees(result);
   };
@@ -296,13 +325,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
     const credentials: Array<{ name: string; email: string; matricule: string; password: string }> = [];
 
     valids.forEach(row => {
-      const userId = `usr-csv-${Date.now()}-${row.index}-${Math.random().toString(36).substring(2, 6)}`;
-      
-      // Recherche entité concordante ou service par défaut
-      const matchedEntity = entities.find(e => 
-        e.name.toLowerCase().includes(row.nomEntite.toLowerCase()) ||
-        row.nomEntite.toLowerCase().includes(e.name.toLowerCase())
-      ) || entities[0];
+      const userId = newId('usr-csv');
+      const matchedEntity = entities.find(e => e.id === row.entityId);
 
       const fullUserName = row.prenom ? `${row.nom} ${row.prenom}` : row.nom;
 
@@ -333,7 +357,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         employeeCode: row.matricule,
         matricule: row.matricule,
         contractType: row.typeContrat,
-        startDate: new Date().toISOString().slice(0, 10),
+        startDate: row.dateEmbauche,
         baseSalary: row.salaireBase,
         salaryCurrency: row.devise,
         categoryPro: row.role === 'dg' ? 'Cadre Dirigeant' : row.role === 'chef_service' ? 'Agent de Maîtrise' : 'Exécution',
@@ -370,7 +394,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `identifiants-provisoires-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `identifiants-provisoires-${todayLocal()}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -390,53 +414,71 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   // =========================================================================
   const parsePayrollCSV = (csvText: string) => {
     setPayrollImportSuccess(null);
-    const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length < 2) {
+    const { headers, rows } = parseCsv(csvText);
+    if (rows.length === 0) {
       setParsedPayroll([]);
       return;
     }
 
-    const sep = lines[0].includes(';') ? ';' : ',';
-    const headers = lines[0].split(sep).map(h => h.toLowerCase().replace(/["']/g, '').trim());
-
     const result: ParsedPayrollRow[] = [];
+    let firstPeriod: string | null = null;
+    let firstCurrency: 'USD' | 'CDF' | null = null;
+    const seen = new Set<string>();
 
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(sep).map(v => v.replace(/["']/g, '').trim());
-      if (values.length < 3) continue;
-
-      const getVal = (keys: string[]): string => {
-        for (const k of keys) {
-          const idx = headers.indexOf(k);
-          if (idx !== -1 && values[idx] !== undefined) return values[idx];
+    rows.forEach((values, rowIdx) => {
+      const i = rowIdx + 1;
+      const getVal = cellGetter(headers, values);
+      const errors: string[] = [];
+      // Montant obligatoire : une cellule vide est une erreur, un vrai 0 est accepté.
+      const amount = (keys: string[], label: string, required = true): number => {
+        const raw = getVal(keys);
+        const n = parseAmount(raw);
+        if (n === null) {
+          if (required || raw) errors.push(raw ? `${label} illisible : « ${raw} »` : `${label} manquant`);
+          return 0;
         }
-        return '';
+        if (n < 0) errors.push(`${label} négatif`);
+        return n;
       };
 
-      const periode = getVal(['periode', 'mois', 'month', 'run']) || '2026-08';
-      const matricule = getVal(['matricule', 'id', 'code']) || '';
-      const nomEmploye = getVal(['nom_employe', 'nom', 'nom_agent']) || 'Agent';
-      const salaireBase = parseFloat(getVal(['salaire_base', 'base', 'salaire']).replace(/[^0-9.]/g, '')) || 0;
-      const primes = parseFloat(getVal(['primes', 'prime', 'bonus']).replace(/[^0-9.]/g, '')) || 0;
-      const heuresSupPay = parseFloat(getVal(['heures_sup', 'heures_supplémentaires', 'overtime']).replace(/[^0-9.]/g, '')) || 0;
-      
+      const rawPeriod = getVal(['periode', 'mois', 'month', 'run']);
+      const periode = parseMonthCell(rawPeriod) || '';
+      if (!periode) errors.push(rawPeriod ? `Période illisible : « ${rawPeriod} » (format AAAA-MM)` : 'Période manquante');
+      const matricule = getVal(['matricule', 'id', 'code']);
+      const agent = matricule ? users.find(u => (u.matricule || '').toLowerCase() === matricule.toLowerCase()) : undefined;
+      if (!matricule) errors.push('Matricule manquant');
+      else if (!agent) errors.push(`Matricule inconnu dans l'annuaire : ${matricule}`);
+      const nomEmploye = getVal(['nom_employe', 'nom', 'nom_agent']) || agent?.name || '';
+
+      const salaireBase = amount(['salaire_base', 'base', 'salaire'], 'Salaire de base');
+      const primes = amount(['primes', 'prime', 'bonus'], 'Primes', false);
+      const heuresSupPay = amount(['heures_sup', 'heures_supplementaires', 'overtime'], 'Heures supplémentaires', false);
+      // Archive : les retenues et le net sont ceux réellement appliqués, ils ne sont jamais devinés.
+      const cnssSalarie = amount(['cnss_salarie', 'cnss_salarie_5pct', 'cnss', 'cnss_sal'], 'CNSS salarié');
+      const iprTax = amount(['ipr_deduction', 'ipr', 'impot'], 'IPR');
+      const netPaye = amount(['net_paye', 'net', 'salaire_net'], 'Net payé');
+
       const rawDevise = getVal(['devise', 'currency']).toUpperCase();
-      const devise: 'USD' | 'CDF' = rawDevise.includes('CDF') ? 'CDF' : 'USD';
-      const tauxChange = parseFloat(getVal(['taux_change_bcc', 'taux', 'rate'])) || 2850;
+      const devise: 'USD' | 'CDF' = rawDevise.includes('CDF') || rawDevise === 'FC' ? 'CDF' : 'USD';
+      const rawRate = getVal(['taux_change', 'taux_change_bcc', 'taux', 'rate']);
+      const parsedRate = parseAmount(rawRate);
+      if (rawRate && (parsedRate === null || parsedRate <= 0)) errors.push(`Taux de change illisible : « ${rawRate} »`);
+      const tauxChange = parsedRate && parsedRate > 0 ? parsedRate : exchangeRate;
 
-      const gross = salaireBase + primes + heuresSupPay;
-      // Règle RDC : CNSS Salarié 5%
-      const rawCnss = parseFloat(getVal(['cnss_salarie_5pct', 'cnss', 'cnss_sal'])) || (gross * 0.05);
-      // Règle RDC : IPR estimation barème
-      const rawIpr = parseFloat(getVal(['ipr_deduction', 'ipr', 'impot'])) || ((gross - rawCnss) * 0.15);
-      const netPaye = parseFloat(getVal(['net_paye', 'net', 'salaire_net'])) || (gross - rawCnss - rawIpr);
+      const gross = round2(salaireBase + primes + heuresSupPay);
+      if (errors.length === 0 && Math.abs(gross - cnssSalarie - iprTax - netPaye) > 1) {
+        errors.push(`Net incohérent : brut ${gross} − CNSS ${cnssSalarie} − IPR ${iprTax} ≠ net ${netPaye}`);
+      }
 
-      const banque = getVal(['banque', 'bank']) || 'Rawbank Kinshasa';
-      const refVirement = getVal(['ref_virement', 'reference', 'ref']) || `RAW-HIST-${periode.replace('-', '')}-${rowMatriculeRef(matricule)}`;
-
-      const errors: string[] = [];
-      if (!matricule) errors.push("Matricule manquant");
-      if (salaireBase <= 0) errors.push("Salaire nul ou négatif");
+      if (periode) {
+        firstPeriod ??= periode;
+        if (periode !== firstPeriod) errors.push(`Une seule période par import (${firstPeriod} attendue)`);
+      }
+      firstCurrency ??= devise;
+      if (devise !== firstCurrency) errors.push(`Une seule devise par import (${firstCurrency} attendue)`);
+      const key = `${periode}|${matricule.toLowerCase()}`;
+      if (matricule && seen.has(key)) errors.push('Agent présent deux fois pour cette période');
+      seen.add(key);
 
       result.push({
         index: i,
@@ -448,20 +490,19 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         heuresSupPay,
         devise,
         tauxChange,
-        cnssSalarie: Math.round(rawCnss),
-        iprTax: Math.round(rawIpr),
-        netPaye: Math.round(netPaye),
-        banque,
-        refVirement,
+        cnssSalarie: round2(cnssSalarie),
+        iprTax: round2(iprTax),
+        netPaye: round2(netPaye),
+        banque: getVal(['banque', 'bank']),
+        refVirement: getVal(['ref_virement', 'reference', 'ref']),
         isValid: errors.length === 0,
         errors
       });
-    }
+    });
 
     setParsedPayroll(result);
   };
 
-  const rowMatriculeRef = (mat: string) => mat.replace(/[^0-9]/g, '').slice(-4) || '99';
 
   const handleExecutePayrollImport = () => {
     const valids = parsedPayroll.filter(p => p.isValid);
@@ -469,9 +510,10 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     // Regroupement par période
     const periodeTarget = valids[0].periode;
-    const totalGross = valids.reduce((acc, v) => acc + v.salaireBase + v.primes + v.heuresSupPay, 0);
-    const totalNet = valids.reduce((acc, v) => acc + v.netPaye, 0);
-    const totalEmployerCharges = Math.round(totalGross * 0.162); // 13% CNSS + 3% INPP + 0.2% ONEM
+    const totalGross = round2(valids.reduce((acc, v) => acc + v.salaireBase + v.primes + v.heuresSupPay, 0));
+    const totalNet = round2(valids.reduce((acc, v) => acc + v.netPaye, 0));
+    // Les charges patronales réellement versées ne figurent pas dans le fichier : non renseignées.
+    const totalEmployerCharges = 0;
 
     const newRun: PayrollRunPeriod = {
       id: `run-hist-${periodeTarget}`,
@@ -484,10 +526,10 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       totalNet,
       totalEmployerCharges,
       totalEmployees: valids.length,
-      validatedByDRH: 'M. Jean-Paul Kouassi (DRH Historique)',
-      validatedAtDRH: `${periodeTarget}-28`,
-      bankTransferConfirmedBy: 'Direction Générale (Virement Validé)',
-      bankTransferReference: valids[0].refVirement,
+      validatedByDRH: `Archive importée par ${currentUser.name}`,
+      validatedAtDRH: todayLocal(),
+      bankTransferConfirmedBy: `Archive importée par ${currentUser.name}`,
+      bankTransferReference: valids[0].refVirement || undefined,
       bankTransferConfirmedAt: `${periodeTarget}-29`,
       bankName: valids[0].banque,
       payslipsAutoDispatched: true,
@@ -514,14 +556,14 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         authorEntity: 'Direction des Ressources Humaines (DRH)',
         createdAt: `${row.periode}-28`,
         status: 'signe',
-        size: '1.2 Mo',
+        size: '—',
         fileType: 'PDF',
-        targetUserId: u?.id || `usr-ref-${row.matricule}`,
+        targetUserId: u?.id || '',
         targetUserName: row.nomEmploye,
         isConfidentialPayslip: true,
         amount: row.netPaye,
         currency: row.devise,
-        description: `Bulletin de paie importé depuis un fichier CSV (archive). Virement ${row.banque} (réf. ${row.refVirement}).`,
+        description: `Bulletin de paie importé depuis un fichier CSV (archive). Brut ${round2(row.salaireBase + row.primes + row.heuresSupPay)} ${row.devise}, CNSS ${row.cnssSalarie}, IPR ${row.iprTax}, net ${row.netPaye}.${row.banque ? ` Virement ${row.banque}${row.refVirement ? ` (réf. ${row.refVirement})` : ''}.` : ''}`,
         electronicSignature: {
           signedBy: `Archive importée par ${currentUser.name}`,
           signedAt: new Date().toLocaleString('fr-FR'),
@@ -554,100 +596,97 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   // =========================================================================
   // Calcul et génération des rapports de pointage par entité avec heures supplémentaires
   const generate28DaysReports = (): Attendance28DaysCycleReport[] => {
-    // Regroupement des agents par entité
-    return entities.map((ent, idx) => {
-      // Trouver les agents affectés à cette entité
-      const agentsOfEntity = users.filter(u => 
-        u.role === 'agent' && (u.serviceId === ent.id || u.departementId === ent.id || u.directionId === ent.id)
-      );
+    const endDate = todayLocal();
+    const startDate = periodStartForWorkingDays(targetWorkingDays, endDate);
+    const [, mm, yyyy] = endDate.split('-').reverse();
+    return entities
+      .map(ent => {
+        // Agents rattachés directement à cette entité (aucun agent fictif).
+        const agentsOfEntity = users.filter(u =>
+          u.role !== 'dg' && (u.serviceId || u.divisionId || u.directionId || u.departementId) === ent.id
+        );
+        if (agentsOfEntity.length === 0) return null;
 
-      const count = agentsOfEntity.length > 0 ? agentsOfEntity.length : Math.floor(3 + idx * 2);
+        let totalNormalHours = 0;
+        let totalOvertimeDay = 0;
+        let totalOvertimeNight = 0;
+        let totalOvertimeHoliday = 0;
+        let daysCompleted = 0;
 
-      let totalNormalHours = 0;
-      let totalOvertimeDay = 0;
-      let totalOvertimeNight = 0;
-      let totalOvertimeHoliday = 0;
+        const agentSummaries = agentsOfEntity.map(ag => {
+          const sum = summarizeAttendance(punches, ag.id, startDate, endDate);
+          totalNormalHours += sum.normalHours;
+          totalOvertimeDay += sum.overtimeDay;
+          totalOvertimeNight += sum.overtimeNight;
+          totalOvertimeHoliday += sum.overtimeHoliday;
+          daysCompleted = Math.max(daysCompleted, sum.daysWorked);
+          // Montant indicatif : taux horaire du contrat (salaire / 173,33 h) × majorations saisies.
+          const c = contracts.find(k => k.userId === ag.id && k.active !== false);
+          const hourly = c ? (c.salaryCurrency === 'CDF' ? c.baseSalary / exchangeRate : c.baseSalary) / 173.33 : 0;
+          const bonusUSD =
+            sum.overtimeDay * hourly * (1 + overtimeDayRatePercent / 100) +
+            sum.overtimeNight * hourly * (1 + overtimeNightRatePercent / 100) +
+            sum.overtimeHoliday * hourly * (1 + overtimeHolidayRatePercent / 100);
+          return {
+            userId: ag.id,
+            userName: ag.name,
+            matricule: ag.matricule || '—',
+            daysWorked: sum.daysWorked,
+            normalHours: sum.normalHours,
+            overtimeHours: round2(sum.overtimeDay + sum.overtimeNight + sum.overtimeHoliday),
+            overtimeDay: sum.overtimeDay,
+            overtimeNight: sum.overtimeNight,
+            overtimeHoliday: sum.overtimeHoliday,
+            estimatedOvertimeBonusUSD: round2(bonusUSD)
+          };
+        });
 
-      const agentSummaries = (agentsOfEntity.length > 0 ? agentsOfEntity : [
-        { id: `mock-1-${ent.id}`, name: `Agent Leader (${ent.code})`, matricule: `MAT-2026-0${idx + 1}1` },
-        { id: `mock-2-${ent.id}`, name: `Technicien Équipe (${ent.code})`, matricule: `MAT-2026-0${idx + 1}2` },
-        { id: `mock-3-${ent.id}`, name: `Opérateur Terrain (${ent.code})`, matricule: `MAT-2026-0${idx + 1}3` }
-      ]).map((ag, aIdx) => {
-        const daysWorked = targetWorkingDays; // 28 jours ouvrables atteints
-        const normalHours = daysWorked * 8; // 224 heures normales
-        const overtimeDay = 8 + (aIdx * 4); // heures sup jour
-        const overtimeNight = aIdx % 2 === 0 ? 4 : 0; // heures sup nuit
-        const overtimeHoliday = aIdx === 0 ? 6 : 0; // dimanches & fériés
-        const overtimeTotal = overtimeDay + overtimeNight + overtimeHoliday;
+        const totalOvertimeHours = round2(totalOvertimeDay + totalOvertimeNight + totalOvertimeHoliday);
+        const manager = ent.managerName ? users.find(u => u.name === ent.managerName) : undefined;
+        const reached = daysCompleted >= targetWorkingDays;
 
-        totalNormalHours += normalHours;
-        totalOvertimeDay += overtimeDay;
-        totalOvertimeNight += overtimeNight;
-        totalOvertimeHoliday += overtimeHoliday;
-
-        // Calcul bonus estimé RDC : base horaire moyenne 6 USD/h
-        const baseHourly = 6;
-        const bonusUSD = 
-          (overtimeDay * baseHourly * (1 + overtimeDayRatePercent / 100)) +
-          (overtimeNight * baseHourly * (1 + overtimeNightRatePercent / 100)) +
-          (overtimeHoliday * baseHourly * (1 + overtimeHolidayRatePercent / 100));
-
-        return {
-          userId: ag.id,
-          userName: ag.name,
-          matricule: (ag as any).matricule || `MAT-AG-${aIdx}`,
-          daysWorked,
-          normalHours,
-          overtimeHours: overtimeTotal,
-          overtimeDay,
-          overtimeNight,
-          overtimeHoliday,
-          estimatedOvertimeBonusUSD: Math.round(bonusUSD)
+        const report: Attendance28DaysCycleReport = {
+          id: `rpt-att-${ent.id}-${startDate}`,
+          cycleNumber: Number(mm),
+          monthPeriod: `${mm}/${yyyy}`,
+          workingDaysCompleted: daysCompleted,
+          targetWorkingDays,
+          entityId: ent.id,
+          entityName: ent.name,
+          entityLevel: ent.level,
+          managerId: manager?.id,
+          managerName: ent.managerName || manager?.name || 'Responsable non désigné',
+          managerEmail: ent.managerEmail || manager?.email || '',
+          managerRole: ent.managerRole || manager?.role || (ent.level === 'service' ? 'chef_service' : 'directeur'),
+          totalAgents: agentsOfEntity.length,
+          totalNormalHours: round2(totalNormalHours),
+          totalOvertimeHours,
+          overtimeDayHours: round2(totalOvertimeDay),
+          overtimeNightHours: round2(totalOvertimeNight),
+          overtimeHolidayHours: round2(totalOvertimeHoliday),
+          isAutoDispatched: false,
+          status: reached ? 'cycle_28j_atteint' : 'en_cours',
+          agentSummaries,
+          sha256Hash: contentHashSync({ entity: ent.id, startDate, endDate, agentSummaries }),
+          signatureCert: {
+            signedBy: `Calcul à partir des pointages (${currentOrg.name})`,
+            signedAt: localDateTime(),
+            role: `Période du ${startDate.split('-').reverse().join('/')} au ${endDate.split('-').reverse().join('/')}`
+          }
         };
-      });
-
-      const totalOvertimeHours = totalOvertimeDay + totalOvertimeNight + totalOvertimeHoliday;
-
-      return {
-        id: `rpt-att-28d-${ent.id}`,
-        cycleNumber: 9,
-        monthPeriod: '09/2026',
-        workingDaysCompleted: targetWorkingDays,
-        targetWorkingDays,
-        entityId: ent.id,
-        entityName: ent.name,
-        entityLevel: ent.level,
-        managerName: ent.managerName || 'Chef de Service',
-        managerEmail: ent.managerEmail || `${ent.code.toLowerCase()}@rhemabusiness.com`,
-        managerRole: ent.managerRole || (ent.level === 'service' ? 'chef_service' : 'directeur'),
-        totalAgents: count,
-        totalNormalHours,
-        totalOvertimeHours,
-        overtimeDayHours: totalOvertimeDay,
-        overtimeNightHours: totalOvertimeNight,
-        overtimeHolidayHours: totalOvertimeHoliday,
-        isAutoDispatched: isAutoDispatchSimulated,
-        autoDispatchedAt: isAutoDispatchSimulated ? new Date().toISOString().replace('T', ' ').slice(0, 16) : undefined,
-        status: isAutoDispatchSimulated ? 'transmis_responsable' : 'cycle_28j_atteint',
-        agentSummaries,
-        sha256Hash: contentHashSync({ entity: ent.id, agentSummaries, totalNormalHours, totalOvertimeHours }),
-        signatureCert: {
-          signedBy: `Horodatage Automatique ERP (${currentOrg.name})`,
-          signedAt: new Date().toLocaleTimeString(),
-          role: 'Calcul automatique de présence'
-        }
-      };
-    });
+        return report;
+      })
+      .filter((r): r is Attendance28DaysCycleReport => r !== null);
   };
 
   const reportsList = lastDispatchReport || generate28DaysReports();
 
   // Déclencheur automatique / simulation envoi
   const handleTriggerAutoDispatch28Days = () => {
-    const updated = generate28DaysReports().map(r => ({
+    const updated = generate28DaysReports().filter(r => r.agentSummaries.some(a => a.daysWorked > 0)).map(r => ({
       ...r,
       isAutoDispatched: true,
-      autoDispatchedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      autoDispatchedAt: localDateTime(),
       status: 'transmis_responsable' as const
     }));
 
@@ -658,23 +697,24 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
     updated.forEach(rpt => {
       if (onAddDocument) {
         onAddDocument({
-          id: `doc-att-28d-${rpt.entityId}-${Date.now().toString().slice(-4)}`,
+          id: newId('doc-att'),
           title: `Rapport Pointage & Heures Sup (28 Jours) - ${rpt.entityName}`,
-          referenceNumber: `POINTAGE-28J-${rpt.entityId.toUpperCase()}-092026`,
+          referenceNumber: `POINTAGE-${rpt.entityId.toUpperCase()}-${rpt.monthPeriod.replace('/', '')}`,
           category: 'ressources_humaines',
           subtype: 'feuille_de_temps',
           organizationId: currentOrg.id,
           authorId: currentUser.id,
-          authorName: 'Horodatage Automatique ERP',
-          authorRole: 'dg',
-          authorEntity: 'Système Centralisé de Pointage',
-          createdAt: new Date().toISOString().slice(0, 10),
-          status: 'approuve',
-          size: '850 Ko',
+          authorName: currentUser.name,
+          authorRole: currentUser.role,
+          authorEntity: 'Relevé calculé à partir des pointages',
+          createdAt: todayLocal(),
+          // Le responsable doit encore viser le relevé : il n'est pas approuvé d'office.
+          status: 'en_revue',
+          size: '—',
           fileType: 'PDF',
           targetEntityId: rpt.entityId,
           targetEntityName: rpt.entityName,
-          description: `Cycle de ${rpt.targetWorkingDays} jours ouvrables atteint. Envoi automatique au responsable (${rpt.managerName}) de ${rpt.totalAgents} fiches agents, ${rpt.totalOvertimeHours} heures supplémentaires comptabilisées.`,
+          description: `${rpt.signatureCert?.role ?? ''} : ${rpt.totalAgents} agent(s), ${rpt.totalNormalHours} h normales et ${rpt.totalOvertimeHours} h supplémentaires d'après les pointages enregistrés. Transmis à ${rpt.managerName} pour visa.`,
           allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service'],
           permissions: {
             viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service'],
@@ -682,12 +722,6 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
             validateRoles: ['dg', 'chef_service', 'directeur'],
             signRoles: ['dg', 'chef_service', 'directeur']
           },
-          electronicSignature: {
-            signedBy: rpt.managerName,
-            signedAt: new Date().toLocaleTimeString(),
-            role: 'Visa Hiérarchique Entité',
-            certificateHash: rpt.sha256Hash
-          }
         });
       }
     });
@@ -778,10 +812,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
           }`}
         >
           <Clock className="w-4 h-4 text-cyan-400" />
-          <span>3. Horodatage & Envoi 28 Jours (+ Heures Sup)</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-            Automatique
-          </span>
+          <span>3. Relevés de pointage (28 jours, heures sup.)</span>
         </button>
       </div>
 
@@ -843,7 +874,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   setEmployeeRawCSV(e.target.value);
                   parseEmployeesCSV(e.target.value);
                 }}
-                placeholder="matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge"
+                placeholder="matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,date_embauche,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -1006,7 +1037,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   setPayrollRawCSV(e.target.value);
                   parsePayrollCSV(e.target.value);
                 }}
-                placeholder="periode,matricule,nom_employe,salaire_base,primes,heures_sup,devise,taux_change_bcc,cnss_salarie_5pct,ipr_deduction,net_paye,banque,ref_virement"
+                placeholder="periode,matricule,nom_employe,salaire_base,primes,heures_sup,devise,taux_change,cnss_salarie,ipr_deduction,net_paye,banque,ref_virement"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-amber-500"
               />
             </div>
@@ -1052,7 +1083,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                       <th className="p-3">Matricule & Agent</th>
                       <th className="p-3 text-right">Salaire Base</th>
                       <th className="p-3 text-right">Primes & H.Sup</th>
-                      <th className="p-3 text-right">CNSS Salarié (5%)</th>
+                      <th className="p-3 text-right">CNSS salarié</th>
                       <th className="p-3 text-right">IPR</th>
                       <th className="p-3 text-right font-bold text-emerald-400">Net Payé</th>
                       <th className="p-3">Réf Virement Banque</th>
@@ -1099,7 +1130,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Déclenchement automatique du rapport consolidé après <strong>28 jours ouvrables effectifs</strong> avec décompte des heures supplémentaires selon le Code du Travail RDC.
+                  Relevés calculés à partir des <strong>pointages enregistrés</strong> par les agents (Espace Employé) sur les {targetWorkingDays} derniers jours ouvrables : heures normales (8 h/jour), heures supplémentaires de jour, de nuit (22 h – 6 h) et du dimanche. Les montants sont indicatifs ; les majorations légales restent à faire valider.
                 </p>
               </div>
 
@@ -1109,7 +1140,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   className="px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-600/30 flex items-center gap-2 transition active:scale-95"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Déclencher l'Envoi Automatique aux Responsables</span>
+                  <span>Transmettre les relevés aux responsables</span>
                 </button>
               </div>
             </div>
@@ -1128,14 +1159,14 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   />
                   <span className="font-bold text-white">Jours Ouvrables</span>
                 </div>
-                <span className="text-[10px] text-slate-500">Standard légal RDC de clôture</span>
+                <span className="text-[10px] text-slate-500">Période de calcul du relevé</span>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
                 <span className="text-slate-400 font-semibold block">Heures Sup. Jour :</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-bold text-white">+{overtimeDayRatePercent}%</span>
-                  <span className="text-[10px] text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded font-bold">Légal RDC</span>
+                  <span className="text-[10px] text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded font-bold">À valider</span>
                 </div>
                 <span className="text-[10px] text-slate-500">Au-delà de la 8ème heure quotidienne</span>
               </div>
@@ -1155,7 +1186,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   <span className="font-mono font-bold text-white">+{overtimeHolidayRatePercent}%</span>
                   <span className="text-[10px] text-purple-400 bg-purple-500/20 px-1.5 py-0.5 rounded font-bold">Repos Légal</span>
                 </div>
-                <span className="text-[10px] text-slate-500">Heures doublées conformément à la loi</span>
+                <span className="text-[10px] text-slate-500">Majoration à faire valider (Code du travail)</span>
               </div>
             </div>
 
@@ -1164,8 +1195,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                   <div>
-                    <strong className="block text-emerald-200">Envoi Automatique Réussi !</strong>
-                    Le rapport consolidé de 28 jours ouvrables a été horodaté sous scellement SHA-256 et transmis aux responsables de chaque entité.
+                    <strong className="block text-emerald-200">Relevés transmis</strong>
+                    Un relevé par entité ayant des pointages a été ajouté aux Documents, en attente du visa du responsable.
                   </div>
                 </div>
                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/20 px-2.5 py-1 rounded-lg">
@@ -1183,7 +1214,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                 <span>Rapports de Pointage Consolidés (28 Jours) Destinés aux Responsables d'Entités</span>
               </h4>
               <span className="text-xs text-slate-400 font-mono">
-                {reportsList.length} Entités sous surveillance automatique
+                {reportsList.length} entité(s) avec des agents rattachés
               </span>
             </div>
 

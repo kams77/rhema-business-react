@@ -1,5 +1,7 @@
 // src/components/OrganizationOnboardingWizard.tsx
 import React, { useState } from 'react';
+import { currentYear, todayLocal } from '../lib/dates';
+import { newId } from '../utils/id';
 import type { Organization, HierarchicalEntity, User, UserRole } from '../types';
 import { DEMO_MODE, DEMO_PASSWORD } from '../config';
 import { generateTemporaryPassword, validatePasswordStrength } from '../lib/auth';
@@ -62,15 +64,16 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
     phone: '',
     bankName: '',
     bankAccount: '',
-    description: 'Télécoms, VSAT, Réseaux et Intégration Technologique en RD Congo.',
-    dgName: 'Junior Monya',
-    dgEmail: 'dg@rhemabusiness.com',
-    dgMatricule: 'MAT-2026-001',
+    description: DEMO_MODE ? 'Télécoms, VSAT, Réseaux et Intégration Technologique en RD Congo.' : '',
+    dgName: DEMO_MODE ? 'Junior Monya' : '',
+    dgEmail: DEMO_MODE ? 'dg@rhemabusiness.com' : '',
+    dgMatricule: `MAT-${currentYear()}-001`,
     dgPassword: initialPassword(),
   });
 
   // Étape 2 : Préconfiguration de l'Arborescence Hiérarchique
-  const [departments, setDepartments] = useState([
+  type DeptDraft = { id: string; name: string; code: string; level: 'departement'; managerName: string; managerEmail: string; managerRole: 'chef_departement' };
+  const [departments, setDepartments] = useState<DeptDraft[]>(() => DEMO_MODE ? [
     {
       id: 'dept-daf',
       name: 'Département Administration & Finances (DAF)',
@@ -89,10 +92,12 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       managerEmail: 'operations@rhemabusiness.com',
       managerRole: 'chef_departement' as const,
     }
+  ] : [
+    { id: 'dept-1', name: '', code: '', level: 'departement', managerName: '', managerEmail: '', managerRole: 'chef_departement' },
   ]);
 
   // Étape 3 : Liste des Agents à connecter obligatoirement
-  const [agentsList, setAgentsList] = useState<Array<{
+  type AgentDraft = {
     id: string;
     name: string;
     matricule: string;
@@ -107,7 +112,9 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
     serviceId?: string;
     canApproveServiceDocuments?: boolean;
     connectedStatus: 'pret' | 'actif';
-  }>>([
+  };
+  const [agentsList, setAgentsList] = useState<AgentDraft[]>(() => {
+    const all: AgentDraft[] = [
     {
       id: 'usr-dg',
       name: 'Junior Monya',
@@ -197,9 +204,27 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       canApproveServiceDocuments: false, // Pas de délégation
       connectedStatus: 'pret',
     }
-  ]);
+  ];
+    // Production : seul le compte DG est créé ici ; les autres comptes se créent ensuite
+    // (Gestion des agents ou import CSV), avec les vraies personnes.
+    return DEMO_MODE ? all : all.filter(a => a.role === 'dg').map(a => ({ ...a, name: '', email: '', matricule: `MAT-${currentYear()}-001` }));
+  });
 
   if (!isOpen) return null;
+
+  // Champs indispensables avant de passer à l'étape suivante (aucune valeur n'est inventée en production).
+  const stepError: string | null =
+    step === 1
+      ? !orgForm.name.trim()
+        ? "Saisissez la dénomination de l'organisation."
+        : !orgForm.dgName.trim()
+          ? 'Saisissez le nom du Directeur Général.'
+          : !/^\S+@\S+\.\S+$/.test(orgForm.dgEmail.trim())
+            ? "Saisissez l'email du Directeur Général (identifiant de connexion)."
+            : null
+      : step === 2 && !departments.some(d => d.name.trim())
+        ? 'Saisissez au moins un département.'
+        : null;
 
   const copyAllCredentials = () => {
     const text = agentsList.map(a => 
@@ -240,10 +265,20 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       hasDivisions: true,
       hasServices: true,
       description: orgForm.description,
-      createdAt: new Date().toISOString().slice(0, 10),
+      createdAt: todayLocal(),
     };
 
-    const finalEntities: HierarchicalEntity[] = [
+    const realDepartments: HierarchicalEntity[] = departments
+      .filter(d => d.name.trim())
+      .map(d => ({
+        id: d.id,
+        name: d.name.trim(),
+        code: d.code.trim() || d.name.trim().slice(0, 12).toUpperCase(),
+        level: 'departement' as const,
+        organizationId: orgId,
+        agentCount: 0,
+      }));
+    const finalEntities: HierarchicalEntity[] = !DEMO_MODE ? realDepartments : [
       ...departments.map(d => ({
         ...d,
         organizationId: orgId,
@@ -536,6 +571,51 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                 </div>
               </div>
 
+              {!DEMO_MODE && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-400">
+                    Saisissez vos départements (vous pourrez ensuite ajouter directions, divisions et services dans « Organigramme »).
+                  </p>
+                  {departments.map((dept, idx) => (
+                    <div key={dept.id} className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        aria-label={`Nom du département ${idx + 1}`}
+                        placeholder="Nom du département (ex. Administration & Finances)"
+                        value={dept.name}
+                        onChange={e => setDepartments(prev => prev.map(d => d.id === dept.id ? { ...d, name: e.target.value } : d))}
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        aria-label={`Code du département ${idx + 1}`}
+                        placeholder="Code (ex. DAF)"
+                        value={dept.code}
+                        onChange={e => setDepartments(prev => prev.map(d => d.id === dept.id ? { ...d, code: e.target.value } : d))}
+                        className="sm:w-40 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                      />
+                      {departments.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setDepartments(prev => prev.filter(d => d.id !== dept.id))}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-900/60 text-slate-300 text-xs"
+                        >
+                          Retirer
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDepartments(prev => [...prev, { id: newId('dept'), name: '', code: '', level: 'departement', managerName: '', managerEmail: '', managerRole: 'chef_departement' }])}
+                    className="px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-bold border border-indigo-500/30"
+                  >
+                    + Ajouter un département
+                  </button>
+                </div>
+              )}
+
+              {DEMO_MODE && (<>
               <div className="space-y-3">
                 {departments.map((dept, idx) => (
                   <div key={dept.id} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
@@ -572,6 +652,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                   <li><strong>Sous DOP</strong> : Service Déploiement VSAT & Chantiers Miniers + Service Support NOC 24/7</li>
                 </ul>
               </div>
+              </>)}
             </div>
           )}
 
@@ -591,7 +672,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
                   <Users className="w-4 h-4 text-indigo-400" />
-                  <span>{agentsList.length} Comptes Agents Déployés avec Connectivité Active</span>
+                  <span>{DEMO_MODE ? `${agentsList.length} Comptes Agents Déployés avec Connectivité Active` : 'Compte créé maintenant : Direction Générale. Les autres comptes se créent ensuite (Gestion des agents ou import CSV).'}</span>
                 </div>
 
                 <button
@@ -620,12 +701,12 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                   <tbody className="divide-y divide-slate-800/60 font-mono">
                     {agentsList.map(a => (
                       <tr key={a.id} className="hover:bg-slate-900/40 transition">
-                        <td className="p-3 text-indigo-400 font-bold">{a.matricule}</td>
+                        <td className="p-3 text-indigo-400 font-bold">{a.role === 'dg' ? orgForm.dgMatricule || a.matricule : a.matricule}</td>
                         <td className="p-3 font-sans text-white font-semibold">
-                          <div>{a.name}</div>
+                          <div>{a.role === 'dg' ? orgForm.dgName || a.name : a.name}</div>
                           <div className="text-[10px] text-slate-400 font-mono font-normal">{a.roleTitle}</div>
                         </td>
-                        <td className="p-3 text-slate-200">{a.email}</td>
+                        <td className="p-3 text-slate-200">{a.role === 'dg' ? orgForm.dgEmail || a.email : a.email}</td>
                         <td className="p-3 text-amber-300 font-bold bg-slate-900/40 px-2 rounded">
                           {a.role === 'dg' ? orgForm.dgPassword : a.password}
                         </td>
@@ -731,11 +812,14 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               Annuler
             </button>
 
+            {stepError && <span role="alert" className="text-[11px] text-amber-300 max-w-xs text-right">{stepError}</span>}
             {step < 4 ? (
               <button
                 type="button"
                 onClick={() => setStep((step + 1) as any)}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-lg active:scale-95"
+                disabled={stepError !== null}
+                title={stepError ?? undefined}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span>Continuer vers Étape {step + 1}</span>
                 <ArrowRight className="w-3.5 h-3.5" />

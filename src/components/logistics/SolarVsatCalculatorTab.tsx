@@ -1,5 +1,10 @@
 // src/components/logistics/SolarVsatCalculatorTab.tsx
 import React, { useState, useMemo } from 'react';
+import { addDaysLocal, todayLocal } from '../../lib/dates';
+import { useRate } from '../../lib/exchangeRate';
+import { formatCDF, round2, usdToCdf } from '../../lib/money';
+import { nextReference } from '../../lib/sequence';
+import { newId } from '../../utils/id';
 import { usePersistentState } from '../../hooks/usePersistentState';
 import type { LogisticsItem, PurchaseOrderItem, HubStockItem, LogisticsHub, User, Organization } from '../../types';
 import { 
@@ -30,6 +35,8 @@ interface Props {
   catalog: LogisticsItem[];
   hubs: LogisticsHub[];
   stocks: HubStockItem[];
+  /** Bons de commande existants (pour la numérotation). */
+  orders?: PurchaseOrderItem[];
   onCreateOrder: (order: PurchaseOrderItem) => void;
   onNavigateToTab?: (tab: 'orders' | 'hubs') => void;
   onPrintOfficialDoc?: (title: string, desc: string, ref: string, amount: number) => void;
@@ -73,11 +80,13 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
   catalog,
   hubs,
   stocks,
+  orders = [],
   onCreateOrder,
   onNavigateToTab,
   onPrintOfficialDoc,
   onLogAction
 }) => {
+  const rate = useRate();
   const [selectedProvince, setSelectedProvince] = useState<string>('gbadolite');
   const [siteName, setSiteName] = useState<string>('Station Relais VSAT Gbadolite Aéroport');
   const [autonomyDays, setAutonomyDays] = useState<number>(3); // 3 jours d'autonomie (saison des pluies RDC)
@@ -214,8 +223,8 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
     ];
   }, [calculations, panelWattPeak]);
 
-  const totalBOMCostUSD = bomItems.reduce((sum, item) => sum + (item.unitPriceUSD * item.quantity), 0);
-  const totalBOMCostCDF = totalBOMCostUSD * 2850;
+  const totalBOMCostUSD = round2(bomItems.reduce((sum, item) => sum + (item.unitPriceUSD * item.quantity), 0));
+  const totalBOMCostCDF = usdToCdf(totalBOMCostUSD, rate);
 
   // Vérifier la disponibilité de ces composants dans le Hub de la province sélectionnée
   const currentTargetHubId = PROVINCE_SOLAR_HOURS[selectedProvince]?.hubId || hubs[0]?.id;
@@ -310,21 +319,22 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
 
   // Convertir le résultat en Bon de Commande Officiel
   const handleGeneratePurchaseOrder = () => {
-    const orderNumber = `BC-SOL-VSAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const orderNumber = nextReference('BC-HYB', orders.map(o => o.orderNumber));
     const newPO: PurchaseOrderItem = {
       id: `po-${Date.now()}`,
       orderNumber,
       organizationId: organization.id,
-      date: new Date().toISOString().split('T')[0],
-      deliveryDueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+      date: todayLocal(),
+      deliveryDueDate: addDaysLocal(15),
       category: 'hybride',
-      supplierName: 'Victron Energy & Gilat Networks Consortium',
-      supplierContact: 'Ing. Paul Tshombe (+243 81 555 3322)',
-      supplierEmail: 'appro-rdc@victron-gilat.com',
-      supplierAddress: '15 Boulevard du 30 Juin, Gombe, Kinshasa',
+      // Le fournisseur est choisi lors de l'approbation du bon de commande.
+      supplierName: 'Fournisseur à désigner',
+      supplierContact: '',
+      supplierEmail: '',
+      supplierAddress: '',
       destinationSite: `${siteName} (Hub: ${targetHub?.name || 'RDC'})`,
       items: bomItems.map(item => ({
-        itemId: `item-gen-${Date.now()}-${Math.random()}`,
+        itemId: newId('item'),
         designation: item.name,
         category: item.category as any,
         sku: item.sku,
@@ -339,7 +349,7 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
       vatAmount_USD: Math.round(totalBOMCostUSD * 0.16 * 100) / 100,
       totalTTC_USD: Math.round(totalBOMCostUSD * 1.16 * 100) / 100,
       currency: 'USD',
-      exchangeRate: 2850,
+      exchangeRate: rate,
       paymentTerms: '50% à la validation de commande, 50% après recette technique et PV de conformité',
       status: 'en_attente_approbation',
       createdByAgentId: currentUser.id,
@@ -932,10 +942,10 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
               </tr>
               <tr>
                 <td colSpan={5} className="p-3 text-right uppercase text-slate-400 text-xs">
-                  Contre-valeur indicative en Francs Congolais (Taux BCDC 2 850 CDF) :
+                  Contre-valeur indicative en Francs Congolais (1 $ = {rate.toLocaleString('fr-FR')} CDF) :
                 </td>
                 <td className="p-3 text-right font-mono text-xs text-slate-300">
-                  ~ {totalBOMCostCDF.toLocaleString()} CDF
+                  ~ {formatCDF(totalBOMCostCDF)}
                 </td>
               </tr>
             </tfoot>

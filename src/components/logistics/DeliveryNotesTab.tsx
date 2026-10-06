@@ -1,5 +1,7 @@
 // src/components/logistics/DeliveryNotesTab.tsx
 import React, { useState } from 'react';
+import { localDateTime, todayLocal } from '../../lib/dates';
+import { nextReference } from '../../lib/sequence';
 import type { DeliveryNoteItem, PurchaseOrderItem, User, Organization, EquipmentCategory } from '../../types';
 import { 
   Plus, 
@@ -107,11 +109,11 @@ export const DeliveryNotesTab: React.FC<Props> = ({
 
     const newBL: DeliveryNoteItem = {
       id: `bl-${Date.now()}`,
-      deliveryNumber: `BL-${category === 'vsat' ? 'VSAT' : 'SOLAR'}-2026-${String(deliveryNotes.length + 1).padStart(3, '0')}`,
+      deliveryNumber: nextReference(`BL-${category === 'vsat' ? 'VSAT' : 'SOLAR'}`, deliveryNotes.map(d => d.deliveryNumber)),
       purchaseOrderId: selectedOrderId || undefined,
       purchaseOrderNumber: orders.find(o => o.id === selectedOrderId)?.orderNumber,
       organizationId: organization.id,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocal(),
       transporterName,
       driverName,
       vehiclePlateNumber,
@@ -122,7 +124,7 @@ export const DeliveryNotesTab: React.FC<Props> = ({
       status: 'livre_conforme',
       recipientName,
       recipientTitle,
-      recipientSignatureDate: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`,
+      recipientSignatureDate: localDateTime(),
       isRecipientSigned: true,
       preparedByAgentId: currentUser.id,
       preparedByAgentName: `${currentUser.name} (Agent Service Exécutant)`,
@@ -131,7 +133,7 @@ export const DeliveryNotesTab: React.FC<Props> = ({
         isConform: true,
         testPassed: true,
         technicianNotes: 'Contrôle métrologique et audit physique validés.',
-        testedAt: new Date().toISOString().split('T')[0],
+        testedAt: todayLocal(),
         testedBy: currentUser.name
       },
       remarks

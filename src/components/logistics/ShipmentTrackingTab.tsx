@@ -1,5 +1,7 @@
 // src/components/logistics/ShipmentTrackingTab.tsx
 import React, { useState } from 'react';
+import { addDaysLocal, localDateTime, todayLocal } from '../../lib/dates';
+import { nextReference } from '../../lib/sequence';
 import type { ShipmentTracking, User, Organization, ShipmentWorkflowStep } from '../../types';
 import { 
   Plane, 
@@ -77,7 +79,7 @@ export const ShipmentTrackingTab: React.FC<Props> = ({
       status: newStepStatus,
       label: newStepLabel,
       location: newStepLocation,
-      timestamp: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`,
+      timestamp: localDateTime(),
       executedByAgent: currentUser.name,
       agentRole: `${currentUser.roleTitle} (Exécutant Service)`,
       comment: newStepComment,
@@ -97,7 +99,7 @@ export const ShipmentTrackingTab: React.FC<Props> = ({
     e.preventDefault();
     const newShipment: ShipmentTracking = {
       id: `exp-${Date.now()}`,
-      trackingNumber: trackingNumberInput || `EXP-${freightType === 'aerien' ? 'AIR' : 'MAR'}-2026-${String(shipments.length + 1).padStart(3, '0')}`,
+      trackingNumber: trackingNumberInput || nextReference(`EXP-${freightType === 'aerien' ? 'AIR' : 'MAR'}`, shipments.map(s => s.trackingNumber)),
       title: title || `Expédition Équipements ${freightType === 'aerien' ? 'Fret Aérien' : 'Fret Maritime'}`,
       freightType,
       category: 'vsat',
@@ -106,14 +108,14 @@ export const ShipmentTrackingTab: React.FC<Props> = ({
       destinationFinal,
       carrierName,
       currentStatus: 'depart_fournisseur',
-      estimatedDeliveryDate: '2026-10-20',
+      estimatedDeliveryDate: addDaysLocal(freightType === 'aerien' ? 7 : 45),
       workflowSteps: [
         {
           id: `step-${Date.now()}`,
           status: 'depart_fournisseur',
           label: 'Prise en charge expédition & Scellés',
           location: supplierOrigin,
-          timestamp: new Date().toISOString().split('T')[0],
+          timestamp: todayLocal(),
           executedByAgent: currentUser.name,
           agentRole: currentUser.roleTitle,
           comment: 'Dossier fret initialisé par l\'agent de service.',

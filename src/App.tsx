@@ -1,8 +1,12 @@
 // src/App.tsx
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { usePersistentState } from './hooks/usePersistentState';
+import { demoSeed, replaceLocalValues, usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
 import { invoiceBankDetails } from './lib/bank';
+import { useRate } from './lib/exchangeRate';
+import { addDaysLocal, localDateTime, todayLocal } from './lib/dates';
+import { round2, sameAmount, usdToCdf } from './lib/money';
+import { maskSecret, nextReference } from './lib/sequence';
 import { AUDIT_GENESIS, auditChainHash, contentHashSync } from './lib/integrity';
 import { API_MODE, DEMO_MODE, DEMO_PASSWORD } from './config';
 import { SESSION_EXPIRED_EVENT } from './lib/api';
@@ -121,14 +125,15 @@ interface AppProps {
 export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [organizations, setOrganizations] = usePersistentState<Organization[]>('organizations', initialOrganizations);
   const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0], { keepDefaultInApi: true });
+  const exchangeRate = useRate();
   const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
   const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
-  const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
-  const [documents, setDocuments] = usePersistentState<DocumentItem[]>('documents', initialDocuments);
-  const [tasks, setTasks] = usePersistentState<TaskItem[]>('tasks', initialTasks);
+  const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', () => demoSeed(initialContracts));
+  const [documents, setDocuments] = usePersistentState<DocumentItem[]>('documents', () => demoSeed(initialDocuments));
+  const [tasks, setTasks] = usePersistentState<TaskItem[]>('tasks', () => demoSeed(initialTasks));
   
-  const [alerts, setAlerts] = usePersistentState<SecurityAlert[]>('securityAlerts', initialSecurityAlerts);
-  const [logs, setLogs] = usePersistentState<AuditLog[]>('auditLogs', initialAuditLogs);
+  const [alerts, setAlerts] = usePersistentState<SecurityAlert[]>('securityAlerts', () => demoSeed(initialSecurityAlerts));
+  const [logs, setLogs] = usePersistentState<AuditLog[]>('auditLogs', () => demoSeed(initialAuditLogs));
 
   // =========================================================================
   // AUTHENTIFICATION & SESSION
@@ -403,7 +408,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     if (
       users.length > 0 &&
       !window.confirm(
-        `Créer « ${data.organization.name} » remplacera l'annuaire actuel (${users.length} comptes) et l'organigramme.\n\n` +
+        `Créer « ${data.organization.name} » remplacera l'annuaire actuel (${users.length} comptes), l'organigramme et vide les données de travail (contrats, documents, tâches, logistique, paie).\n\n` +
         'Conseil : exportez d\'abord une sauvegarde (menu utilisateur → Sauvegarde des données).\n\nContinuer ?'
       )
     ) {
@@ -413,6 +418,31 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setCurrentOrg(data.organization);
     setEntities(data.entities);
     setUsers(data.users);
+    // Nouvelle organisation : aucune donnée de l'ancienne (ou de la démonstration) ne doit subsister.
+    setContracts([]);
+    setDocuments([]);
+    setTasks([]);
+    setAlerts([]);
+    setPurchaseOrders([]);
+    setDeliveryNotes([]);
+    setShipments([]);
+    setProformas([]);
+    setNetInvoices([]);
+    setHubs([]);
+    setStocks([]);
+    setStockMovements([]);
+    setInvitations([]);
+    setInvitationNotifications([]);
+    replaceLocalValues({
+      'payroll.contracts': [],
+      'payroll.leaves': [],
+      'payroll.advances': [],
+      'payroll.overtime': [],
+      'payroll.disciplinary': [],
+      'payroll.runs': [],
+      'workflows.tasks': [],
+      'workspace.messages': [],
+    });
     
     // Création de la configuration de paie standard pour la nouvelle organisation
     setPayrollConfigs(prev => ({
@@ -484,17 +514,17 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   // =========================================================================
   // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT ET ÉNERGIE SOLAIRE (RDC)
   // =========================================================================
-  const [logisticsCatalog, setLogisticsCatalog] = usePersistentState<LogisticsItem[]>('logistics.catalog', initialLogisticsCatalog);
-  const [purchaseOrders, setPurchaseOrders] = usePersistentState<PurchaseOrderItem[]>('logistics.purchaseOrders', initialPurchaseOrders);
-  const [deliveryNotes, setDeliveryNotes] = usePersistentState<DeliveryNoteItem[]>('logistics.deliveryNotes', initialDeliveryNotes);
-  const [shipments, setShipments] = usePersistentState<ShipmentTracking[]>('logistics.shipments', initialShipments);
-  const [proformas, setProformas] = usePersistentState<ProformaInvoiceItem[]>('logistics.proformas', initialProformas);
-  const [netInvoices, setNetInvoices] = usePersistentState<NetToPayInvoiceItem[]>('logistics.netInvoices', initialNetToPayInvoices);
+  const [logisticsCatalog, setLogisticsCatalog] = usePersistentState<LogisticsItem[]>('logistics.catalog', initialLogisticsCatalog, { keepDefaultInApi: true }); // catalogue de référence (modifiable)
+  const [purchaseOrders, setPurchaseOrders] = usePersistentState<PurchaseOrderItem[]>('logistics.purchaseOrders', () => demoSeed(initialPurchaseOrders));
+  const [deliveryNotes, setDeliveryNotes] = usePersistentState<DeliveryNoteItem[]>('logistics.deliveryNotes', () => demoSeed(initialDeliveryNotes));
+  const [shipments, setShipments] = usePersistentState<ShipmentTracking[]>('logistics.shipments', () => demoSeed(initialShipments));
+  const [proformas, setProformas] = usePersistentState<ProformaInvoiceItem[]>('logistics.proformas', () => demoSeed(initialProformas));
+  const [netInvoices, setNetInvoices] = usePersistentState<NetToPayInvoiceItem[]>('logistics.netInvoices', () => demoSeed(initialNetToPayInvoices));
 
   // GESTION DES 6 HUBS PROVINCIAUX & STOCKS DÉCENTRALISÉS
-  const [hubs, setHubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', initialHubs);
-  const [stocks, setStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
-  const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', initialStockMovements);
+  const [hubs, setHubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', () => demoSeed(initialHubs));
+  const [stocks, setStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', () => demoSeed(initialHubStocks));
+  const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', () => demoSeed(initialStockMovements));
 
   const handleAddHub = (newHub: LogisticsHub) => {
     setHubs(prev => [newHub, ...prev]);
@@ -538,7 +568,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               totalValueUSD: item.quantity * item.unitPriceUSD,
               locationRack: 'Travée Réception',
               serialNumbers: item.serialNumbers,
-              lastAuditDate: new Date().toISOString().split('T')[0],
+              lastAuditDate: todayLocal(),
               status: 'normal'
             };
             return [newStock, ...prev];
@@ -629,7 +659,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       ...m,
       status: m.type === 'transfert_inter_hub' ? 'en_transit' : 'valide',
       approvedByManagerName: currentUser.name,
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+      approvedAt: localDateTime()
     } : m));
   };
 
@@ -673,7 +703,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
             totalValueUSD: item.quantity * item.unitPriceUSD,
             locationRack: 'Travée Réception',
             serialNumbers: item.serialNumbers,
-            lastAuditDate: new Date().toISOString().split('T')[0],
+            lastAuditDate: todayLocal(),
             status: 'normal'
           };
           return [newStock, ...prev];
@@ -724,7 +754,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       status: 'approuve',
       approvedByManagerId: currentUser.id,
       approvedByManagerName: currentUser.name,
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+      approvedAt: localDateTime()
     } : o));
     addAuditLog({
       action: 'Approbation / Visa Bon de Commande',
@@ -843,13 +873,13 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     if (target === 'invoice') {
       const newInvoice: NetToPayInvoiceItem = {
         id: newId('fac'),
-        invoiceNumber: `FAC-2026-VSAT-${String(netInvoices.length + 1).padStart(3, '0')}`,
+        invoiceNumber: nextReference('FAC-VSAT', netInvoices.map(i => i.invoiceNumber)),
         proformaReference: pro.proformaNumber,
         organizationId: currentOrg.id,
-        date: new Date().toISOString().split('T')[0],
-        dueDate: '2026-11-20',
+        date: todayLocal(),
+        dueDate: addDaysLocal(30),
         clientName: pro.clientOrSupplierName,
-        clientTaxId: 'RCCM: CD/KN/RCCM/20-B-001 | IdNat: 01-83-N44100 | NIF: A1100223Z',
+        clientTaxId: '',
         clientAddress: 'Kinshasa / Lubumbashi - RD CONGO',
         category: pro.category,
         items: pro.items.map(it => ({
@@ -866,8 +896,8 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
         withholdingTaxDeduction_USD: 0,
         otherDeductions_USD: 0,
         netToPayUSD: pro.totalTTC_USD,
-        netToPayCDF: pro.totalTTC_USD * 2850,
-        currencyRate: 2850,
+        netToPayCDF: usdToCdf(pro.totalTTC_USD, exchangeRate),
+        currencyRate: exchangeRate,
         bankDetails: invoiceBankDetails(currentOrg),
         paymentStatus: 'en_attente',
         paidAmountUSD: 0,
@@ -930,9 +960,12 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const handleRegisterPayment = (invoiceId: string, amountUSD: number, ref: string, method: string) => {
     setNetInvoices(prev => prev.map(inv => {
       if (inv.id !== invoiceId) return inv;
-      const newPaid = inv.paidAmountUSD + amountUSD;
-      const newRemaining = Math.max(0, inv.netToPayUSD - newPaid);
-      const newStatus = newRemaining === 0 ? 'payee_net' : 'partiellement_payee';
+      // L'acompte déduit sur la facture figure déjà dans « payé » : le solde est
+      // net à payer − (payé − acompte), sinon l'acompte serait déduit deux fois.
+      const newPaid = round2(inv.paidAmountUSD + amountUSD);
+      const paidAgainstNet = newPaid - (inv.advancePaymentDeduction_USD || 0);
+      const newRemaining = Math.max(0, round2(inv.netToPayUSD - paidAgainstNet));
+      const newStatus = sameAmount(newRemaining, 0) ? 'payee_net' : 'partiellement_payee';
       return {
         ...inv,
         paidAmountUSD: newPaid,
@@ -942,9 +975,9 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           ...inv.paymentRecords,
           {
             id: newId('pay'),
-            date: new Date().toISOString().split('T')[0],
+            date: todayLocal(),
             amountUSD,
-            amountCDF: amountUSD * inv.currencyRate,
+            amountCDF: usdToCdf(amountUSD, inv.currencyRate),
             paymentMethod: method as any,
             reference: ref,
             registeredByAgent: `${currentUser.name} (Agent de Service)`
@@ -971,8 +1004,8 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   // =========================================================================
   // GESTION DES INVITATIONS INTER-ENTITÉS & CLÉS 10 CHIFFRES
   // =========================================================================
-  const [invitations, setInvitations] = usePersistentState<EntityInvitation[]>('invitations', initialEntityInvitations);
-  const [invitationNotifications, setInvitationNotifications] = usePersistentState<EntityInvitationNotification[]>('invitationNotifications', initialInvitationNotifications);
+  const [invitations, setInvitations] = usePersistentState<EntityInvitation[]>('invitations', () => demoSeed(initialEntityInvitations));
+  const [invitationNotifications, setInvitationNotifications] = usePersistentState<EntityInvitationNotification[]>('invitationNotifications', () => demoSeed(initialInvitationNotifications));
   const [activeGuestInvitation, setActiveGuestInvitation] = useState<EntityInvitation | null>(null);
 
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
@@ -986,7 +1019,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Émission Invitation Inter-Entités',
       category: 'security',
-      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
+      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${maskSecret(invitation.authKey10Digits)}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
     });
   };
 
@@ -996,7 +1029,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Connexion Inter-Entités par Clé Unique',
       category: 'auth',
-      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${invitation.authKey10Digits}.`,
+      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${maskSecret(invitation.authKey10Digits)}.`,
     });
   };
 
@@ -1628,6 +1661,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           currentUser={currentUser}
           entities={entities}
           users={users}
+          existingCodes={invitations.map(i => i.invitationCode)}
           onClose={() => setShowInviteModal(false)}
           onSendInvitation={handleSendInvitation}
           onLogAction={(act, det, cat) => {
