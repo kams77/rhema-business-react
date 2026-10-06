@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { loadValue, saveValue } from '../lib/storage';
 import { remoteStore } from '../lib/remoteStore';
-import { API_MODE } from '../config';
+import { API_MODE, DEMO_MODE } from '../config';
 
 interface PersistentOptions {
   /**
@@ -75,10 +75,39 @@ function useRemoteState<T>(key: string, initial: T | (() => T), options: Persist
 // ---------------------------------------------------------------------------
 // Mode local (navigateur)
 // ---------------------------------------------------------------------------
+// Plusieurs écrans peuvent lire la même donnée (ex. le taux de change) : une modification
+// faite par l'un est transmise immédiatement aux autres, sans attendre un rechargement.
+const localListeners = new Map<string, Set<(v: unknown) => void>>();
+const localCurrent = new Map<string, unknown>();
+
 function useLocalState<T>(key: string, initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
-  const [value, setValue] = useState<T>(() => loadValue<T>(key, resolve(initial)));
+  const [value, setValueRaw] = useState<T>(() =>
+    localCurrent.has(key) ? (localCurrent.get(key) as T) : loadValue<T>(key, resolve(initial))
+  );
 
   const latest = useRef(value);
+  const self = useRef<(v: unknown) => void>(() => {});
+
+  useEffect(() => {
+    const listener = (v: unknown) => setValueRaw(v as T);
+    self.current = listener;
+    let set = localListeners.get(key);
+    if (!set) localListeners.set(key, (set = new Set()));
+    set.add(listener);
+    return () => { set!.delete(listener); };
+  }, [key]);
+
+  const setValue = useCallback<Dispatch<SetStateAction<T>>>(
+    action => {
+      const next = typeof action === 'function' ? (action as (prev: T) => T)(latest.current) : action;
+      if (Object.is(next, latest.current)) return;
+      latest.current = next;
+      localCurrent.set(key, next);
+      setValueRaw(next);
+      localListeners.get(key)?.forEach(l => { if (l !== self.current) l(next); });
+    },
+    [key]
+  );
   const pending = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   const isFirstRender = useRef(true);
@@ -117,4 +146,22 @@ function useLocalState<T>(key: string, initial: T | (() => T)): [T, Dispatch<Set
   }, [key]);
 
   return [value, setValue];
+}
+
+/**
+ * Mode local : remplace immédiatement plusieurs données (stockage + écrans ouverts).
+ * Utilisé par l'assistant de création d'organisation pour repartir de listes vides.
+ */
+export function replaceLocalValues(values: Record<string, unknown>): void {
+  if (API_MODE) return;
+  for (const [key, value] of Object.entries(values)) {
+    localCurrent.set(key, value);
+    saveValue(key, value);
+    localListeners.get(key)?.forEach(l => l(value));
+  }
+}
+
+/** Valeur de départ : les données de démonstration en mode démo, une liste vide sinon. */
+export function demoSeed<T>(demo: T[]): T[] {
+  return DEMO_MODE ? demo : [];
 }
