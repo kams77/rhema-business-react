@@ -1,4 +1,5 @@
 // src/components/BulkImportView.tsx
+import { contentHashSync } from '../lib/integrity';
 import React, { useState, useId } from 'react';
 import { DEMO_MODE, DEMO_PASSWORD } from '../config';
 import { generateTemporaryPassword } from '../lib/auth';
@@ -492,9 +493,9 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       payslipsAutoDispatched: true,
       payslipsDispatchedAt: `${periodeTarget}-29`,
       dispatchedCount: valids.length,
-      validatedByDG: `${currentOrg.managerName || 'Direction Générale'} (DG)`,
-      validatedAt: `${periodeTarget}-29`,
-      closureHash: `SHA256:import-historique-${periodeTarget}-${Math.random().toString(36).substring(2, 8)}`
+      validatedByDG: `Import CSV par ${currentUser.name}`,
+      validatedAt: new Date().toLocaleString('fr-FR'),
+      closureHash: contentHashSync(valids)
     };
 
     // Création des bulletins archivés
@@ -520,12 +521,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         isConfidentialPayslip: true,
         amount: row.netPaye,
         currency: row.devise,
-        description: `Bulletin de paie historisé certifié. Virement bancaire ${row.banque} (Réf: ${row.refVirement}). Décomptes CNSS RDC & IPR.`,
+        description: `Bulletin de paie importé depuis un fichier CSV (archive). Virement ${row.banque} (réf. ${row.refVirement}).`,
         electronicSignature: {
-          signedBy: `${currentOrg.managerName || 'Direction Générale'} & DRH`,
-          signedAt: `${row.periode}-29 16:30`,
-          role: 'Directeur Général & DRH',
-          certificateHash: `SHA256:archive-${row.periode}-${row.matricule}-${Math.random().toString(36).substring(2, 8)}`
+          signedBy: `Archive importée par ${currentUser.name}`,
+          signedAt: new Date().toLocaleString('fr-FR'),
+          role: 'Import CSV (archive)',
+          certificateHash: contentHashSync(row)
         },
         allowedRoles: ['dg', 'directeur', 'chef_departement', 'agent'],
         permissions: {
@@ -629,11 +630,11 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         autoDispatchedAt: isAutoDispatchSimulated ? new Date().toISOString().replace('T', ' ').slice(0, 16) : undefined,
         status: isAutoDispatchSimulated ? 'transmis_responsable' : 'cycle_28j_atteint',
         agentSummaries,
-        sha256Hash: `SHA256:pointage-28j-${ent.code}-${Math.random().toString(36).substring(2, 8)}`,
+        sha256Hash: contentHashSync({ entity: ent.id, agentSummaries, totalNormalHours, totalOvertimeHours }),
         signatureCert: {
           signedBy: `Horodatage Automatique ERP (${currentOrg.name})`,
           signedAt: new Date().toLocaleTimeString(),
-          role: 'Contrôleur Automatique de Présence SHA-256'
+          role: 'Calcul automatique de présence'
         }
       };
     });

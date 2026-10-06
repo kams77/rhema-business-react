@@ -1,4 +1,5 @@
 // src/components/logistics/HubsStockManagementTab.tsx
+import { contentHashSync } from '../../lib/integrity';
 import React, { useState, useMemo } from 'react';
 import type { 
   User, 
@@ -1285,9 +1286,11 @@ const NewStockMovementModal: React.FC<NewStockMovementModalProps> = ({
       status: type === 'transfert_inter_hub' ? 'en_transit' : 'valide',
       approvedByManagerName: currentUser.name,
       approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`,
-      electronicSealHash: `sha256-${movementNumber.toLowerCase()}-${Date.now()}-conforme`,
-      notes: notes.trim() || 'Mouvement logistique conforme avec relevé S/N scellé.'
+      electronicSealHash: '',
+      notes: notes.trim()
     };
+    // Empreinte SHA-256 réelle du mouvement (articles, quantités, numéros de série, opérateur).
+    newMvt.electronicSealHash = contentHashSync({ ...newMvt, electronicSealHash: undefined });
 
     onSave(newMvt);
   };

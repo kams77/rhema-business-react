@@ -1,5 +1,11 @@
 // src/utils/rbac.ts
 import type { User, HierarchicalEntity, DocumentItem, UserRole } from '../types';
+import { isPayrollStaff as sharedIsPayrollStaff, isSecurityStaff as sharedIsSecurityStaff } from '../../shared/access.mjs';
+
+/** Accès à la paie (règle commune avec le serveur : shared/access.mjs). */
+export const isPayrollStaff = (user: User): boolean => sharedIsPayrollStaff(user as any);
+/** Accès au Centre de sécurité et au journal d'audit (règle commune avec le serveur). */
+export const isSecurityStaff = (user: User): boolean => sharedIsSecurityStaff(user as any);
 
 /** Normalise un intitulé (minuscules, sans accents) pour des comparaisons fiables. */
 function normalizeTitle(title?: string): string {
@@ -201,12 +207,8 @@ export function canUserViewDocument(
     if (doc.targetUserId && user.id === doc.targetUserId) {
       return { allowed: true };
     }
-    // Le DRH et la DAF peuvent voir pour gestion
-    if (
-      (user.role === 'directeur' && user.directionId === 'dir-rh') ||
-      (user.role === 'chef_departement' && user.departementId === 'dept-daf') ||
-      titleHasAny(user.roleTitle, HR_TITLE_TERMS)
-    ) {
+    // La Direction / RH habilitée à la paie peut les voir pour gestion
+    if (isPayrollStaff(user)) {
       return { allowed: true };
     }
     return { 
@@ -313,17 +315,12 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
       // Chefs de service, division, direction, département et DG peuvent administrer leurs agents
       return user.role !== 'agent';
     case 'payroll':
-      // Réservé DG (déjà géré en amont), Chef DAF, Directeur RH ou fonctions autorisées
-      return (
-        user.departementId === 'dept-daf' ||
-        user.directionId === 'dir-rh' ||
-        user.directionId === 'dir-finance' ||
-        titleHasAny(user.roleTitle, HR_TITLE_TERMS)
-      );
+      // DG, Direction / RH habilitée (règle commune avec le serveur)
+      return isPayrollStaff(user);
     case 'security':
     case 'audit':
-      // Réservé DG (géré en amont), chefs de département et directeurs
-      return user.role === 'chef_departement' || user.role === 'directeur';
+      // Réservé DG, chefs de département et directeurs (règle commune avec le serveur)
+      return isSecurityStaff(user);
     case 'laravel':
       return false;
     default:

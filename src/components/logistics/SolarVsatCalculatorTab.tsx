@@ -85,7 +85,7 @@ export const SolarVsatCalculatorTab: React.FC<Props> = ({
   const [safetyMarginPercent, setSafetyMarginPercent] = useState<number>(20); // 20% marge de sécurité
   const [systemVoltage, setSystemVoltage] = useState<48 | 24>(48);
   const [panelWattPeak, setPanelWattPeak] = useState<number>(550); // 550Wc Tier-1
-  const [loads, setLoads] = usePersistentState<EquipmentLoad[]>('logistics.solarLoads', DEFAULT_LOADS);
+  const [loads, setLoads] = usePersistentState<EquipmentLoad[]>('logistics.solarLoads', DEFAULT_LOADS, { keepDefaultInApi: true });
 
   // Nouvel équipement manuel
   const [newLoadName, setNewLoadName] = useState('');

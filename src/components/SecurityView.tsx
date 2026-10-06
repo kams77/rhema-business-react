@@ -66,15 +66,18 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           </p>
         </div>
 
+        {currentUser.role === 'dg' && (
         <div className="flex items-center gap-3">
           <button
+            title="Crée une alerte de test, sans modifier aucun compte réel"
             onClick={onTriggerTestBreach}
             className="flex items-center gap-2 bg-red-600/90 hover:bg-red-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-red-600/20 transition"
           >
             <Radio className="w-4 h-4 animate-pulse" />
-            Simuler une infraction d'accès
+            Exercice : alerte de test
           </button>
         </div>
+        )}
       </div>
 
       {/* Statistiques de Sécurité */}

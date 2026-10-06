@@ -140,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'audit',
-      label: 'Journal d’Audit Immuable',
+      label: 'Journal d’audit',
       icon: <History className="w-4 h-4" />,
     },
     {

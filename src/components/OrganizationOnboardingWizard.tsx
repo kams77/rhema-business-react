@@ -48,18 +48,20 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
   const [showPassword, setShowPassword] = useState(false);
 
   // Étape 1 : Formulaire Organisation
+  // Valeurs d'exemple uniquement en mode démonstration ; en réel, les identifiants légaux
+  // sont saisis par l'utilisateur (jamais de numéro inventé).
   const [orgForm, setOrgForm] = useState({
-    name: 'RHEMA BUSINESS RDC',
-    code: 'RB-RDC',
+    name: DEMO_MODE ? 'RHEMA BUSINESS RDC' : '',
+    code: DEMO_MODE ? 'RB-RDC' : '',
     type: 'entreprise' as const,
-    rccm: 'CD/KNG/RCCM/20-A-01120',
-    idNat: '01-83-N45201L',
-    numImpot: 'A1934892Z',
-    headquarters: 'N°1B, Av. Bangala, Q/Salongo, C/Kintambo, Kinshasa - RD CONGO',
-    email: 'direction@rhemabusiness.cd',
-    phone: '+243 81 279 1228',
-    bankName: 'Rawbank Kinshasa',
-    bankAccount: '01002-39201928019-88',
+    rccm: '',
+    idNat: '',
+    numImpot: '',
+    headquarters: DEMO_MODE ? 'Kinshasa - RD CONGO' : '',
+    email: DEMO_MODE ? 'direction@rhemabusiness.cd' : '',
+    phone: '',
+    bankName: '',
+    bankAccount: '',
     description: 'Télécoms, VSAT, Réseaux et Intégration Technologique en RD Congo.',
     dgName: 'Junior Monya',
     dgEmail: 'dg@rhemabusiness.com',
@@ -224,6 +226,9 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       rccm: orgForm.rccm,
       idNat: orgForm.idNat,
       numImpot: orgForm.numImpot,
+      bankAccounts: orgForm.bankName.trim()
+        ? [{ id: 'bank-1', bankName: orgForm.bankName.trim(), accountNumberUSD: orgForm.bankAccount.trim(), accountNumberCDF: '', swiftBic: '', ibanOrRib: '' }]
+        : [],
       headquarters: orgForm.headquarters,
       email: orgForm.email,
       phone: orgForm.phone,
@@ -286,12 +291,13 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       }
     ];
 
+    // Le compte DG reprend l'identité saisie à l'étape 1 (nom, email, matricule, mot de passe).
     const finalUsers: User[] = agentsList.map(a => ({
       id: a.id,
-      name: a.name,
-      email: a.email,
-      matricule: a.matricule,
-      employeeCode: a.matricule,
+      name: a.role === 'dg' ? orgForm.dgName.trim() || a.name : a.name,
+      email: a.role === 'dg' ? orgForm.dgEmail.trim() || a.email : a.email,
+      matricule: a.role === 'dg' ? orgForm.dgMatricule.trim() || a.matricule : a.matricule,
+      employeeCode: a.role === 'dg' ? orgForm.dgMatricule.trim() || a.matricule : a.matricule,
       // Le compte DG reçoit le mot de passe saisi à l'étape 1.
       password: a.role === 'dg' ? orgForm.dgPassword : a.password,
       // En production, tout mot de passe provisoire ou faible doit être changé à la 1re connexion.
@@ -410,7 +416,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     value={orgForm.rccm}
                     onChange={e => setOrgForm({ ...orgForm, rccm: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
-                    placeholder="CD/KNG/RCCM/20-A-01120"
+                    placeholder="Ex. CD/KIN/RCCM/…"
                   />
                 </div>
 
@@ -421,7 +427,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     value={orgForm.idNat}
                     onChange={e => setOrgForm({ ...orgForm, idNat: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
-                    placeholder="01-83-N45201L"
+                    placeholder="Ex. 01-…"
                   />
                 </div>
 
@@ -432,7 +438,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     value={orgForm.numImpot}
                     onChange={e => setOrgForm({ ...orgForm, numImpot: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
-                    placeholder="A1934892Z"
+                    placeholder="Ex. A…"
                   />
                 </div>
 

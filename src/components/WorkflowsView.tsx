@@ -1,4 +1,5 @@
 // src/components/WorkflowsView.tsx
+import { contentHashSync, shortHash } from '../lib/integrity';
 import React, { useState, useEffect } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import type { TaskItem, User, HierarchicalEntity, DocumentItem, Organization } from '../types';
@@ -98,7 +99,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
     id: 'org-1',
     name: 'RHEMA BUSINESS RDC',
     type: 'entreprise' as const,
-    registrationNumber: 'RCCM/20-A-01120',
+    registrationNumber: '',
     headquarters: 'N°1B, Avenue Bangala, Q/Salongo C/Kintambo, Kinshasa - RD CONGO',
     email: 'contact@rhemabusiness.com',
     phone: '+243812791 228',
@@ -242,7 +243,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
       electronicSignature: {
         signedBy: 'Dr. Amadou Diallo (Directeur Général)',
         signedAt: '2026-09-28 16:45',
-        hash: 'SHA256:d91c8cd9bfaeb2b9472194a021bb48'
+        hash: ''
       }
     },
     {
@@ -468,10 +469,14 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
 
   // Signature et visa officiel
   const handleSignTask = (taskId: string) => {
-    const hashGenerated = `SHA256:wf-${taskId}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
+    const task = localTasks.find(t => t.id === taskId);
+    const signedBy = `${currentUser.name} (${currentUser.roleTitle})`;
+    const signedAt = new Date().toLocaleString('fr-FR');
+    // Empreinte SHA-256 réelle : contenu de la tâche + validateur + date.
+    const hashGenerated = contentHashSync({ task: task ? { ...task, electronicSignature: undefined } : taskId, signedBy, signerId: currentUser.id, signedAt });
     const signInfo = {
-      signedBy: `${currentUser.name} (${currentUser.roleTitle})`,
-      signedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      signedBy,
+      signedAt,
       hash: hashGenerated
     };
 
@@ -501,7 +506,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
     );
 
     if (onLogAction) {
-      onLogAction('Visa Électronique & Approbation', `Validation et signature scellée pour la tâche #${taskId} par ${currentUser.name}`, 'task');
+      onLogAction('Visa Électronique & Approbation', `Tâche #${taskId} validée par ${currentUser.name} (empreinte ${shortHash(hashGenerated)}).`, 'task');
     }
   };
 
@@ -644,7 +649,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
             Workflow Décisionnel & Approbations d'Entreprise
           </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-3xl leading-relaxed">
-            Circuit complet d'instruction des dépenses, ordres de fabrication VSAT et jalons stratégiques avec signatures électroniques scellées SHA-256 et respect de la Règle 6 de délégation hiérarchique.
+            Circuit complet d'instruction des dépenses, ordres de fabrication VSAT et jalons stratégiques avec visas électroniques (empreinte SHA-256) et respect de la Règle 6 de délégation hiérarchique.
           </p>
         </div>
 
@@ -740,7 +745,7 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
             }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Scellées & E-Signées</span>
+            <span>Visées</span>
           </button>
         </div>
 
@@ -1090,13 +1095,13 @@ export const WorkflowsView: React.FC<WorkflowsViewProps> = ({
                     <div className="p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 text-emerald-300 space-y-1.5 text-xs">
                       <div className="font-bold flex items-center gap-1.5 text-emerald-400">
                         <ShieldCheck className="w-4 h-4" />
-                        <span>Visa Électronique Scellé & Conforme RHEMA</span>
+                        <span>Visa électronique</span>
                       </div>
                       <p className="text-slate-200 text-[11px]">
                         Validé & signé par <strong>{task.electronicSignature.signedBy}</strong> le {task.electronicSignature.signedAt}
                       </p>
                       <p className="font-mono text-[10px] text-emerald-400/90 truncate">
-                        Scellé cryptographique : {task.electronicSignature.hash}
+                        Empreinte SHA-256 : {shortHash(task.electronicSignature.hash)}
                       </p>
                     </div>
                   ) : (

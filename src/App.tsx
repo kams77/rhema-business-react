@@ -2,13 +2,19 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
-import { DEMO_MODE, DEMO_PASSWORD } from './config';
+import { invoiceBankDetails } from './lib/bank';
+import { AUDIT_GENESIS, auditChainHash, contentHashSync } from './lib/integrity';
+import { API_MODE, DEMO_MODE, DEMO_PASSWORD } from './config';
+import { SESSION_EXPIRED_EVENT } from './lib/api';
+import { SYNC_NOTICE_EVENT } from './lib/remoteStore';
+import { SyncIndicator } from './components/SyncIndicator';
 import { STORAGE_ERROR_EVENT } from './lib/storage';
 import { ToastStack } from './components/ToastStack';
 import type { ToastMessage, ToastType } from './components/ToastStack';
 import { DataBackupModal } from './components/DataBackupModal';
 import {
   MAX_FAILED_ATTEMPTS,
+  TEMP_LOCK_MS,
   clearSession,
   generateTemporaryPassword,
   loadSession,
@@ -105,9 +111,16 @@ const LogisticsModuleView = lazy(() => import('./components/LogisticsModuleView'
 const LaravelIntegrationView = lazy(() => import('./components/LaravelIntegrationView').then(m => ({ default: m.LaravelIntegrationView })));
 const EntityInvitationsView = lazy(() => import('./components/EntityInvitationsView').then(m => ({ default: m.EntityInvitationsView })));
 
-export default function App() {
+interface AppProps {
+  /** Mode serveur : utilisateur déjà authentifié par le serveur (voir ServerGate). */
+  serverUser?: User;
+  /** Mode serveur : fermeture de session (déconnexion ou expiration). */
+  onServerLogout?: (notice: string | null) => void;
+}
+
+export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [organizations, setOrganizations] = usePersistentState<Organization[]>('organizations', initialOrganizations);
-  const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0]);
+  const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0], { keepDefaultInApi: true });
   const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
   const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
   const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
@@ -123,6 +136,10 @@ export default function App() {
   // La session (onglet en cours) survit au rechargement de la page, mais expire
   // après 30 min d'inactivité ou 10 h au total (voir src/lib/auth.ts).
   const [restoredSession] = useState(() => {
+    if (API_MODE) {
+      // Mode serveur : la session a déjà été vérifiée par le serveur.
+      return serverUser ? { user: users.find(u => u.id === serverUser.id) ?? serverUser } : null;
+    }
     const session = loadSession();
     const user = session ? users.find(u => u.id === session.userId) : undefined;
     if (!session || !user || user.status === 'verrouille' || user.status === 'suspendu') {
@@ -165,8 +182,8 @@ export default function App() {
     actor?: Pick<User, 'id' | 'name' | 'roleTitle'>;
   }) => {
     const actor = entry.actor ?? currentUser;
-    setLogs(prev => [
-      {
+    setLogs(prev => {
+      const base = {
         id: newId('log'),
         timestamp: nowStamp(),
         userId: actor.id,
@@ -175,16 +192,19 @@ export default function App() {
         action: entry.action,
         category: entry.category,
         details: entry.details,
-        ip: 'Poste local',
-        hash: newId('evt')
-      },
+        // En mode serveur, l'adresse IP, l'horodatage et la chaîne sont recalculés par le serveur.
+        ip: API_MODE ? '' : 'Poste local',
+        prevHash: prev[0]?.hash || AUDIT_GENESIS,
+      };
+      const log: AuditLog = { ...base, hash: auditChainHash(base.prevHash, base) };
       // On conserve les 2 000 entrées les plus récentes pour ne pas saturer le stockage du navigateur.
-      ...prev.slice(0, 1999)
-    ]);
+      return [log, ...prev.slice(0, 1999)];
+    });
   };
 
   // Conversion unique des mots de passe en clair (données de démonstration) en empreintes chiffrées.
   useEffect(() => {
+    if (API_MODE) return; // en mode serveur, les mots de passe sont gérés par le serveur
     let cancelled = false;
     migratePlaintextPasswords(users, !DEMO_MODE)
       .then(migrated => {
@@ -211,9 +231,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, isAuthenticated]);
 
-  // Déconnexion automatique après inactivité.
+  // Mode serveur : session expirée côté serveur, et messages de synchronisation.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!API_MODE) return;
+    const onExpired = () => endSession('Votre session a expiré. Reconnectez-vous.');
+    const onNotice = (e: Event) => {
+      const { type, message } = (e as CustomEvent<{ type: ToastType; message: string }>).detail;
+      showToast(type, message);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    window.addEventListener(SYNC_NOTICE_EVENT, onNotice);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+      window.removeEventListener(SYNC_NOTICE_EVENT, onNotice);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Déconnexion automatique après inactivité (mode local ; en mode serveur, c'est le serveur qui l'applique).
+  useEffect(() => {
+    if (!isAuthenticated || API_MODE) return;
     let lastTouch = 0;
     const onActivity = () => {
       const now = Date.now();
@@ -240,7 +277,7 @@ export default function App() {
     const lastLogin = nowStamp();
     const loggedIn: User = { ...user, failedAccessAttempts: 0, lastLogin };
     // Mise à jour ciblée : on ne réécrit pas les autres champs (empreinte du mot de passe…).
-    setUsers(prev => prev.map(u => (u.id === user.id ? { ...u, failedAccessAttempts: 0, lastLogin } : u)));
+    setUsers(prev => prev.map(u => (u.id === user.id ? { ...u, failedAccessAttempts: 0, lastLogin, lockedUntil: undefined } : u)));
     setCurrentUser(loggedIn);
     setIsAuthenticated(true);
     setOnboardingSuccessMsg(null);
@@ -258,6 +295,11 @@ export default function App() {
 
   /** Ferme la session (déconnexion volontaire ou automatique). */
   const endSession = (notice: string | null) => {
+    if (API_MODE) {
+      // Le serveur journalise lui-même les connexions et déconnexions.
+      onServerLogout?.(notice);
+      return;
+    }
     const departingUser = currentUser;
     clearSession();
     setIsAuthenticated(false);
@@ -279,14 +321,18 @@ export default function App() {
   const handleFailedLogin = (user: User) => {
     const attempts = (user.failedAccessAttempts || 0) + 1;
     const lock = attempts >= MAX_FAILED_ATTEMPTS;
-    setUsers(prev => prev.map(u =>
-      u.id === user.id ? { ...u, failedAccessAttempts: attempts, status: lock ? 'verrouille' : u.status } : u
-    ));
+    // Compte DG : blocage temporaire de 15 min (sinon n'importe qui pourrait bloquer la Direction).
+    const temporary = lock && user.role === 'dg';
+    setUsers(prev => prev.map(u => {
+      if (u.id !== user.id) return u;
+      if (temporary) return { ...u, failedAccessAttempts: 0, lockedUntil: Date.now() + TEMP_LOCK_MS };
+      return { ...u, failedAccessAttempts: attempts, status: lock ? 'verrouille' : u.status };
+    }));
     addAuditLog({
       actor: user,
-      action: lock ? 'VERROUILLAGE COMPTE (MOTS DE PASSE ERRONÉS)' : 'Échec de Connexion',
+      action: lock ? (temporary ? 'BLOCAGE TEMPORAIRE COMPTE DG (15 MIN)' : 'VERROUILLAGE COMPTE (MOTS DE PASSE ERRONÉS)') : 'Échec de Connexion',
       category: 'security',
-      details: `Mot de passe erroné pour ${user.name} (tentative ${attempts}/${MAX_FAILED_ATTEMPTS}).${lock ? ' Compte verrouillé.' : ''}`,
+      details: `Mot de passe erroné pour ${user.name} (tentative ${attempts}/${MAX_FAILED_ATTEMPTS}).${lock ? (temporary ? ' Blocage de 15 minutes.' : ' Compte verrouillé.') : ''}`,
     });
     if (lock) {
       setAlerts(prev => [
@@ -300,10 +346,12 @@ export default function App() {
           targetEntityId: 'auth',
           targetEntityName: 'Écran de connexion',
           attemptCount: attempts,
-          status: 'compte_verrouille',
+          status: temporary ? 'alerte_emise' : 'compte_verrouille',
           severity: 'critique',
           ipAddress: 'Poste local',
-          reason: `${attempts} mots de passe erronés consécutifs : compte verrouillé automatiquement.`,
+          reason: temporary
+            ? `${attempts} mots de passe erronés sur le compte DG : blocage temporaire de 15 minutes.`
+            : `${attempts} mots de passe erronés consécutifs : compte verrouillé automatiquement.`,
         },
         ...prev
       ]);
@@ -552,7 +600,7 @@ export default function App() {
       fileType: 'PDF',
       amount: mvt.totalValueUSD,
       currency: 'USD',
-      description: `Opération logistique ${mvt.movementNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}. Scellé SHA-256.`,
+      description: `Opération logistique ${mvt.movementNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}.`,
       allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
       permissions: {
         viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
@@ -820,23 +868,18 @@ export default function App() {
         netToPayUSD: pro.totalTTC_USD,
         netToPayCDF: pro.totalTTC_USD * 2850,
         currencyRate: 2850,
-        bankDetails: {
-          bankName: 'RAWBANK KINSHASA (Siège Gombe)',
-          accountNumberUSD: '05100-01004419201-88 USD',
-          accountNumberCDF: '05100-01004419201-99 CDF',
-          swiftBic: 'RAWBCDZX',
-          ibanOrRib: 'CD68 0510 0010 0441 9201 88'
-        },
+        bankDetails: invoiceBankDetails(currentOrg),
         paymentStatus: 'en_attente',
         paidAmountUSD: 0,
         remainingBalanceUSD: pro.totalTTC_USD,
         paymentRecords: [],
-        electronicSealHash: `sha256-fac-conv-${Date.now()}`,
+        electronicSealHash: '',
         preparedByAgentId: currentUser.id,
         preparedByAgentName: `${currentUser.name} (Agent de Service)`,
         serviceName: currentUser.departmentName || 'Service Facturation',
         isOfficialDocumentEmitted: true
       };
+      newInvoice.electronicSealHash = contentHashSync({ ...newInvoice, electronicSealHash: undefined });
       setNetInvoices(prev => [newInvoice, ...prev]);
       setProformas(prev => prev.map(p => p.id === proformaId ? { ...p, status: 'acceptee_convertie', convertedToInvoiceId: newInvoice.id } : p));
     }
@@ -1032,49 +1075,37 @@ export default function App() {
   };
 
   // Déclenchement d'un test de tentative d'intrusion
+  /**
+   * Exercice de sécurité : crée une alerte de TEST clairement identifiée.
+   * Ne modifie JAMAIS un compte réel (aucun compteur d'échecs, aucun verrouillage).
+   */
   const handleTriggerTestBreach = () => {
-    const testAgents = users.filter(u => u.role === 'agent' || u.role === 'chef_service');
-    const targetAgent = testAgents[Math.floor(Math.random() * testAgents.length)] || users[users.length - 1];
-    const breachCount = (targetAgent.failedAccessAttempts || 0) + 1;
-    const shouldLock = breachCount >= 2;
-
-    const newAlert: SecurityAlert = {
-      id: newId('sec'),
+    if (currentUser.role !== 'dg') {
+      showToast('error', 'Seule la Direction Générale peut lancer un exercice de sécurité.');
+      return;
+    }
+    const testAlert: SecurityAlert = {
+      id: newId('sec-test'),
       timestamp: nowStamp(),
-      userId: targetAgent.id,
-      userName: targetAgent.name,
-      userRole: targetAgent.role,
-      userEntityName: targetAgent.roleTitle,
-      targetEntityId: 'dept-daf',
-      targetEntityName: 'Département Administration & Finances (DAF - Coffre Fort RH)',
-      attemptCount: breachCount,
-      status: shouldLock ? 'compte_verrouille' : 'alerte_emise',
-      severity: shouldLock ? 'critique' : 'haute',
-      ipAddress: 'Simulation',
-      reason: `[Test] Tentative d'accès illicite aux livres de paie & comptes confidentiels (Tentative #${breachCount}).`,
+      userId: 'exercice',
+      userName: 'Exercice de sécurité (fictif)',
+      userRole: 'agent',
+      userEntityName: 'Aucun compte réel',
+      targetEntityId: 'exercice',
+      targetEntityName: 'Exercice — Département Administration & Finances',
+      attemptCount: 1,
+      status: 'alerte_emise',
+      severity: 'haute',
+      ipAddress: 'Exercice',
+      reason: '[EXERCICE] Alerte de test déclenchée par la Direction Générale. Aucun compte n\'a été modifié.',
     };
-
-    setAlerts(prev => [newAlert, ...prev]);
-
-    // Mettre à jour l'utilisateur si récidive
-    setUsers(prev => prev.map(u => {
-      if (u.id === targetAgent.id) {
-        return {
-          ...u,
-          failedAccessAttempts: breachCount,
-          status: shouldLock ? 'verrouille' : u.status
-        };
-      }
-      return u;
-    }));
-
-    // Inscription au journal d'audit
+    setAlerts(prev => [testAlert, ...prev]);
     addAuditLog({
-      actor: targetAgent,
-      action: shouldLock ? 'VERROUILLAGE SÉCURITÉ RÉCIDIVE' : 'ALERTE INTRUSION DÉTECTÉE',
+      action: 'Exercice de Sécurité',
       category: 'security',
-      details: `[Simulation] Tentative illégitime d'accès au périmètre DAF. Statut : ${shouldLock ? 'Compte bloqué & Alerte DG' : 'Avertissement émis'}.`,
+      details: 'Alerte de test créée pour vérifier le circuit d\'alerte. Aucun compte réel modifié.',
     });
+    showToast('info', 'Alerte de test créée. Aucun compte réel n\'a été modifié.');
   };
 
   // Mise à jour de l'identité de l'entreprise
@@ -1148,7 +1179,7 @@ export default function App() {
         onOpenOrgIdentity={() => {
           setShowOrgIdentityModal(true);
         }}
-        onOpenNewAccount={currentUser.role === 'dg' ? () => setShowOnboardingWizard(true) : undefined}
+        onOpenNewAccount={currentUser.role === 'dg' && !API_MODE ? () => setShowOnboardingWizard(true) : undefined}
         onOpenHelp={() => setShowHelpModal(true)}
         onOpenBackup={() => setShowBackupModal(true)}
         onToggleMobileNav={() => setIsMobileNavOpen(open => !open)}
@@ -1558,7 +1589,7 @@ export default function App() {
           )}
 
           {currentTab === 'audit' && (
-            <AuditView logs={logs} />
+            <AuditView logs={logs} organizationName={currentOrg?.name} />
           )}
 
           {currentTab === 'laravel' && (
@@ -1678,6 +1709,7 @@ export default function App() {
         onAudit={(action, details) => addAuditLog({ action, category: 'admin', details })}
       />
 
+      {API_MODE && <SyncIndicator />}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
