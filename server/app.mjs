@@ -328,6 +328,7 @@ export function createApp({ db, config }) {
   /** Données de paie : réservées à la Direction / RH ; un salarié ne voit que ses propres lignes. */
   const PAYROLL_OWN_ROWS = new Set(['contracts', 'payroll.contracts', 'payroll.leaves', 'payroll.advances', 'payroll.overtime', 'payroll.disciplinary']);
   const PAYROLL_STAFF_ONLY = new Set(['payroll.runs', 'payroll.exchangeRate', 'payrollConfigs']);
+  const SELF_SERVICE_REQUESTS = new Set(['payroll.leaves', 'payroll.advances']);
 
   /** Utilisateur au format des règles d'accès (champs du profil inclus). */
   const accessUser = u => toClientUser(u);
@@ -351,12 +352,28 @@ export function createApp({ db, config }) {
     const u = accessUser(user);
     const own = row => row && row.userId === u.id;
     if (PAYROLL_OWN_ROWS.has(key)) {
-      return isPayrollStaff(u) ? { read: 'all', write: true } : { read: own, write: false };
+      if (isPayrollStaff(u)) return { read: 'all', write: true };
+      if (SELF_SERVICE_REQUESTS.has(key)) {
+        // Demandes en libre-service (congé, avance) : l'agent crée ou annule SES demandes en attente,
+        // sans pouvoir les approuver ni toucher à celles des autres.
+        const pending = r => r && r.status === 'en_attente';
+        return { read: own, write: (row, before) => own(row) && pending(row) && (!before || (own(before) && pending(before))) };
+      }
+      return { read: own, write: false };
     }
     if (PAYROLL_STAFF_ONLY.has(key)) return isPayrollStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'securityAlerts') return isSecurityStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
     if (key === 'entities') return { read: 'all', write: isManager(u) };
+    if (key === 'attendance.punches') {
+      // Pointages : chacun saisit les siens ; les responsables et les RH consultent tout.
+      const seeAll = isPayrollStaff(u) || isManager(u);
+      return { read: seeAll ? 'all' : own, write: row => own(row) || isPayrollStaff(u) };
+    }
+    if (key === 'workspace.tasks') return { read: row => !row.ownerId || own({ userId: row.ownerId }), write: row => !row.ownerId || row.ownerId === u.id };
+    if (key === 'workspace.messages') return { read: 'all', write: row => row.authorId === u.id || isManager(u) };
+    // Taux de change : lu par tous les modules, saisi par la finance / RH / DG.
+    if (key === 'settings.exchangeRate') return { read: 'all', write: isPayrollStaff(u) };
     if (key === 'documents') {
       return {
         read: d => canSeeDocument(u, d, entities),
@@ -390,7 +407,8 @@ export function createApp({ db, config }) {
     if (!Array.isArray(incoming)) throw new HttpError(400, 'Liste attendue.');
     const prev = Array.isArray(previous) ? previous : [];
     const prevById = new Map(prev.filter(r => r && typeof r.id === 'string').map(r => [r.id, r]));
-    const hiddenIds = new Set(prev.filter(r => !policy.read(r)).map(r => r.id));
+    const readable = r => (policy.read === 'all' ? true : typeof policy.read === 'function' ? policy.read(r) : false);
+    const hiddenIds = new Set(prev.filter(r => !readable(r)).map(r => r.id));
     const kept = [];
     const seen = new Set();
     for (const row of incoming) {
@@ -400,7 +418,7 @@ export function createApp({ db, config }) {
       if (hiddenIds.has(row.id)) continue; // ligne invisible pour cet utilisateur : on n'y touche pas
       const before = prevById.get(row.id);
       const changed = !before || JSON.stringify(before) !== JSON.stringify(row);
-      if (changed && !(typeof policy.write === 'function' ? policy.write(row) : policy.write)) {
+      if (changed && !(typeof policy.write === 'function' ? policy.write(row, before) : policy.write)) {
         throw new HttpError(403, 'Vous n\'avez pas le droit d\'enregistrer cet élément.');
       }
       kept.push(row);
@@ -859,7 +877,7 @@ export function createApp({ db, config }) {
           });
         }
         let value = body.value;
-        if (typeof policy.read === 'function') {
+        if (typeof policy.read === 'function' || typeof policy.write === 'function') {
           // Liste filtrée : seules les lignes visibles et autorisées sont prises en compte.
           value = mergeFilteredWrite(policy, current ? JSON.parse(current.value) : [], body.value);
         } else if (!policy.write) {

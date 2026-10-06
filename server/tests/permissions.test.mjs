@@ -203,6 +203,41 @@ r = await tech('GET', '/api/audit/verify');
 assert(r.status === 403, 'agent : vérification du journal réservée à la Direction');
 
 // ---------------------------------------------------------------------------
+// Lot 2 : demandes de congé en libre-service, taux de change partagé, pointages
+// ---------------------------------------------------------------------------
+const myLeave = { id: 'lv-test-1', userId: 'p-ag1', userName: 'Technicien Un', type: 'conge_annuel', startDate: '2026-11-02', endDate: '2026-11-06', durationDays: 5, reason: 'Repos', status: 'en_attente' };
+let lv = await tech('GET', '/api/data/payroll.leaves');
+r = await tech('PUT', '/api/data/payroll.leaves', { value: [myLeave, ...(lv.json.value || [])], version: lv.json.version });
+assert(r.status === 200, 'agent : peut déposer sa propre demande de congé (en attente)');
+lv = await tech('GET', '/api/data/payroll.leaves');
+r = await tech('PUT', '/api/data/payroll.leaves', { value: lv.json.value.map(l => (l.id === 'lv-test-1' ? { ...l, status: 'approuve' } : l)), version: lv.json.version });
+assert(r.status === 403, 'agent : ne peut pas approuver sa propre demande');
+r = await tech('PUT', '/api/data/payroll.leaves', { value: [{ ...myLeave, id: 'lv-test-2', userId: 'p-ag2' }, ...lv.json.value], version: lv.json.version });
+assert(r.status === 403, 'agent : ne peut pas déposer une demande au nom d\'un collègue');
+lv = await boss('GET', '/api/data/payroll.leaves');
+assert(lv.json.value.some(l => l.id === 'lv-test-1'), 'DG / RH : voit la demande de congé de l\'agent');
+r = await boss('PUT', '/api/data/payroll.leaves', { value: lv.json.value.map(l => (l.id === 'lv-test-1' ? { ...l, status: 'approuve' } : l)), version: lv.json.version });
+assert(r.status === 200, 'DG / RH : approuve la demande');
+
+let rate = await tech('GET', '/api/data/settings.exchangeRate');
+assert(rate.status === 200, 'agent : lit le taux de change partagé');
+r = await tech('PUT', '/api/data/settings.exchangeRate', { value: { rate: 1, date: '2026-10-06' }, version: rate.json.version });
+assert(r.status === 403, 'agent : ne peut pas modifier le taux de change');
+rate = await boss('GET', '/api/data/settings.exchangeRate');
+r = await boss('PUT', '/api/data/settings.exchangeRate', { value: { rate: 2900, date: '2026-10-06', updatedBy: 'DG' }, version: rate.json.version });
+assert(r.status === 200, 'DG : enregistre le taux du jour');
+
+const punch = { id: 'pt-test', userId: 'p-ag1', userName: 'Technicien Un', date: '2026-10-06', arrivalAt: '2026-10-06T07:00:00.000Z', breaks: [] };
+let pts = await tech('GET', '/api/data/attendance.punches');
+r = await tech('PUT', '/api/data/attendance.punches', { value: [punch, ...(pts.json.value || [])], version: pts.json.version });
+assert(r.status === 200, 'agent : enregistre son pointage');
+pts = await tech('GET', '/api/data/attendance.punches');
+r = await tech('PUT', '/api/data/attendance.punches', { value: [{ ...punch, id: 'pt-autre', userId: 'p-ag2' }, ...pts.json.value], version: pts.json.version });
+assert(r.status === 403, 'agent : ne peut pas pointer pour un collègue');
+pts = await boss('GET', '/api/data/attendance.punches');
+assert(pts.json.value.some(p => p.id === 'pt-test'), 'DG : consulte les pointages');
+
+// ---------------------------------------------------------------------------
 // Verrouillage : agent verrouillé ; DG bloqué 15 minutes seulement
 // ---------------------------------------------------------------------------
 const anon = client();
