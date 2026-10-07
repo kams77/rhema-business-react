@@ -314,9 +314,6 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
     case 'agents':
       // Chefs de service, division, direction, département et DG peuvent administrer leurs agents
       return user.role !== 'agent';
-    case 'payroll':
-      // DG, Direction / RH habilitée (règle commune avec le serveur)
-      return isPayrollStaff(user);
     case 'security':
     case 'audit':
       // Réservé DG, chefs de département et directeurs (règle commune avec le serveur)

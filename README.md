@@ -37,7 +37,6 @@ TypeScript, compilation et image Docker.
 | Invitations            | Accès inter-entités par matricule et clé à 10 chiffres                   |
 | Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel RHEMA   |
 | Logistique             | Bons de commande, livraisons, factures, hubs provinciaux, stocks, S/N    |
-| Paie & RH              | Barème RDC paramétrable, congés, avances, heures sup., sanctions, bulletins |
 | Import en masse        | Employés, contrats et historiques de paie par CSV                        |
 | Sécurité & audit       | Alertes d'intrusion, verrouillage, journal horodaté exportable (PDF/CSV) |
 

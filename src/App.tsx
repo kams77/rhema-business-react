@@ -102,7 +102,6 @@ import {
 const HierarchyView = lazy(() => import('./components/HierarchyView').then(m => ({ default: m.HierarchyView })));
 const DocumentsView = lazy(() => import('./components/DocumentsView').then(m => ({ default: m.DocumentsView })));
 const WorkflowsView = lazy(() => import('./components/WorkflowsView').then(m => ({ default: m.WorkflowsView })));
-const PayrollSystemView = lazy(() => import('./components/PayrollSystemView').then(m => ({ default: m.PayrollSystemView })));
 const SecurityView = lazy(() => import('./components/SecurityView').then(m => ({ default: m.SecurityView })));
 const AgentCrudView = lazy(() => import('./components/AgentCrudView').then(m => ({ default: m.AgentCrudView })));
 const AuditView = lazy(() => import('./components/AuditView').then(m => ({ default: m.AuditView })));
@@ -1045,35 +1044,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [showOrgIdentityModal, setShowOrgIdentityModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
-  // Gestion de la sauvegarde de la politique salariale
-  const handleUpdatePayrollConfig = (updatedConfig: PayrollSystemConfig, auditNote?: string) => {
-    setPayrollConfigs(prev => ({
-      ...prev,
-      [currentOrg.id]: updatedConfig
-    }));
-    if (auditNote) {
-      addAuditLog({
-        action: 'Mise à jour Paie RH',
-        category: 'admin',
-        details: auditNote,
-      });
-    }
-  };
-
-  // Réinitialisation au barème officiel RDC
-  const handleResetPayrollToStandard = () => {
-    const standard = createStandardPayrollSystem(currentOrg.id, currentOrg.name);
-    setPayrollConfigs(prev => ({
-      ...prev,
-      [currentOrg.id]: standard
-    }));
-    addAuditLog({
-      action: 'Réinitialisation Barème RDC',
-      category: 'admin',
-      details: `Barème officiel de paie RDC réinitialisé pour ${currentOrg.name}`,
-    });
-  };
-
   // Déclenchement d'un test de tentative d'intrusion
   /**
    * Exercice de sécurité : crée une alerte de TEST clairement identifiée.
@@ -1153,7 +1123,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-neutral-800 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       <Navbar
         organizations={organizations}
         currentOrg={currentOrg}
@@ -1418,28 +1388,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 }}
               />
             )
-          )}
-
-          {/* MODULE DE PAIE & RH RDC COMPLET */}
-          {currentTab === 'payroll' && (
-            <PayrollSystemView
-              currentOrg={currentOrg}
-              currentUser={currentUser}
-              users={users}
-              payrollConfig={payrollConfigs[currentOrg.id] || createStandardPayrollSystem(currentOrg.id, currentOrg.name)}
-              onUpdatePayrollConfig={handleUpdatePayrollConfig}
-              onResetToStandard={handleResetPayrollToStandard}
-              contracts={contracts}
-              onContractsChange={setContracts}
-              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev.filter(d => d.id !== doc.id)])}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
-            />
           )}
 
           {/* MODULE DE MASSIFICATION CSV & IMPORT RH / PAIE */}
