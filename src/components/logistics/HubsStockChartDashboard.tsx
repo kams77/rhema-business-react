@@ -643,16 +643,16 @@ export const HubsStockChartDashboard: React.FC<HubsStockChartDashboardProps> = (
                 data={hubComparisonData}
                 margin={{ top: 15, right: 15, left: -10, bottom: 5 }}
               >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#d6dde5" />
                 <XAxis 
                   dataKey="name" 
                   tick={{ fontSize: 11, fill: '#94a3b8' }} 
-                  axisLine={{ stroke: '#334155' }}
+                  axisLine={{ stroke: '#b3bec9' }}
                   tickLine={false}
                 />
                 <YAxis 
                   tick={{ fontSize: 11, fill: '#94a3b8' }} 
-                  axisLine={{ stroke: '#334155' }}
+                  axisLine={{ stroke: '#b3bec9' }}
                   tickLine={false}
                   unit={displayMetric === 'units' ? '' : '$'}
                 />
@@ -876,18 +876,18 @@ export const HubsStockChartDashboard: React.FC<HubsStockChartDashboardProps> = (
               layout="vertical"
               margin={{ top: 10, right: 30, left: 40, bottom: 5 }}
             >
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#d6dde5" />
               <XAxis 
                 type="number" 
                 tick={{ fontSize: 11, fill: '#94a3b8' }} 
-                axisLine={{ stroke: '#334155' }}
+                axisLine={{ stroke: '#b3bec9' }}
                 tickLine={false}
               />
               <YAxis 
                 type="category" 
                 dataKey="shortName" 
                 tick={{ fontSize: 11, fill: '#cbd5e1' }} 
-                axisLine={{ stroke: '#334155' }}
+                axisLine={{ stroke: '#b3bec9' }}
                 tickLine={false}
                 width={140}
               />
