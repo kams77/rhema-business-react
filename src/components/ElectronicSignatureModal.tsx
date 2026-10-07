@@ -719,7 +719,7 @@ export const ElectronicSignatureModal: React.FC<ElectronicSignatureModalProps> =
                       <button
                         type="button"
                         onClick={() => setStrokeColor('#0f172a')}
-                        className={`w-4 h-4 rounded-full bg-slate-900 border border-slate-600 transition ${strokeColor === '#0f172a' ? 'ring-2 ring-white scale-110' : 'opacity-70'}`}
+                        className={`garder-couleur w-4 h-4 rounded-full bg-slate-900 border border-slate-600 transition ${strokeColor === '#0f172a' ? 'ring-2 ring-white scale-110' : 'opacity-70'}`}
                         title="Encre noire intense"
                       />
                       <button

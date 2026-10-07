@@ -1,0 +1,185 @@
+/* ==========================================================================
+ * THÈME CLAIR DOUX — fichier GÉNÉRÉ par scripts/theme-clair.mjs, ne pas modifier à la main.
+ * Relancer « npm run theme:clair » après l'ajout d'écrans ou de nouvelles couleurs.
+ * ========================================================================== */
+
+[class~="bg-amber-950/10"] { background-color: color-mix(in oklab, var(--color-amber-100) 15%, transparent); }
+[class~="bg-amber-950/20"] { background-color: color-mix(in oklab, var(--color-amber-100) 30%, transparent); }
+[class~="bg-blue-950/10"] { background-color: color-mix(in oklab, var(--color-blue-100) 15%, transparent); }
+[class~="bg-blue-950/20"] { background-color: color-mix(in oklab, var(--color-blue-100) 30%, transparent); }
+[class~="bg-cyan-950/20"] { background-color: color-mix(in oklab, var(--color-cyan-100) 30%, transparent); }
+[class~="bg-emerald-900/40"] { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
+[class~="bg-emerald-950/10"] { background-color: color-mix(in oklab, var(--color-emerald-100) 15%, transparent); }
+[class~="bg-emerald-950/20"] { background-color: color-mix(in oklab, var(--color-emerald-100) 30%, transparent); }
+[class~="bg-emerald-950/30"] { background-color: color-mix(in oklab, var(--color-emerald-100) 45%, transparent); }
+[class~="bg-emerald-950/40"] { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
+[class~="bg-emerald-950/60"] { background-color: color-mix(in oklab, var(--color-emerald-100) 90%, transparent); }
+[class~="bg-emerald-950/95"] { background-color: color-mix(in oklab, var(--color-emerald-100) 100%, transparent); }
+[class~="bg-indigo-900/80"] { background-color: color-mix(in oklab, var(--color-indigo-100) 100%, transparent); }
+[class~="bg-indigo-950/30"] { background-color: color-mix(in oklab, var(--color-indigo-100) 45%, transparent); }
+[class~="bg-indigo-950/40"] { background-color: color-mix(in oklab, var(--color-indigo-100) 60%, transparent); }
+[class~="bg-neutral-800"] { background-color: #e2e7ed; }
+[class~="bg-purple-950/20"] { background-color: color-mix(in oklab, var(--color-purple-100) 30%, transparent); }
+[class~="bg-red-950/10"] { background-color: color-mix(in oklab, var(--color-red-100) 15%, transparent); }
+[class~="bg-red-950/20"] { background-color: color-mix(in oklab, var(--color-red-100) 30%, transparent); }
+[class~="bg-rose-950/15"] { background-color: color-mix(in oklab, var(--color-rose-100) 23%, transparent); }
+[class~="bg-rose-950/20"] { background-color: color-mix(in oklab, var(--color-rose-100) 30%, transparent); }
+[class~="bg-rose-950/25"] { background-color: color-mix(in oklab, var(--color-rose-100) 38%, transparent); }
+[class~="bg-rose-950/30"] { background-color: color-mix(in oklab, var(--color-rose-100) 45%, transparent); }
+[class~="bg-rose-950/40"] { background-color: color-mix(in oklab, var(--color-rose-100) 60%, transparent); }
+[class~="bg-rose-950/95"] { background-color: color-mix(in oklab, var(--color-rose-100) 100%, transparent); }
+[class~="bg-sky-900/60"] { background-color: color-mix(in oklab, var(--color-sky-100) 90%, transparent); }
+[class~="bg-sky-950/20"] { background-color: color-mix(in oklab, var(--color-sky-100) 30%, transparent); }
+[class~="bg-sky-950/30"] { background-color: color-mix(in oklab, var(--color-sky-100) 45%, transparent); }
+[class~="bg-sky-950/40"] { background-color: color-mix(in oklab, var(--color-sky-100) 60%, transparent); }
+[class~="bg-slate-700/50"] { background-color: color-mix(in oklab, #d2d9e1 50%, transparent); }
+[class~="bg-slate-800"] { background-color: #e2e7ed; }
+[class~="bg-slate-800/60"] { background-color: color-mix(in oklab, #e2e7ed 60%, transparent); }
+[class~="bg-slate-800/80"] { background-color: color-mix(in oklab, #e2e7ed 80%, transparent); }
+[class~="bg-slate-900"] { background-color: #f6f8fa; }
+[class~="bg-slate-900/30"] { background-color: color-mix(in oklab, #f6f8fa 30%, transparent); }
+[class~="bg-slate-900/40"] { background-color: color-mix(in oklab, #f6f8fa 40%, transparent); }
+[class~="bg-slate-900/50"] { background-color: color-mix(in oklab, #f6f8fa 50%, transparent); }
+[class~="bg-slate-900/60"] { background-color: color-mix(in oklab, #f6f8fa 60%, transparent); }
+[class~="bg-slate-900/70"] { background-color: color-mix(in oklab, #f6f8fa 70%, transparent); }
+[class~="bg-slate-900/80"] { background-color: color-mix(in oklab, #f6f8fa 80%, transparent); }
+[class~="bg-slate-900/90"] { background-color: color-mix(in oklab, #f6f8fa 90%, transparent); }
+[class~="bg-slate-900/95"] { background-color: color-mix(in oklab, #f6f8fa 95%, transparent); }
+[class~="bg-slate-950"] { background-color: #e9edf2; }
+[class~="bg-slate-950/30"] { background-color: color-mix(in oklab, #e9edf2 30%, transparent); }
+[class~="bg-slate-950/40"] { background-color: color-mix(in oklab, #e9edf2 40%, transparent); }
+[class~="bg-slate-950/50"] { background-color: color-mix(in oklab, #e9edf2 50%, transparent); }
+[class~="bg-slate-950/60"] { background-color: color-mix(in oklab, #e9edf2 60%, transparent); }
+[class~="bg-slate-950/70"] { background-color: color-mix(in oklab, #e9edf2 70%, transparent); }
+[class~="bg-slate-950/80"] { background-color: color-mix(in oklab, #e9edf2 80%, transparent); }
+[class~="bg-slate-950/85"] { background-color: color-mix(in oklab, #e9edf2 85%, transparent); }
+[class~="bg-slate-950/90"] { background-color: color-mix(in oklab, #e9edf2 90%, transparent); }
+[class~="border-amber-800/40"] { border-color: color-mix(in oklab, var(--color-amber-200) 40%, transparent); }
+[class~="border-blue-800/40"] { border-color: color-mix(in oklab, var(--color-blue-200) 40%, transparent); }
+[class~="border-cyan-800/40"] { border-color: color-mix(in oklab, var(--color-cyan-200) 40%, transparent); }
+[class~="border-emerald-800/40"] { border-color: color-mix(in oklab, var(--color-emerald-200) 40%, transparent); }
+[class~="border-purple-800/40"] { border-color: color-mix(in oklab, var(--color-purple-200) 40%, transparent); }
+[class~="border-rose-900/40"] { border-color: color-mix(in oklab, var(--color-rose-200) 40%, transparent); }
+[class~="border-sky-800/40"] { border-color: color-mix(in oklab, var(--color-sky-200) 40%, transparent); }
+[class~="border-slate-600"] { border-color: #b3bec9; }
+[class~="border-slate-700"] { border-color: #c5ced8; }
+[class~="border-slate-700/80"] { border-color: color-mix(in oklab, #c5ced8 80%, transparent); }
+[class~="border-slate-700/90"] { border-color: color-mix(in oklab, #c5ced8 90%, transparent); }
+[class~="border-slate-800"] { border-color: #d6dde5; }
+[class~="border-slate-800/60"] { border-color: color-mix(in oklab, #d6dde5 60%, transparent); }
+[class~="border-slate-800/80"] { border-color: color-mix(in oklab, #d6dde5 80%, transparent); }
+[class~="border-slate-900"] { border-color: #e2e7ed; }
+[class~="border-slate-900/80"] { border-color: color-mix(in oklab, #e2e7ed 80%, transparent); }
+[class~="divide-slate-800"] > :not(:last-child) { border-color: #d6dde5; }
+[class~="divide-slate-800/60"] > :not(:last-child) { border-color: color-mix(in oklab, #d6dde5 60%, transparent); }
+[class~="divide-slate-800/80"] > :not(:last-child) { border-color: color-mix(in oklab, #d6dde5 80%, transparent); }
+[class~="from-amber-950"] { --tw-gradient-from: var(--color-amber-100); }
+[class~="from-amber-950/40"] { --tw-gradient-from: color-mix(in oklab, var(--color-amber-100) 60%, transparent); }
+[class~="from-indigo-900/20"] { --tw-gradient-from: color-mix(in oklab, var(--color-indigo-100) 30%, transparent); }
+[class~="from-slate-900"] { --tw-gradient-from: #f6f8fa; }
+.group:hover [class~="group-hover:text-amber-300"] { color: var(--color-amber-700); }
+.group:hover [class~="group-hover:text-emerald-300"] { color: var(--color-emerald-700); }
+.group:hover [class~="group-hover:text-indigo-200"] { color: var(--color-indigo-800); }
+.group:hover [class~="group-hover:text-indigo-300"] { color: var(--color-indigo-700); }
+.group:hover [class~="group-hover:text-indigo-400"] { color: var(--color-indigo-700); }
+.group:hover [class~="group-hover:text-sky-300"] { color: var(--color-sky-700); }
+[class~="hover:bg-emerald-900/60"]:hover { background-color: color-mix(in oklab, var(--color-emerald-100) 90%, transparent); }
+[class~="hover:bg-emerald-950/40"]:hover { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
+[class~="hover:bg-sky-900/30"]:hover { background-color: color-mix(in oklab, var(--color-sky-100) 45%, transparent); }
+[class~="hover:bg-sky-950"]:hover { background-color: var(--color-sky-100); }
+[class~="hover:bg-slate-700"]:hover { background-color: #d2d9e1; }
+[class~="hover:bg-slate-750"]:hover { background-color: #d2d9e1; }
+[class~="hover:bg-slate-800"]:hover { background-color: #e2e7ed; }
+[class~="hover:bg-slate-800/30"]:hover { background-color: color-mix(in oklab, #e2e7ed 30%, transparent); }
+[class~="hover:bg-slate-800/40"]:hover { background-color: color-mix(in oklab, #e2e7ed 40%, transparent); }
+[class~="hover:bg-slate-800/60"]:hover { background-color: color-mix(in oklab, #e2e7ed 60%, transparent); }
+[class~="hover:bg-slate-800/80"]:hover { background-color: color-mix(in oklab, #e2e7ed 80%, transparent); }
+[class~="hover:bg-slate-900"]:hover { background-color: #f6f8fa; }
+[class~="hover:bg-slate-900/40"]:hover { background-color: color-mix(in oklab, #f6f8fa 40%, transparent); }
+[class~="hover:bg-slate-950"]:hover { background-color: #e9edf2; }
+[class~="hover:bg-white/10"]:hover { background-color: rgb(15 23 42 / 5%); }
+[class~="hover:border-slate-600"]:hover { border-color: #b3bec9; }
+[class~="hover:border-slate-700"]:hover { border-color: #c5ced8; }
+[class~="hover:text-indigo-300"]:hover { color: var(--color-indigo-700); }
+[class~="hover:text-red-300"]:hover { color: var(--color-red-700); }
+[class~="hover:text-rose-400"]:hover { color: var(--color-rose-700); }
+[class~="hover:text-sky-300"]:hover { color: var(--color-sky-700); }
+[class~="hover:text-slate-200"]:hover { color: #283548; }
+[class~="hover:text-slate-300"]:hover { color: #3a4758; }
+[class~="hover:text-white"]:hover { color: #1f2937; }
+@media (min-width: 64rem) { [class~="lg:border-slate-800"] { border-color: #d6dde5; } }
+@media (min-width: 64rem) { [class~="lg:border-slate-800/80"] { border-color: color-mix(in oklab, #d6dde5 80%, transparent); } }
+[class~="ring-white"] { --tw-ring-color: #475569; }
+@media (min-width: 40rem) { [class~="sm:border-slate-800"] { border-color: #d6dde5; } }
+[class~="text-amber-100"] { color: var(--color-amber-800); }
+[class~="text-amber-200"] { color: var(--color-amber-800); }
+[class~="text-amber-300"] { color: var(--color-amber-700); }
+[class~="text-amber-300/80"] { color: color-mix(in oklab, var(--color-amber-700) 80%, transparent); }
+[class~="text-amber-300/90"] { color: color-mix(in oklab, var(--color-amber-700) 90%, transparent); }
+[class~="text-amber-400"] { color: var(--color-amber-700); }
+[class~="text-amber-400/80"] { color: color-mix(in oklab, var(--color-amber-700) 80%, transparent); }
+[class~="text-blue-300"] { color: var(--color-blue-700); }
+[class~="text-blue-400"] { color: var(--color-blue-700); }
+[class~="text-cyan-300"] { color: var(--color-cyan-700); }
+[class~="text-cyan-400"] { color: var(--color-cyan-700); }
+[class~="text-emerald-100"] { color: var(--color-emerald-800); }
+[class~="text-emerald-200"] { color: var(--color-emerald-800); }
+[class~="text-emerald-200/90"] { color: color-mix(in oklab, var(--color-emerald-800) 90%, transparent); }
+[class~="text-emerald-300"] { color: var(--color-emerald-700); }
+[class~="text-emerald-400"] { color: var(--color-emerald-700); }
+[class~="text-emerald-400/80"] { color: color-mix(in oklab, var(--color-emerald-700) 80%, transparent); }
+[class~="text-emerald-400/90"] { color: color-mix(in oklab, var(--color-emerald-700) 90%, transparent); }
+[class~="text-indigo-100"] { color: var(--color-indigo-800); }
+[class~="text-indigo-200"] { color: var(--color-indigo-800); }
+[class~="text-indigo-200/90"] { color: color-mix(in oklab, var(--color-indigo-800) 90%, transparent); }
+[class~="text-indigo-300"] { color: var(--color-indigo-700); }
+[class~="text-indigo-400"] { color: var(--color-indigo-700); }
+[class~="text-orange-400"] { color: var(--color-orange-700); }
+[class~="text-purple-300"] { color: var(--color-purple-700); }
+[class~="text-purple-400"] { color: var(--color-purple-700); }
+[class~="text-red-200"] { color: var(--color-red-800); }
+[class~="text-red-300"] { color: var(--color-red-700); }
+[class~="text-red-400"] { color: var(--color-red-700); }
+[class~="text-rose-100"] { color: var(--color-rose-800); }
+[class~="text-rose-200"] { color: var(--color-rose-800); }
+[class~="text-rose-300"] { color: var(--color-rose-700); }
+[class~="text-rose-300/80"] { color: color-mix(in oklab, var(--color-rose-700) 80%, transparent); }
+[class~="text-rose-400"] { color: var(--color-rose-700); }
+[class~="text-sky-200"] { color: var(--color-sky-800); }
+[class~="text-sky-200/90"] { color: color-mix(in oklab, var(--color-sky-800) 90%, transparent); }
+[class~="text-sky-300"] { color: var(--color-sky-700); }
+[class~="text-sky-300/80"] { color: color-mix(in oklab, var(--color-sky-700) 80%, transparent); }
+[class~="text-sky-400"] { color: var(--color-sky-700); }
+[class~="text-sky-400/50"] { color: color-mix(in oklab, var(--color-sky-700) 50%, transparent); }
+[class~="text-sky-400/80"] { color: color-mix(in oklab, var(--color-sky-700) 80%, transparent); }
+[class~="text-slate-100"] { color: #1f2937; }
+[class~="text-slate-200"] { color: #283548; }
+[class~="text-slate-300"] { color: #3a4758; }
+[class~="text-slate-400"] { color: #546173; }
+[class~="text-teal-300"] { color: var(--color-teal-700); }
+[class~="text-violet-300"] { color: var(--color-violet-700); }
+[class~="text-white"] { color: #1f2937; }
+[class~="text-white/80"] { color: color-mix(in oklab, #1f2937 80%, transparent); }
+[class~="to-amber-950"] { --tw-gradient-to: var(--color-amber-100); }
+[class~="to-indigo-950/40"] { --tw-gradient-to: color-mix(in oklab, var(--color-indigo-100) 60%, transparent); }
+[class~="to-sky-950/30"] { --tw-gradient-to: color-mix(in oklab, var(--color-sky-100) 45%, transparent); }
+[class~="to-slate-900"] { --tw-gradient-to: #f6f8fa; }
+[class~="via-blue-900/10"] { --tw-gradient-via: color-mix(in oklab, var(--color-blue-100) 15%, transparent); }
+[class~="via-emerald-950/40"] { --tw-gradient-via: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
+[class~="via-indigo-950/40"] { --tw-gradient-via: color-mix(in oklab, var(--color-indigo-100) 60%, transparent); }
+[class~="via-sky-950/40"] { --tw-gradient-via: color-mix(in oklab, var(--color-sky-100) 60%, transparent); }
+[class~="via-slate-900"] { --tw-gradient-via: #f6f8fa; }
+[class~="via-slate-900/90"] { --tw-gradient-via: color-mix(in oklab, #f6f8fa 90%, transparent); }
+[class~="via-slate-950"] { --tw-gradient-via: #e9edf2; }
+
+/* --- Exceptions (placées en dernier pour l'emporter) --- */
+
+/* Texte d'origine conservé sur les fonds de couleur franche (boutons, badges pleins) */
+:is([class~="bg-amber-400"], [class~="bg-amber-500"], [class~="bg-amber-600"], [class~="bg-blue-600"], [class~="bg-blue-700"], [class~="bg-cyan-600"], [class~="bg-emerald-400"], [class~="bg-emerald-500"], [class~="bg-emerald-600"], [class~="bg-emerald-700"], [class~="bg-indigo-400"], [class~="bg-indigo-500"], [class~="bg-indigo-600"], [class~="bg-orange-500"], [class~="bg-purple-400"], [class~="bg-purple-600"], [class~="bg-red-500"], [class~="bg-red-600"], [class~="bg-rose-500"], [class~="bg-rose-600"], [class~="bg-sky-400"], [class~="bg-sky-500"], [class~="bg-sky-600"], [class~="from-amber-500"], [class~="from-amber-600"], [class~="from-blue-600"], [class~="from-cyan-600"], [class~="from-emerald-500"], [class~="from-emerald-600"], [class~="from-indigo-500"], [class~="from-indigo-600"], [class~="from-sky-600"], [class~="hover:bg-amber-400"]:hover, [class~="hover:bg-amber-500"]:hover, [class~="hover:bg-amber-600"]:hover, [class~="hover:bg-blue-500"]:hover, [class~="hover:bg-emerald-500"]:hover, [class~="hover:bg-emerald-600"]:hover, [class~="hover:bg-indigo-500"]:hover, [class~="hover:bg-indigo-600"]:hover, [class~="hover:bg-red-500"]:hover, [class~="hover:bg-rose-500"]:hover, [class~="hover:bg-sky-500"]:hover, [class~="hover:bg-sky-600"]:hover, [class~="hover:bg-sky-700"]:hover, [class~="hover:from-amber-400"]:hover, [class~="hover:from-amber-500"]:hover, [class~="hover:from-amber-600"]:hover, [class~="hover:from-cyan-500"]:hover, [class~="hover:from-emerald-500"]:hover, [class~="hover:from-indigo-500"]:hover)[class][class],
+:is([class~="bg-amber-400"], [class~="bg-amber-500"], [class~="bg-amber-600"], [class~="bg-blue-600"], [class~="bg-blue-700"], [class~="bg-cyan-600"], [class~="bg-emerald-400"], [class~="bg-emerald-500"], [class~="bg-emerald-600"], [class~="bg-emerald-700"], [class~="bg-indigo-400"], [class~="bg-indigo-500"], [class~="bg-indigo-600"], [class~="bg-orange-500"], [class~="bg-purple-400"], [class~="bg-purple-600"], [class~="bg-red-500"], [class~="bg-red-600"], [class~="bg-rose-500"], [class~="bg-rose-600"], [class~="bg-sky-400"], [class~="bg-sky-500"], [class~="bg-sky-600"], [class~="from-amber-500"], [class~="from-amber-600"], [class~="from-blue-600"], [class~="from-cyan-600"], [class~="from-emerald-500"], [class~="from-emerald-600"], [class~="from-indigo-500"], [class~="from-indigo-600"], [class~="from-sky-600"], [class~="hover:bg-amber-400"]:hover, [class~="hover:bg-amber-500"]:hover, [class~="hover:bg-amber-600"]:hover, [class~="hover:bg-blue-500"]:hover, [class~="hover:bg-emerald-500"]:hover, [class~="hover:bg-emerald-600"]:hover, [class~="hover:bg-indigo-500"]:hover, [class~="hover:bg-indigo-600"]:hover, [class~="hover:bg-red-500"]:hover, [class~="hover:bg-rose-500"]:hover, [class~="hover:bg-sky-500"]:hover, [class~="hover:bg-sky-600"]:hover, [class~="hover:bg-sky-700"]:hover, [class~="hover:from-amber-400"]:hover, [class~="hover:from-amber-500"]:hover, [class~="hover:from-amber-600"]:hover, [class~="hover:from-cyan-500"]:hover, [class~="hover:from-emerald-500"]:hover, [class~="hover:from-indigo-500"]:hover) [class][class] { color: revert-layer; }
+
+/* Voiles derrière les fenêtres : restent sombres */
+.fixed.inset-0:is([class*="bg-slate-950/"], [class*="bg-slate-900/"]) { background-color: revert-layer; }
+
+/* Pastilles qui représentent une couleur précise (ex. encre noire de la signature) */
+.garder-couleur { background-color: revert-layer !important; }

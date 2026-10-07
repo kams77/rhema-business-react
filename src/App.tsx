@@ -1123,7 +1123,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-800 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       <Navbar
         organizations={organizations}
         currentOrg={currentOrg}

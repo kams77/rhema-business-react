@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "theme:clair": "node scripts/theme-clair.mjs",
     "server": "node server/index.mjs",
     "server:memoire": "node server/index.mjs --memoire",
     "test:api": "node server/tests/api.test.mjs",

@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ServerGate } from './components/ServerGate';
 import { API_MODE } from './config';
 import './index.css';
+import './theme-clair.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
