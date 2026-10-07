@@ -12,7 +12,6 @@ import {
   History,
   ChevronRight,
   Fingerprint,
-  Coins,
   UploadCloud,
   Clock,
   Truck,
@@ -28,7 +27,6 @@ export type ActiveTab =
   | 'documents' 
   | 'workflows' 
   | 'logistics'
-  | 'payroll'
   | 'security' 
   | 'agents' 
   | 'bulk_import'
@@ -104,13 +102,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Truck className="w-4 h-4 text-amber-400" />,
       badge: 'VSAT & Hubs',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-semibold',
-    },
-    {
-      id: 'payroll',
-      label: 'Système de Paie RH',
-      icon: <Coins className="w-4 h-4 text-amber-400" />,
-      badge: 'RH & Salaires',
-      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
     },
     {
       id: 'bulk_import',

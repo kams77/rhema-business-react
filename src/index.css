@@ -41,7 +41,7 @@
   }
 
   body {
-    background-color: #020617;
+    background-color: #262626; /* gris neutre (neutral-800) */
     color: #f8fafc;
     font-family: var(--font-sans);
     -webkit-tap-highlight-color: transparent;
@@ -76,7 +76,7 @@
 /* ========================================================================== */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #1e293b #020617;
+  scrollbar-color: #525252 #262626;
 }
 
 ::-webkit-scrollbar {
@@ -85,7 +85,7 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #020617;
+  background: #262626;
 }
 
 ::-webkit-scrollbar-thumb {

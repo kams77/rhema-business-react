@@ -224,7 +224,6 @@ export type NavigationTab =
   | 'hierarchy' 
   | 'documents' 
   | 'workflows' 
-  | 'payroll'
   | 'security' 
   | 'agents' 
   | 'bulk_import'
