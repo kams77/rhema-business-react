@@ -24,5 +24,11 @@ export const API_MODE: boolean = import.meta.env.VITE_BACKEND === 'api';
  */
 export const DEMO_MODE: boolean = !API_MODE && import.meta.env.VITE_DEMO_MODE !== 'false';
 
+/**
+ * Nom de la version livrée (badge en haut de l'écran et sur la page de connexion).
+ * Fichier .env : VITE_APP_VERSION=Test1 — vide = aucun badge.
+ */
+export const APP_VERSION: string = (import.meta.env.VITE_APP_VERSION || '').trim();
+
 /** Mot de passe des comptes de démonstration (affiché uniquement en mode démo). */
 export const DEMO_PASSWORD = 'rhema2026';

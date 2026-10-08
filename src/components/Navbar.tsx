@@ -18,7 +18,7 @@ import {
   X
 } from 'lucide-react';
 import { getRoleBadgeClass, isSecurityStaff } from '../utils/rbac';
-import { DEMO_MODE } from '../config';
+import { APP_VERSION, DEMO_MODE } from '../config';
 
 interface NavbarProps {
   organizations?: Organization[];
@@ -130,6 +130,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold"
                 >
                   Mode démo
+                </span>
+              )}
+              {APP_VERSION && (
+                <span title="Version livrée pour essai" className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold tracking-wide">
+                  Version {APP_VERSION}
                 </span>
               )}
             </div>

@@ -591,6 +591,10 @@ export function canWriteTaskChange(u, before, after, entities) {
       const others = (after.assignedIntervenants || []).filter(i => i.userId !== u.id && (i.roleType === 'executant' || i.roleType === 'contributeur'));
       return others.length === 0 && (!after.assignedEntityId || after.assignedEntityId === u.serviceId || isEntityInUserScope(u, after.assignedEntityId, entities));
     }
+    // Un responsable ne confie pas l'exécution à un supérieur (sauf tâches générées par un module).
+    const toSuperior = (after.assignedIntervenants || []).some(i =>
+      (i.roleType === 'executant' || i.roleType === 'contributeur') && roleRank(i.userRole) > roleRank(u.role));
+    if (toSuperior && !after.source) return false;
     return !after.assignedEntityId || isEntityInUserScope(u, after.assignedEntityId, entities) || !!after.source;
   }
   if (canEditTask(u, before, entities)) return true;

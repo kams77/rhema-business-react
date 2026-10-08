@@ -5,7 +5,7 @@ import type { DocumentItem, HierarchicalEntity, TaskIntervenant, TaskItem, User 
 import {
   PRIORITY_LABELS, TASK_TYPE_LABELS, buildTaskApprovalChain, createTask, intervenant, anchorEntity,
 } from '../../lib/workflow';
-import { canUserViewDocument, getEntitiesInUserScope, isUserVisibleToUser } from '../../utils/rbac';
+import { canUserViewDocument, getEntitiesInUserScope, getRoleRank, isUserVisibleToUser } from '../../utils/rbac';
 import { ApprovalTimeline } from '../workflow/ApprovalTimeline';
 
 type RoleType = TaskIntervenant['roleType'];
@@ -72,11 +72,14 @@ export const TaskCreateModal: React.FC<TaskCreateModalProps> = ({ currentUser, e
   const visibleDocs = useMemo(() => documents.filter(d => d.status !== 'brouillon' && canUserViewDocument(currentUser, d, entities).allowed).slice(0, 60), [documents, currentUser, entities]);
   const doers = people.filter(p => p.role !== 'validateur').map(p => users.find(u => u.id === p.userId)).filter(Boolean) as User[];
 
+  /** On ne confie pas l'exécution à un supérieur : il ne peut être que valideur. */
+  const isSuperior = (u: User) => currentUser.role !== 'dg' && getRoleRank(u.role) > getRoleRank(currentUser.role);
+
   const togglePerson = (u: User) => {
     if (isAgent) return;
     setPeople(prev => prev.some(p => p.userId === u.id)
       ? prev.filter(p => p.userId !== u.id)
-      : [...prev, { userId: u.id, role: prev.some(p => p.role === 'executant') ? 'contributeur' : 'executant' }]);
+      : [...prev, { userId: u.id, role: isSuperior(u) ? 'validateur' : prev.some(p => p.role === 'executant') ? 'contributeur' : 'executant' }]);
   };
 
   const changeType = (t: TaskItem['type']) => {
@@ -249,9 +252,9 @@ export const TaskCreateModal: React.FC<TaskCreateModalProps> = ({ currentUser, e
                         onChange={e => setPeople(prev => prev.map(p => (p.userId === u.id ? { ...p, role: e.target.value as RoleType } : p)))}
                         className="bg-slate-900 border border-slate-700 rounded-lg px-1.5 py-1 text-[11px] text-white"
                       >
-                        <option value="executant">Exécutant</option>
-                        <option value="contributeur">Contributeur</option>
-                        <option value="responsable">Responsable</option>
+                        {!isSuperior(u) && <option value="executant">Exécutant</option>}
+                        {!isSuperior(u) && <option value="contributeur">Contributeur</option>}
+                        {!isSuperior(u) && <option value="responsable">Responsable</option>}
                         <option value="validateur">Validateur</option>
                       </select>
                     )}

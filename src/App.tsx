@@ -84,6 +84,7 @@ import {
   historyEntry,
   intervenant,
   submitDocument,
+  taskRoleOf,
   waitingFor,
 } from './lib/workflow';
 import type { DocumentAction, TaskAction } from './lib/workflow';
@@ -1462,6 +1463,30 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documents, currentUser.id]);
 
+  /** Ce qui attend l'utilisateur connecté : visas de documents, tâches à faire et à valider. */
+  const pendingCounts = {
+    documents: documents.filter(d => canActOnDocument(currentUser, d)).length,
+    tasks: tasks.filter(t =>
+      canValidateTaskNow(currentUser, t) ||
+      (!!taskRoleOf(currentUser, t) && taskRoleOf(currentUser, t) !== 'validateur' && ['a_faire', 'en_cours', 'bloquee'].includes(t.status)),
+    ).length,
+  };
+
+  // Accueil : à chaque connexion (ou changement d'utilisateur en démo), résumé de ce qui l'attend.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const toValidate = tasks.filter(t => canValidateTaskNow(currentUser, t)).length;
+    const parts = [
+      pendingCounts.documents ? `${pendingCounts.documents} document(s) à viser` : '',
+      toValidate ? `${toValidate} tâche(s) à valider` : '',
+      pendingCounts.tasks - toValidate > 0 ? `${pendingCounts.tasks - toValidate} tâche(s) en cours` : '',
+    ].filter(Boolean);
+    showToast('info', parts.length
+      ? `Bonjour ${currentUser.name} : ${parts.join(', ')}.`
+      : `Bonjour ${currentUser.name} : rien ne vous attend pour le moment.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.id, isAuthenticated]);
+
   const [currentTab, setCurrentTab] = useState<ActiveTab>('workspace');
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -1675,6 +1700,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           onTabChange={setCurrentTab}
           currentUser={currentUser}
           unreadAlertsCount={alerts.filter(a => a.status !== 'resolue').length}
+          pendingCounts={pendingCounts}
           isMobileOpen={isMobileNavOpen}
           onMobileClose={() => setIsMobileNavOpen(false)}
         />

@@ -15,7 +15,7 @@ import {
   ArrowRight,
   AlertTriangle
 } from 'lucide-react';
-import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import { APP_VERSION, DEMO_MODE, DEMO_PASSWORD } from '../config';
 import {
   MAX_FAILED_ATTEMPTS,
   MIN_PASSWORD_LENGTH,
@@ -301,6 +301,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
               <span>Connectivité Obligatoire des Agents via Login</span>
             </div>
+            {APP_VERSION && (
+              <span className="ml-2 inline-flex items-center px-2.5 py-1 rounded-full bg-indigo-600 text-white text-xs font-bold mb-3">
+                Version {APP_VERSION}
+              </span>
+            )}
             <h1 className="text-2xl font-black text-white tracking-tight">
               {userToUpdate ? 'Nouveau mot de passe' : 'Connexion Sécurisée'}
             </h1>
