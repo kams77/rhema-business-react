@@ -176,7 +176,8 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const [viewingDoc, setViewingDoc] = useState<DocumentItem | null>(null);
 
   // --- Ce que l'utilisateur voit (mêmes règles que le serveur) --------------------
-  const myTasks = useMemo(() => tasks.filter(t => !!taskRoleOf(currentUser, t)), [tasks, currentUser]);
+  // « Mes tâches » = celles que j'exécute ou pilote ; celles que je dois seulement valider sont dans « À votre visa ».
+  const myTasks = useMemo(() => tasks.filter(t => { const r = taskRoleOf(currentUser, t); return !!r && r !== 'validateur'; }), [tasks, currentUser]);
   const openTasks = myTasks.filter(t => ['a_faire', 'en_cours', 'bloquee'].includes(t.status));
   const lateTasks = myTasks.filter(t => isTaskLate(t));
   const blockedTasks = myTasks.filter(t => t.status === 'bloquee');
