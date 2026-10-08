@@ -1,6 +1,7 @@
 // src/lib/workflow.ts — accès typé au circuit de validation commun (shared/workflow.mjs)
 // et fabriques de documents / tâches utilisées par les modules.
 import * as wf from '../../shared/workflow.mjs';
+import { holdsPosition } from '../../shared/access.mjs';
 import type {
   ApprovalStep,
   DocumentCategory,
@@ -89,6 +90,14 @@ export function directManager(user: User, entities: HierarchicalEntity[], users:
   const first = steps.find(s => !s.approverUserId);
   if (!first) return undefined;
   return { name: first.expectedHolderName || first.label, label: first.label };
+}
+
+/** Compte du supérieur hiérarchique direct (N+1), s'il est en poste. */
+export function directManagerUser(user: User, entities: HierarchicalEntity[], users: User[]): User | undefined {
+  if (user.role === 'dg') return undefined;
+  const step = W.resolveChain(['service', 'division', 'direction', 'departement', 'dg'], user, entities, users).find(s => !s.approverUserId);
+  if (!step) return undefined;
+  return users.find(u => u.id !== user.id && holdsPosition(u as never, step.approverRole, step.entityId));
 }
 
 /** Nom de l'entité de rattachement d'un utilisateur. */

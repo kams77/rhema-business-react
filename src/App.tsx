@@ -78,6 +78,7 @@ import {
   createDocument,
   createTask,
   currentStep,
+  directManagerUser,
   decideDocument,
   documentType,
   historyEntry,
@@ -616,7 +617,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
         details: `${doc.referenceNumber} — ${doc.title}${action.type === 'reject' ? ` — motif : ${action.comment}` : ''}${'comment' in action && action.type === 'approve' && action.comment ? ` — ${action.comment}` : ''}`,
       });
       showToast('success', message);
-      onDocumentWorkflowChange(doc, next);
       return next;
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : String(e));
@@ -823,8 +823,10 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     priority?: TaskItem['priority'];
   }): TaskItem => {
     const entity = anchorEntity(input.executor, entities);
+    // Exécutant + son supérieur direct comme responsable (il suit et valide la tâche).
     const people = [intervenant(input.executor, 'executant', entities)];
-    if (input.executor.id !== currentUser.id && currentUser.role !== 'agent') people.push(intervenant(currentUser, 'responsable', entities));
+    const supervisor = directManagerUser(input.executor, entities, users);
+    if (supervisor) people.push(intervenant(supervisor, 'responsable', entities));
     return createTask({
       title: input.title,
       type: 'logistique',
@@ -844,19 +846,30 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     });
   };
 
-  /** Clôture (ou fait avancer) les tâches générées pour un objet logistique. */
+  /**
+   * Fait avancer les tâches générées pour un objet logistique quand l'événement a lieu
+   * (réception, signature du BL, jalon d'expédition, encaissement).
+   * - tickLabel : coche l'étape correspondante ;
+   * - closeLabel : coche toutes les étapes et SOUMET la tâche à validation (pas de clôture sans visa).
+   * Seules les tâches que l'utilisateur peut exécuter ou piloter sont modifiées.
+   */
   const advanceSourceTasks = (kind: string, refId: string, opts: { tickLabel?: string; closeLabel?: string }) => {
     const stamp = new Date().toISOString();
     setTasks(prev => prev.map(t => {
-      if (t.source?.kind !== kind || t.source.refId !== refId || ['validee_terminee', 'termine', 'annulee'].includes(t.status)) return t;
+      if (t.source?.kind !== kind || t.source.refId !== refId || !['a_faire', 'en_cours', 'bloquee'].includes(t.status)) return t;
+      if (!canExecuteTask(currentUser, t) && !canEditTask(currentUser, t, entities)) return t;
       if (opts.closeLabel) {
-        return {
+        const done: TaskItem = {
           ...t,
-          status: 'validee_terminee',
-          completedAt: stamp,
-          updatedAt: stamp,
           steps: t.steps.map(s => (s.completed ? s : { ...s, completed: true, completedBy: currentUser.name, completedAt: stamp })),
-          history: [...(t.history || []), historyEntry(currentUser, 'cloture', opts.closeLabel)],
+        };
+        return {
+          ...done,
+          status: 'en_attente_approbation',
+          blockedReason: undefined,
+          approval: { cycle: (t.approval?.cycle || 0) + 1, steps: buildTaskApprovalChain(done, entities, users) },
+          updatedAt: stamp,
+          history: [...(t.history || []), historyEntry(currentUser, 'soumission', `${opts.closeLabel} — tâche soumise à validation`)],
         };
       }
       const label = (opts.tickLabel || '').toLowerCase();
@@ -954,41 +967,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
         site: mvt.destinationHubName,
         linkedDocumentIds: [`doc-${mvt.id}`],
       }), ...prev]);
-    }
-  };
-
-  /** Suites logistiques d'une décision prise dans le circuit d'un document. */
-  const onDocumentWorkflowChange = (before: DocumentItem, after: DocumentItem) => {
-    if (after.source?.module !== 'logistique') return;
-    const completed = ['signe', 'approuve'].includes(after.status) && !['signe', 'approuve'].includes(before.status);
-    const rejected = after.status === 'rejete' && before.status !== 'rejete';
-    const resubmitted = before.status === 'rejete' && after.status === 'en_revue';
-    const reason = after.workflow?.rejection?.reason;
-    const { kind, refId } = after.source;
-
-    if (kind === 'bon_commande') {
-      const order = purchaseOrders.find(o => o.id === refId);
-      if (!order) return;
-      if (completed) {
-        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? {
-          ...o, status: 'approuve', approvedByManagerId: currentUser.id, approvedByManagerName: currentUser.name,
-          approvedAt: nowShort(), signatureHash: after.electronicSignature?.certificateHash,
-        } : o)));
-        startOrderExecution(order, after.id);
-      } else if (rejected) {
-        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? { ...o, status: 'brouillon', notes: `${o.notes ? `${o.notes} — ` : ''}Rejeté : ${reason}` } : o)));
-      } else if (resubmitted) {
-        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? { ...o, status: 'en_attente_approbation' } : o)));
-      }
-    } else if (kind === 'mouvement') {
-      const mvt = stockMovements.find(m => m.id === refId);
-      if (!mvt) return;
-      if (completed) finalizeMovement(mvt, currentUser.name);
-      else if (rejected) setStockMovements(prev => prev.map(m => (m.id === refId ? { ...m, status: 'rejete', notes: `${m.notes} — Rejeté : ${reason}` } : m)));
-      else if (resubmitted) setStockMovements(prev => prev.map(m => (m.id === refId ? { ...m, status: 'en_attente_visa' } : m)));
-    } else if (kind === 'facture' && completed) {
-      const inv = netInvoices.find(i => i.id === refId);
-      if (inv) startInvoiceFollowUp(inv, after.id);
     }
   };
 
@@ -1434,6 +1412,55 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       details: `Encaissement de ${amountUSD.toLocaleString('fr-FR')} USD sur la facture ${inv?.invoiceNumber || invoiceId} (réf. ${ref}).`,
     });
   };
+
+  /**
+   * Le DOCUMENT fait foi : l'état des objets logistiques (bon de commande, mouvement de stock, facture)
+   * est aligné sur le circuit de leur document. Exécuté par le personnel logistique (seul habilité à
+   * modifier les données logistiques) : juste après son propre visa, ou à sa prochaine connexion si le
+   * dernier visa a été donné par quelqu'un d'autre (Finance, DG…).
+   */
+  useEffect(() => {
+    if (!canAccessLogistics(currentUser)) return;
+    const docOf = (refId: string) => documents.find(d => d.id === `doc-${refId}` && d.workflow);
+    const isDone = (d?: DocumentItem) => !!d && ['signe', 'approuve'].includes(d.status);
+    const lastActor = (d: DocumentItem) => [...(d.workflow?.steps || [])].reverse().find(st => st.status === 'approuve')?.actorName || currentUser.name;
+    const hasTask = (kind: string, refId: string) => tasks.some(t => t.source?.kind === kind && t.source.refId === refId);
+
+    // Bons de commande
+    const orderUpdates = new Map<string, Partial<PurchaseOrderItem>>();
+    purchaseOrders.forEach(o => {
+      const d = docOf(o.id);
+      if (!d) return;
+      if (o.status === 'en_attente_approbation' && isDone(d)) {
+        orderUpdates.set(o.id, { status: 'approuve', approvedByManagerName: lastActor(d), approvedAt: nowShort(), signatureHash: d.electronicSignature?.certificateHash });
+        if (!hasTask('bon_commande', o.id)) startOrderExecution(o, d.id);
+      } else if (o.status === 'en_attente_approbation' && d.status === 'rejete') {
+        orderUpdates.set(o.id, { status: 'brouillon', notes: `${o.notes ? `${o.notes} — ` : ''}Rejeté : ${d.workflow?.rejection?.reason || ''}` });
+      } else if (o.status === 'brouillon' && d.status === 'en_revue') {
+        orderUpdates.set(o.id, { status: 'en_attente_approbation' });
+      }
+    });
+    if (orderUpdates.size) setPurchaseOrders(prev => prev.map(o => (orderUpdates.has(o.id) ? { ...o, ...orderUpdates.get(o.id) } : o)));
+
+    // Mouvements de stock (le stock ne bouge qu'ici ou à la création d'un bon déjà validé)
+    stockMovements.forEach(m => {
+      const d = docOf(m.id);
+      if (!d) return;
+      if (m.status === 'en_attente_visa' && isDone(d)) finalizeMovement(m, lastActor(d));
+      else if (m.status === 'en_attente_visa' && d.status === 'rejete') {
+        setStockMovements(prev => prev.map(x => (x.id === m.id ? { ...x, status: 'rejete', notes: `${x.notes} — Rejeté : ${d.workflow?.rejection?.reason || ''}` } : x)));
+      } else if (m.status === 'rejete' && d.status === 'en_revue') {
+        setStockMovements(prev => prev.map(x => (x.id === m.id ? { ...x, status: 'en_attente_visa' } : x)));
+      }
+    });
+
+    // Factures signées : tâche de suivi de l'encaissement
+    netInvoices.forEach(inv => {
+      const d = docOf(inv.id);
+      if (isDone(d) && inv.paymentStatus !== 'payee_net' && !hasTask('facture', inv.id)) startInvoiceFollowUp(inv, d!.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents, currentUser.id]);
 
   const [currentTab, setCurrentTab] = useState<ActiveTab>('workspace');
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
