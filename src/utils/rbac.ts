@@ -1,6 +1,13 @@
 // src/utils/rbac.ts
 import type { User, HierarchicalEntity, DocumentItem, UserRole } from '../types';
-import { isPayrollStaff as sharedIsPayrollStaff, isSecurityStaff as sharedIsSecurityStaff } from '../../shared/access.mjs';
+import {
+  isPayrollStaff as sharedIsPayrollStaff,
+  isSecurityStaff as sharedIsSecurityStaff,
+  canSeeDocument as sharedCanSeeDocument,
+  canAccessLogistics as sharedCanAccessLogistics,
+  isLogisticsManager as sharedIsLogisticsManager,
+} from '../../shared/access.mjs';
+import { canActOnDocument, currentStep, waitingFor } from '../lib/workflow';
 
 /** Accès à la paie (règle commune avec le serveur : shared/access.mjs). */
 export const isPayrollStaff = (user: User): boolean => sharedIsPayrollStaff(user as any);
@@ -147,21 +154,31 @@ export function canUserManageEntity(
 }
 
 /**
- * RÈGLE STRICTE 6 : APPROBATION DES DOCUMENTS
- * - Le DG approuve tout document de l'entreprise.
- * - Les chefs de département / direction / division / service approuvent dans leur périmètre affilié.
- * - L'Agent ne peut approuver un document de son service QUE SI le chef de service lui a conféré
- *   cette autorisation spécifique (délégation formelle).
+ * APPROBATION DES DOCUMENTS (circuit de validation, shared/workflow.mjs)
+ * - Un document en circuit se valide étape par étape : seul le titulaire de l'étape EN COURS agit
+ *   (ou le DG). L'émetteur ne vise jamais son propre document.
+ * - L'agent n'agit que s'il a reçu la délégation de visa de son chef de service (règle 6), et
+ *   seulement sur les visas simples de son service.
+ * - Ancien document sans circuit : règle de périmètre hiérarchique.
  */
 export function canUserApproveDocument(
   user: User,
   doc: DocumentItem,
   entities: HierarchicalEntity[]
-): { allowed: boolean; reason?: string } {
-  // 1. Le DG peut tout faire
-  if (user.role === 'dg') return { allowed: true };
+): { allowed: boolean; reason?: string; isFinal?: boolean } {
+  if (doc.workflow) {
+    const step = currentStep(doc.workflow);
+    if (!step) return { allowed: false, reason: "Ce document n'attend aucune validation." };
+    if (canActOnDocument(user, doc)) {
+      const pending = doc.workflow.steps.filter(s => s.status === 'en_attente');
+      return { allowed: true, isFinal: pending.length === 1 };
+    }
+    if (doc.authorId === user.id) return { allowed: false, reason: 'Vous êtes l\'émetteur : votre document attend ' + waitingFor(step) + '.' };
+    return { allowed: false, reason: `Étape en cours : ${waitingFor(step)}.` };
+  }
 
-  // 6. Règle pour les agents
+  if (user.role === 'dg') return { allowed: true, isFinal: true };
+  if (doc.authorId === user.id) return { allowed: false, reason: "L'émetteur ne peut pas viser son propre document." };
   if (user.role === 'agent') {
     if (!user.canApproveServiceDocuments) {
       return {
@@ -169,63 +186,37 @@ export function canUserApproveDocument(
         reason: "Accès refusé : En tant qu'Agent, vous devez disposer d'une délégation de visa formelle accordée par votre Chef de Service."
       };
     }
-    // L'agent avec délégation ne peut approuver que si le document est lié à son propre service
     if (doc.targetEntityId && doc.targetEntityId !== user.serviceId) {
       return {
         allowed: false,
         reason: `Délégation limitée : Vous ne pouvez viser que les documents de votre service (${user.departmentName || 'Service'}).`
       };
     }
-    return { allowed: true };
+    return { allowed: true, isFinal: true };
   }
-
-  // 2, 3, 4, 5. Cadres et Chefs hiérarchiques
   if (doc.targetEntityId && !isEntityInUserScope(user, doc.targetEntityId, entities)) {
     return {
       allowed: false,
       reason: `Pouvoir restreint : Ce document concerne une entité hors de votre périmètre hiérarchique.`
     };
   }
-
-  return { allowed: true };
+  return { allowed: true, isFinal: true };
 }
 
 /**
- * Filtrage d'affichage des documents selon la stricte confidentialité
+ * Visibilité d'un document : qui le voit et quand (règle commune avec le serveur, shared/access.mjs).
  */
 export function canUserViewDocument(
   user: User,
   doc: DocumentItem,
   entities: HierarchicalEntity[]
 ): { allowed: boolean; reason?: string } {
-  // Le DG voit absolument TOUT
-  if (user.role === 'dg') return { allowed: true };
-
-  // Confidentialité stricte des bulletins de paie
+  if (sharedCanSeeDocument(user as any, doc as any, entities as any)) return { allowed: true };
   if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
-    // L'agent lui-même peut voir son propre bulletin
-    if (doc.targetUserId && user.id === doc.targetUserId) {
-      return { allowed: true };
-    }
-    // La Direction / RH habilitée à la paie peut les voir pour gestion
-    if (isPayrollStaff(user)) {
-      return { allowed: true };
-    }
-    return { 
-      allowed: false, 
-      reason: "Ce bulletin de paie est strictement confidentiel et réservé à son titulaire et à la Direction des Ressources Humaines." 
-    };
+    return { allowed: false, reason: "Ce bulletin de paie est strictement confidentiel et réservé à son titulaire et à la Direction des Ressources Humaines." };
   }
-
-  // Périmètre d'entité
-  if (doc.targetEntityId && !isEntityInUserScope(user, doc.targetEntityId, entities)) {
-    return {
-      allowed: false,
-      reason: `Document confidentiel réservé au périmètre : ${doc.targetEntityName || 'Service affilié'}.`,
-    };
-  }
-
-  return { allowed: true };
+  if (doc.status === 'brouillon') return { allowed: false, reason: "Brouillon non publié : visible uniquement par son émetteur." };
+  return { allowed: false, reason: `Document réservé au périmètre : ${doc.targetEntityName || doc.originEntityName || 'entité concernée'}.` };
 }
 
 export function getRoleRank(role: UserRole): number {
@@ -362,34 +353,16 @@ export function getRoleTitleFr(role: UserRole): string {
 }
 
 /**
- * RÈGLE MÉTIER STRICTE : Le module logistique n'est visible que par le DG 
- * et tous les responsables du département de la Logistique.
+ * Module logistique (règle commune avec le serveur) : DG, responsables de la logistique et du
+ * département Opérations, et agents EXÉCUTANTS de la logistique (ils préparent, ne visent pas).
  */
 export function canAccessLogistics(user: User): boolean {
-  if (!user) return false;
-  // Le DG et DGA ont plein pouvoir sur toute l'entreprise
-  if (user.role === 'dg') return true;
+  return sharedCanAccessLogistics(user as any);
+}
 
-  // Uniquement les postes d'encadrement / responsables (Directeur, Chef Dépt, Chef Division, Chef Service)
-  const isResponsibleRole = ['chef_departement', 'directeur', 'chef_division', 'chef_service'].includes(user.role);
-  if (!isResponsibleRole) return false;
-
-  const dept = (user.departmentName || '').toLowerCase();
-  const roleTitle = (user.roleTitle || '').toLowerCase();
-
-  const isLogistics = 
-    dept.includes('logistique') || 
-    dept.includes('stock') || 
-    dept.includes('approvisionnement') ||
-    dept.includes('transit') ||
-    roleTitle.includes('logistique') || 
-    roleTitle.includes('stock') || 
-    roleTitle.includes('approvisionnement') ||
-    roleTitle.includes('transit') ||
-    (user as any).departementId === 'dept-ops' ||
-    (user as any).directionId === 'dir-log';
-
-  return isLogistics;
+/** Responsable logistique : peut viser, créer des hubs, valider les mouvements. */
+export function isLogisticsManager(user: User): boolean {
+  return sharedIsLogisticsManager(user as any);
 }
 
 /**
@@ -399,7 +372,7 @@ export function canAccessLogistics(user: User): boolean {
 export function canViewHubActivities(user: User): boolean {
   if (!user) return false;
   if (user.role === 'dg') return true;
-  if (canAccessLogistics(user)) return true;
+  if (isLogisticsManager(user)) return true;
 
   const isResponsibleRole = ['chef_departement', 'directeur', 'chef_division', 'chef_service'].includes(user.role);
   if (!isResponsibleRole) return false;
@@ -423,5 +396,5 @@ export function canViewHubActivities(user: User): boolean {
  * Seuls le DG et les responsables du département logistique peuvent ajouter de nouveaux Hubs.
  */
 export function canManageHubs(user: User): boolean {
-  return canAccessLogistics(user);
+  return isLogisticsManager(user);
 }

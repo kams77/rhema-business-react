@@ -117,7 +117,16 @@ assert(all.includes('doc-pay-ag2') && all.includes('doc-compta') && all.includes
 
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', { value: r.json.value.filter(d => d.id !== 'doc-vsat'), version: r.json.version });
-assert(r.status === 200, 'agent : peut supprimer un document qu\'il voit');
+assert(r.status === 403, 'agent : ne peut pas supprimer un document officiel publié par un autre');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', {
+  value: [{ id: 'doc-brouillon', title: 'Brouillon', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'brouillon' }, ...r.json.value],
+  version: r.json.version,
+});
+assert(r.status === 200, 'agent : enregistre un brouillon');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', { value: r.json.value.filter(d => d.id !== 'doc-brouillon'), version: r.json.version });
+assert(r.status === 200, 'agent : peut supprimer son propre brouillon');
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', {
   value: [{ id: 'faux-bulletin', title: 'Bulletin', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag1' }, ...r.json.value],
@@ -161,6 +170,58 @@ assert(r.status === 200, 'chef de service : peut déléguer le visa à un agent 
 u = await usersNow(chef);
 r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, canManagePayroll: true } : x)), version: u.version });
 assert(r.status === 403, 'chef de service : ne peut pas donner l\'accès à la paie');
+
+// ---------------------------------------------------------------------------
+// Circuit de validation : chaque visa revient au bon titulaire, dans l'ordre
+// ---------------------------------------------------------------------------
+const wfSteps = [
+  { id: 'e1', kind: 'visa', approverRole: 'chef_service', entityId: 'svc-vsat', label: 'Chef VSAT', status: 'en_attente' },
+  { id: 'e2', kind: 'signature', approverRole: 'directeur', approverUserId: 'p-dir', label: 'Directeur', status: 'en_attente' },
+];
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', {
+  value: [{ id: 'doc-wf', title: 'Note VSAT', subtype: 'note_service', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'en_revue',
+    workflow: { cycle: 1, submittedAt: '2026-10-08T10:00:00Z', steps: wfSteps, history: [] } }, ...r.json.value],
+  version: r.json.version,
+});
+assert(r.status === 200, 'circuit : l\'agent soumet sa note');
+const visa = (docs, stepId, actorId, extra = {}) => docs.map(d => d.id !== 'doc-wf' ? d : {
+  ...d, ...extra, workflow: { ...d.workflow, steps: d.workflow.steps.map(st => st.id === stepId ? { ...st, status: 'approuve', actorId } : st) },
+});
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', { value: visa(r.json.value, 'e1', 'p-ag1'), version: r.json.version });
+assert(r.status === 403, 'circuit : l\'émetteur ne peut pas viser sa propre note');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', { value: r.json.value.map(d => (d.id === 'doc-wf' ? { ...d, status: 'signe' } : d)), version: r.json.version });
+assert(r.status === 403, 'circuit : l\'émetteur ne peut pas déclarer sa note signée');
+const dir = client();
+await login(dir, 'dir@perm.cd', 'Temp-Directeur-1', 'Gombe-Visa-Final-2026');
+r = await dir('GET', '/api/data/documents');
+r = await dir('PUT', '/api/data/documents', { value: visa(r.json.value, 'e2', 'p-dir', { status: 'signe' }), version: r.json.version });
+assert(r.status === 403, 'circuit : le directeur ne peut pas signer avant le visa du chef de service');
+r = await chef('GET', '/api/data/documents');
+r = await chef('PUT', '/api/data/documents', { value: visa(r.json.value, 'e1', 'p-chef'), version: r.json.version });
+assert(r.status === 200, 'circuit : le chef de service vise à son tour');
+r = await dir('GET', '/api/data/documents');
+r = await dir('PUT', '/api/data/documents', { value: visa(r.json.value, 'e2', 'p-dir', { status: 'signe' }), version: r.json.version });
+assert(r.status === 200, 'circuit : le directeur signe en dernier');
+
+// Tâches : l'agent ne voit que les siennes
+r = await boss('GET', '/api/data/tasks');
+r = await boss('PUT', '/api/data/tasks', {
+  value: [
+    { id: 'tk-1', title: 'Pose antenne', creatorId: 'p-chef', assignedEntityId: 'svc-vsat', status: 'a_faire', steps: [],
+      assignedIntervenants: [{ userId: 'p-ag1', userName: 'Technicien Un', userRole: 'agent', roleType: 'executant' }] },
+    { id: 'tk-2', title: 'Rapprochement', creatorId: 'dg', assignedEntityId: 'svc-compta', status: 'a_faire', steps: [],
+      assignedIntervenants: [{ userId: 'p-ag2', userName: 'Comptable Deux', userRole: 'agent', roleType: 'executant' }] },
+  ],
+  version: r.json.version ?? 0,
+});
+assert(r.status === 200, 'DG : tâches enregistrées');
+r = await tech('GET', '/api/data/tasks');
+assert(r.json.value.map(t => t.id).join() === 'tk-1', 'agent : ne voit que ses propres tâches');
+r = await tech('PUT', '/api/data/tasks', { value: r.json.value.map(t => ({ ...t, status: 'validee_terminee' })), version: r.json.version });
+assert(r.status === 403, 'agent : ne peut pas valider lui-même sa tâche');
 
 // Le DG accorde l'accès paie au comptable : il voit alors tous les contrats
 u = await usersNow(boss);

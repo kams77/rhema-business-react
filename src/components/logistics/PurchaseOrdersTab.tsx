@@ -25,6 +25,8 @@ interface Props {
   onCreateOrder: (order: PurchaseOrderItem) => void;
   onApproveOrder: (orderId: string) => void;
   onPrintOrder: (order: PurchaseOrderItem) => void;
+  /** État du circuit de validation d'un objet (visa à mon tour ? qui est attendu ?). */
+  approvalState?: (refId: string) => { canAct: boolean; waiting?: string } | undefined;
 }
 
 export const PurchaseOrdersTab: React.FC<Props> = ({
@@ -34,7 +36,8 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
   organization,
   onCreateOrder,
   onApproveOrder,
-  onPrintOrder
+  onPrintOrder,
+  approvalState
 }) => {
   const [filterCategory, setFilterCategory] = useState<'all' | 'vsat' | 'energie_solaire'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,14 +322,22 @@ export const PurchaseOrdersTab: React.FC<Props> = ({
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
-                          {order.status === 'en_attente_approbation' && currentUser.role !== 'agent' && (
-                            <button
-                              onClick={() => onApproveOrder(order.id)}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition"
-                            >
-                              Viser
-                            </button>
-                          )}
+                          {order.status === 'en_attente_approbation' && (() => {
+                            const st = approvalState?.(order.id);
+                            const canAct = st ? st.canAct : currentUser.role !== 'agent';
+                            return canAct ? (
+                              <button
+                                onClick={() => onApproveOrder(order.id)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition"
+                              >
+                                Viser
+                              </button>
+                            ) : st?.waiting ? (
+                              <span className="text-[10px] text-amber-300 max-w-[160px] truncate" title={`En attente de ${st.waiting}`}>
+                                Attente : {st.waiting}
+                              </span>
+                            ) : null;
+                          })()}
                         </div>
                       </td>
                     </tr>

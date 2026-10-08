@@ -112,14 +112,68 @@ export interface OrganizationBankAccount {
 }
 
 export type DocumentCategory = 
+  | 'administratif_general'
   | 'financier_comptable'
   | 'chaine_logistique_commerciale'
   | 'ressources_humaines';
 
+/** Types de documents : leur circuit et leur règle de montant sont définis dans shared/workflow.mjs. */
 export type DocumentSubtype = 
+  | 'note_service' | 'communique' | 'rapport_activite' | 'proces_verbal'
+  | 'demande_achat' | 'note_frais'
   | 'facture_client' | 'facture_fournisseur' | 'avoir' | 'bilan_comptable'
   | 'devis' | 'bon_commande_client' | 'bon_livraison' | 'bon_reception'
-  | 'contrat_travail' | 'bulletin_de_paie' | 'fiche_poste' | 'feuille_de_temps';
+  | 'bon_entree_stock' | 'bon_sortie_stock' | 'ordre_transfert' | 'contrat_commercial'
+  | 'demande_conge' | 'contrat_travail' | 'bulletin_de_paie' | 'fiche_poste' | 'feuille_de_temps'
+  | 'declaration_sociale';
+
+/** Étape d'un circuit de validation (document ou tâche). */
+export interface ApprovalStep {
+  id: string;
+  /** « visa » : approbation ; « signature » : signature électronique finale. */
+  kind: 'visa' | 'signature';
+  approverRole: UserRole;
+  /** Entité dirigée par le valideur attendu (ex. le service pour un chef de service). */
+  entityId?: string;
+  entityName?: string;
+  /** Personne désignée nommément (valideur d'une tâche, signature de l'émetteur). */
+  approverUserId?: string;
+  expectedHolderName?: string;
+  label: string;
+  status: 'en_attente' | 'approuve' | 'rejete';
+  actorId?: string;
+  actorName?: string;
+  actorRole?: UserRole;
+  at?: string;
+  comment?: string;
+  signatureHash?: string;
+}
+
+export interface WorkflowHistoryEntry {
+  id: string;
+  at: string;
+  actorId?: string;
+  actorName: string;
+  action: string;
+  label: string;
+  comment?: string;
+}
+
+export interface DocumentWorkflow {
+  cycle: number;
+  submittedAt?: string;
+  steps: ApprovalStep[];
+  history: WorkflowHistoryEntry[];
+  rejection?: { reason: string; by: string; byId?: string; at: string; stepLabel?: string };
+}
+
+/** Origine d'un document ou d'une tâche créé automatiquement par un module. */
+export interface ItemSource {
+  module: 'logistique' | 'espace_employe' | 'taches' | 'documents';
+  kind: string;
+  refId: string;
+  refNumber?: string;
+}
 
 export interface DocumentItem {
   id: string;
@@ -162,6 +216,13 @@ export interface DocumentItem {
       token: string;
     };
   };
+  /** Entité de l'émetteur (point de départ du circuit). */
+  originEntityId?: string;
+  originEntityName?: string;
+  /** Circuit de validation (étapes, historique, rejet). */
+  workflow?: DocumentWorkflow;
+  /** Document émis automatiquement par un module (logistique, espace employé…). */
+  source?: ItemSource;
   allowedRoles: UserRole[];
   permissions: {
     viewRoles: UserRole[];
@@ -172,7 +233,17 @@ export interface DocumentItem {
   description?: string;
 }
 
-export type TaskType = 'approbation' | 'production' | 'suivi_client' | 'projet' | 'jalons' | 'suivi' | 'deploiement' | 'audit';
+export type TaskType =
+  | 'approbation' | 'production' | 'suivi_client' | 'projet' | 'jalons' | 'suivi' | 'deploiement' | 'audit'
+  | 'logistique' | 'administratif' | 'maintenance' | 'formation';
+
+export interface TaskComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  at: string;
+  text: string;
+}
 
 export interface TaskIntervenant {
   userId: string;
@@ -198,7 +269,7 @@ export interface TaskItem {
   assignedAgentName?: string;
   assignedIntervenants: TaskIntervenant[];
   priority: 'basse' | 'normale' | 'haute' | 'critique';
-  status: 'a_faire' | 'en_cours' | 'en_attente_approbation' | 'validee_terminee' | 'bloquee' | 'termine';
+  status: 'a_faire' | 'en_cours' | 'en_attente_approbation' | 'validee_terminee' | 'bloquee' | 'termine' | 'annulee';
   dueDate: string;
   createdAt: string;
   steps: {
@@ -209,6 +280,7 @@ export interface TaskItem {
     completedAt?: string;
     assignedToUserId?: string;
     assignedToUserName?: string;
+    dueDate?: string;
   }[];
   signatureRequired: boolean;
   signature?: {
@@ -217,6 +289,29 @@ export interface TaskItem {
     timestamp: string;
     hash: string;
   };
+  // --- Champs étendus -------------------------------------------------------
+  /** Référence lisible (ex. TSK-2026-014). */
+  reference?: string;
+  startDate?: string;
+  /** Charge prévue et temps passé, en heures. */
+  estimatedHours?: number;
+  spentHours?: number;
+  /** Lieu d'exécution (site client, hub, bureau…). */
+  site?: string;
+  /** Livrable attendu et critères pour accepter la tâche. */
+  deliverable?: string;
+  acceptanceCriteria?: string;
+  tags?: string[];
+  linkedDocumentIds?: string[];
+  source?: ItemSource;
+  comments?: TaskComment[];
+  history?: WorkflowHistoryEntry[];
+  /** Circuit de validation de la tâche (valideurs dans l'ordre). */
+  approval?: { cycle: number; steps: ApprovalStep[] };
+  blockedReason?: string;
+  lastRejection?: { reason: string; by: string; at: string };
+  completedAt?: string;
+  updatedAt?: string;
 }
 
 export type NavigationTab = 

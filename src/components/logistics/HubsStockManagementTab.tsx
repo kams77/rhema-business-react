@@ -61,6 +61,8 @@ interface HubsStockManagementTabProps {
   onReceiveTransfer: (mvtId: string) => void;
   onPrintDocument: (item: StockMovementItem, type: 'bes' | 'bss' | 'otih') => void;
   onLogAction?: (action: string, details: string, category: string) => void;
+  /** État du circuit de validation d'un objet (visa à mon tour ? qui est attendu ?). */
+  approvalState?: (refId: string) => { canAct: boolean; waiting?: string } | undefined;
 }
 
 export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
@@ -75,7 +77,8 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
   onApproveMovement,
   onReceiveTransfer,
   onPrintDocument,
-  onLogAction
+  onLogAction,
+  approvalState
 }) => {
   // Sélection du Hub : 'all' (Vue Consolidée Nationale) ou id du Hub (ex: 'hub-nord-ubangi')
   const [selectedHubId, setSelectedHubId] = useState<string>('all');
@@ -761,7 +764,12 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
 
                         <div className="flex items-center gap-2">
                           {/* Bouton pour approuver le visa */}
-                          {isPending && (currentUser.role === 'dg' || canAddHub) && (
+                          {isPending && approvalState?.(mvt.id) && !approvalState(mvt.id)!.canAct && (
+                            <span className="text-[11px] text-amber-300" title="Circuit de validation du bon">
+                              En attente de {approvalState(mvt.id)!.waiting}
+                            </span>
+                          )}
+                          {isPending && (approvalState?.(mvt.id) ? approvalState(mvt.id)!.canAct : (currentUser.role === 'dg' || canAddHub)) && (
                             <button
                               onClick={() => {
                                 onApproveMovement(mvt.id);

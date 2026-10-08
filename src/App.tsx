@@ -62,7 +62,30 @@ import {
   initialHubStocks,
   initialStockMovements
 } from './data/initialLogisticsData';
-import { canAccessLogistics } from './utils/rbac';
+import { canAccessLogistics, canUserApproveDocument, isLogisticsManager } from './utils/rbac';
+import {
+  SHIPMENT_STEP_LABELS,
+  anchorEntity,
+  buildDocumentChain,
+  buildTaskApprovalChain,
+  canActOnDocument,
+  canDeleteDocument,
+  canDeleteTask,
+  canEditTask,
+  canExecuteTask,
+  canTickTaskStep,
+  canValidateTaskNow,
+  createDocument,
+  createTask,
+  currentStep,
+  decideDocument,
+  documentType,
+  historyEntry,
+  intervenant,
+  submitDocument,
+  waitingFor,
+} from './lib/workflow';
+import type { DocumentAction, TaskAction } from './lib/workflow';
 import type { 
   LogisticsHub, 
   HubStockItem, 
@@ -504,10 +527,353 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     });
   };
 
-  const handleAddMovement = (mvt: StockMovementItem) => {
-    setStockMovements(prev => [mvt, ...prev]);
+  // =========================================================================
+  // CIRCUIT DE VALIDATION : actions sur les documents (shared/workflow.mjs)
+  // =========================================================================
+  const nowShort = () => `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString('fr-FR').slice(0, 5)}`;
 
-    // Mettre à jour l'inventaire physique des Hubs selon le type de mouvement
+  /** Applique une action du circuit à un document et déclenche les suites (logistique, tâches). */
+  const applyDocumentAction = (docId: string, action: DocumentAction): DocumentItem | null => {
+    const doc = documents.find(d => d.id === docId);
+    if (!doc) {
+      showToast('error', 'Document introuvable.');
+      return null;
+    }
+    try {
+      let next: DocumentItem = doc;
+      let message = '';
+      let auditAction = '';
+      switch (action.type) {
+        case 'submit':
+        case 'resubmit': {
+          if (doc.authorId !== currentUser.id && currentUser.role !== 'dg') throw new Error("Seul l'émetteur peut soumettre ce document.");
+          if (action.type === 'submit' && doc.status !== 'brouillon') throw new Error('Ce document est déjà dans le circuit.');
+          if (action.type === 'resubmit' && doc.status !== 'rejete') throw new Error("Seul un document rejeté peut être corrigé et renvoyé.");
+          const merged: DocumentItem = { ...doc, ...(action.type === 'resubmit' ? action.updates : {}) };
+          const author = users.find(u => u.id === doc.authorId) || currentUser;
+          next = submitDocument(merged, buildDocumentChain(merged, author, entities, users), currentUser);
+          message = `Document transmis : en attente de ${waitingFor(currentStep(next.workflow))}.`;
+          auditAction = action.type === 'submit' ? 'Soumission au circuit de validation' : 'Document corrigé et renvoyé';
+          break;
+        }
+        case 'approve': {
+          let working = doc;
+          if (!working.workflow) {
+            // Ancien document sans circuit : validation unique par un responsable habilité.
+            const legacy = canUserApproveDocument(currentUser, doc, entities);
+            if (!legacy.allowed) throw new Error(legacy.reason || "Vous n'êtes pas habilité à valider ce document.");
+            working = {
+              ...doc,
+              workflow: {
+                cycle: 1,
+                submittedAt: new Date().toISOString(),
+                steps: [{
+                  id: newId('etp'), kind: 'signature', approverRole: currentUser.role, approverUserId: currentUser.id,
+                  expectedHolderName: currentUser.name, label: `Validation — ${currentUser.name}`, status: 'en_attente',
+                }],
+                history: [],
+              },
+            };
+          }
+          const step = currentStep(working.workflow);
+          const sig = action.signature;
+          const hash = sig?.certificateHash || contentHashSync({ doc: { ...working, workflow: undefined }, step: step?.id, signer: currentUser.id, at: new Date().toISOString() });
+          next = decideDocument(working, currentUser, {
+            decision: 'approve',
+            comment: action.comment,
+            signatureHash: hash,
+            signature: step?.kind === 'signature'
+              ? (sig
+                ? { signedBy: sig.signedBy, signedAt: sig.signedAt, role: sig.role, certificateHash: sig.certificateHash, signatureImage: sig.signatureImage, signatureType: sig.signatureType, legalConsent: sig.legalConsent, verificationAudit: sig.verificationAudit }
+                : { signedBy: currentUser.name, signedAt: new Date().toISOString(), role: currentUser.roleTitle, certificateHash: hash })
+              : undefined,
+          });
+          const nextStep = currentStep(next.workflow);
+          message = nextStep
+            ? `${step?.kind === 'signature' ? 'Signé' : 'Visé'} : le document passe à ${waitingFor(nextStep)}.`
+            : `Circuit terminé : document ${next.status === 'signe' ? 'signé' : 'approuvé'}.`;
+          auditAction = step?.kind === 'signature' ? 'Signature Électronique' : 'Visa Document';
+          break;
+        }
+        case 'reject': {
+          next = decideDocument(doc, currentUser, { decision: 'reject', comment: action.comment });
+          message = "Document rejeté : l'émetteur est invité à le corriger.";
+          auditAction = 'Rejet Document';
+          break;
+        }
+        case 'delete': {
+          if (!canDeleteDocument(currentUser, doc)) throw new Error('Seul un brouillon peut être supprimé, par son émetteur.');
+          setDocuments(prev => prev.filter(d => d.id !== docId));
+          addAuditLog({ action: 'Suppression Brouillon', category: 'document', details: `Brouillon ${doc.referenceNumber} (${doc.title}) supprimé.` });
+          showToast('info', 'Brouillon supprimé.');
+          return null;
+        }
+      }
+      setDocuments(prev => prev.map(d => (d.id === docId ? next : d)));
+      addAuditLog({
+        action: auditAction,
+        category: auditAction.startsWith('Signature') ? 'security' : 'document',
+        details: `${doc.referenceNumber} — ${doc.title}${action.type === 'reject' ? ` — motif : ${action.comment}` : ''}${'comment' in action && action.type === 'approve' && action.comment ? ` — ${action.comment}` : ''}`,
+      });
+      showToast('success', message);
+      onDocumentWorkflowChange(doc, next);
+      return next;
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  };
+
+  /** Publication d'un nouveau document (déjà construit avec son circuit par l'écran). */
+  const handleCreateDocument = (doc: DocumentItem) => {
+    setDocuments(prev => [doc, ...prev]);
+    addAuditLog({
+      action: doc.status === 'brouillon' ? 'Brouillon Document' : 'Publication Document',
+      category: 'document',
+      details: `${doc.referenceNumber} — ${doc.title} (${documentType(doc.subtype).label})`,
+    });
+    showToast('success', doc.status === 'brouillon'
+      ? 'Brouillon enregistré : il reste privé tant que vous ne le soumettez pas.'
+      : `Document publié : en attente de ${waitingFor(currentStep(doc.workflow))}.`);
+  };
+
+  // =========================================================================
+  // TÂCHES : actions (exécution, validation en chaîne)
+  // =========================================================================
+  const handleCreateTask = (task: TaskItem) => {
+    setTasks(prev => [task, ...prev]);
+    addAuditLog({
+      action: 'Création Tâche',
+      category: 'task',
+      details: `${task.reference || task.id} — ${task.title} (${task.assignedIntervenants.map(i => `${i.userName} : ${i.roleType}`).join(', ')})`,
+    });
+  };
+
+  const applyTaskAction = (taskId: string, action: TaskAction) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const stamp = new Date().toISOString();
+    const withHistory = (t: TaskItem, label: string, kind: string, comment?: string): TaskItem => ({
+      ...t,
+      updatedAt: stamp,
+      history: [...(t.history || []), historyEntry(currentUser, kind, label, comment)],
+    });
+    try {
+      let next: TaskItem = task;
+      let message = '';
+      const editor = canEditTask(currentUser, task, entities);
+      const executor = canExecuteTask(currentUser, task);
+      switch (action.type) {
+        case 'start':
+          if (!executor && !editor) throw new Error("Cette tâche ne vous est pas assignée.");
+          next = withHistory({ ...task, status: 'en_cours', startDate: task.startDate || stamp.split('T')[0] }, 'Tâche démarrée', 'demarrage');
+          message = 'Tâche démarrée.';
+          break;
+        case 'toggle_step': {
+          const step = task.steps.find(s => s.id === action.stepId);
+          if (!step || !canTickTaskStep(currentUser, task, step)) throw new Error("Cette étape ne vous est pas attribuée.");
+          const steps = task.steps.map(s => (s.id !== action.stepId ? s : {
+            ...s,
+            completed: !s.completed,
+            completedBy: !s.completed ? currentUser.name : undefined,
+            completedAt: !s.completed ? stamp : undefined,
+          }));
+          next = withHistory({ ...task, steps, status: task.status === 'a_faire' ? 'en_cours' : task.status },
+            `${step.completed ? 'Étape rouverte' : 'Étape terminée'} : ${step.label}`, 'etape');
+          break;
+        }
+        case 'log_hours':
+          if (!executor && !editor) throw new Error("Seuls les intervenants saisissent du temps.");
+          if (!(action.hours > 0 && action.hours <= 24)) throw new Error('Indiquez une durée entre 0,25 et 24 heures.');
+          next = withHistory({ ...task, spentHours: Math.round(((task.spentHours || 0) + action.hours) * 100) / 100, status: task.status === 'a_faire' ? 'en_cours' : task.status },
+            `${action.hours} h saisie(s)`, 'temps', action.note);
+          message = 'Temps enregistré.';
+          break;
+        case 'comment':
+          if (!action.text.trim()) return;
+          next = {
+            ...task,
+            updatedAt: stamp,
+            comments: [...(task.comments || []), { id: newId('com'), authorId: currentUser.id, authorName: currentUser.name, at: stamp, text: action.text.trim() }],
+          };
+          break;
+        case 'submit': {
+          if (!executor && !editor) throw new Error("Seuls les intervenants peuvent soumettre la tâche.");
+          if (task.steps.some(s => !s.completed)) throw new Error('Terminez toutes les étapes avant de soumettre la tâche à validation.');
+          const steps = buildTaskApprovalChain(task, entities, users);
+          next = withHistory({
+            ...task,
+            status: 'en_attente_approbation',
+            approval: { cycle: (task.approval?.cycle || 0) + 1, steps },
+          }, 'Soumise à validation', 'soumission', action.comment);
+          message = `Tâche soumise : en attente de ${waitingFor(steps[0])}.`;
+          break;
+        }
+        case 'approve':
+        case 'reject': {
+          if (!canValidateTaskNow(currentUser, task)) throw new Error("Cette validation ne vous revient pas (ou pas encore).");
+          const step = currentStep(task.approval);
+          if (!step || !task.approval) throw new Error("Aucune validation en attente.");
+          if (action.type === 'reject' && !action.comment.trim()) throw new Error('Le motif du renvoi est obligatoire.');
+          const hash = step.kind === 'signature' && action.type === 'approve'
+            ? contentHashSync({ task: { ...task, history: undefined, comments: undefined }, signer: currentUser.id, at: stamp })
+            : undefined;
+          const steps = task.approval.steps.map(s => (s.id !== step.id ? s : {
+            ...s,
+            status: action.type === 'approve' ? 'approuve' as const : 'rejete' as const,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            actorRole: currentUser.role,
+            at: stamp,
+            ...(action.comment ? { comment: action.comment.trim() } : {}),
+            ...(hash ? { signatureHash: hash } : {}),
+          }));
+          if (action.type === 'reject') {
+            next = withHistory({
+              ...task,
+              status: 'en_cours',
+              approval: { ...task.approval, steps },
+              lastRejection: { reason: action.comment.trim(), by: currentUser.name, at: stamp },
+            }, `Renvoyée en correction par ${currentUser.name}`, 'rejet', action.comment);
+            message = "Tâche renvoyée à l'exécutant.";
+          } else {
+            const done = steps.every(s => s.status === 'approuve');
+            next = withHistory({
+              ...task,
+              approval: { ...task.approval, steps },
+              ...(done ? {
+                status: 'validee_terminee' as const,
+                completedAt: stamp,
+                ...(hash ? { signature: { signedBy: currentUser.name, role: currentUser.roleTitle, timestamp: stamp, hash } } : {}),
+              } : {}),
+            }, `${hash ? 'Signée' : 'Validée'} — ${step.label}`, 'validation', action.comment);
+            const nxt = currentStep({ steps });
+            message = done ? 'Tâche validée et clôturée.' : `Validé : en attente de ${waitingFor(nxt)}.`;
+          }
+          break;
+        }
+        case 'block':
+          if (!executor && !editor) throw new Error("Seuls les intervenants peuvent signaler un blocage.");
+          if (!action.reason.trim()) throw new Error('Précisez la cause du blocage.');
+          next = withHistory({ ...task, status: 'bloquee', blockedReason: action.reason.trim() }, 'Tâche bloquée', 'blocage', action.reason);
+          message = 'Blocage signalé à la hiérarchie.';
+          break;
+        case 'unblock':
+          if (!executor && !editor) throw new Error("Action réservée aux intervenants.");
+          next = withHistory({ ...task, status: 'en_cours', blockedReason: undefined }, 'Blocage levé', 'deblocage');
+          break;
+        case 'cancel':
+          if (!editor) throw new Error("Seul le créateur ou la hiérarchie peut annuler la tâche.");
+          next = withHistory({ ...task, status: 'annulee' }, 'Tâche annulée', 'annulation', action.reason);
+          message = 'Tâche annulée.';
+          break;
+        case 'delete':
+          if (!canDeleteTask(currentUser, task)) throw new Error('Seul le créateur peut supprimer la tâche.');
+          setTasks(prev => prev.filter(t => t.id !== taskId));
+          addAuditLog({ action: 'Suppression Tâche', category: 'task', details: `${task.reference || task.id} — ${task.title}` });
+          return;
+      }
+      setTasks(prev => prev.map(t => (t.id === taskId ? next : t)));
+      if (['submit', 'approve', 'reject', 'cancel', 'block'].includes(action.type)) {
+        addAuditLog({
+          action: { submit: 'Soumission Tâche', approve: 'Validation Tâche', reject: 'Renvoi Tâche', cancel: 'Annulation Tâche', block: 'Blocage Tâche' }[action.type as 'submit'] || 'Tâche',
+          category: 'task',
+          details: `${task.reference || task.id} — ${task.title}${'comment' in action && action.comment ? ` — ${action.comment}` : ''}${'reason' in action && action.reason ? ` — ${action.reason}` : ''}`,
+        });
+      }
+      if (message) showToast('success', message);
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** Demande de congé depuis l'espace employé : document « demande_conge » soumis au circuit. */
+  const handleSubmitLeaveRequest = (req: { type: string; start: string; end: string; reason: string }) => {
+    const doc = createDocument({
+      title: `Demande de congé — ${req.type} du ${req.start} au ${req.end}`,
+      subtype: 'demande_conge',
+      description: `${req.type}. Période : du ${req.start} au ${req.end}.\nMotif : ${req.reason}`,
+      author: currentUser,
+      organizationId: currentOrg.id,
+      entities,
+      users,
+      existingDocuments: documents,
+      audience: 'perimetre',
+      targetUserId: currentUser.id,
+      targetUserName: currentUser.name,
+      source: { module: 'espace_employe', kind: 'conge', refId: currentUser.id },
+    });
+    handleCreateDocument(doc);
+  };
+
+  // =========================================================================
+  // LOGISTIQUE : chaque bon passe par le circuit, puis génère ses tâches
+  // =========================================================================
+  const logisticsTask = (input: {
+    title: string;
+    description: string;
+    kind: string;
+    refId: string;
+    refNumber: string;
+    executor: User;
+    steps: string[];
+    dueDate?: string;
+    site?: string;
+    linkedDocumentIds?: string[];
+    priority?: TaskItem['priority'];
+  }): TaskItem => {
+    const entity = anchorEntity(input.executor, entities);
+    const people = [intervenant(input.executor, 'executant', entities)];
+    if (input.executor.id !== currentUser.id && currentUser.role !== 'agent') people.push(intervenant(currentUser, 'responsable', entities));
+    return createTask({
+      title: input.title,
+      type: 'logistique',
+      description: input.description,
+      creator: currentUser,
+      organizationId: currentOrg.id,
+      entity,
+      intervenants: people,
+      steps: input.steps.map(label => ({ label, assignedTo: input.executor })),
+      priority: input.priority || 'haute',
+      startDate: new Date().toISOString().split('T')[0],
+      dueDate: input.dueDate || new Date(Date.now() + 7 * 864e5).toISOString().split('T')[0],
+      site: input.site,
+      linkedDocumentIds: input.linkedDocumentIds,
+      source: { module: 'logistique', kind: input.kind, refId: input.refId, refNumber: input.refNumber },
+      existingTasks: tasks,
+    });
+  };
+
+  /** Clôture (ou fait avancer) les tâches générées pour un objet logistique. */
+  const advanceSourceTasks = (kind: string, refId: string, opts: { tickLabel?: string; closeLabel?: string }) => {
+    const stamp = new Date().toISOString();
+    setTasks(prev => prev.map(t => {
+      if (t.source?.kind !== kind || t.source.refId !== refId || ['validee_terminee', 'termine', 'annulee'].includes(t.status)) return t;
+      if (opts.closeLabel) {
+        return {
+          ...t,
+          status: 'validee_terminee',
+          completedAt: stamp,
+          updatedAt: stamp,
+          steps: t.steps.map(s => (s.completed ? s : { ...s, completed: true, completedBy: currentUser.name, completedAt: stamp })),
+          history: [...(t.history || []), historyEntry(currentUser, 'cloture', opts.closeLabel)],
+        };
+      }
+      const label = (opts.tickLabel || '').toLowerCase();
+      return {
+        ...t,
+        status: t.status === 'a_faire' ? 'en_cours' : t.status,
+        updatedAt: stamp,
+        steps: t.steps.map(s => (s.completed || !s.label.toLowerCase().includes(label) ? s : { ...s, completed: true, completedBy: currentUser.name, completedAt: stamp })),
+        history: [...(t.history || []), historyEntry(currentUser, 'etape', `Étape terminée : ${opts.tickLabel}`)],
+      };
+    }));
+  };
+
+  const findUser = (id?: string) => (id ? users.find(u => u.id === id) : undefined);
+
+  /** Effet d'un mouvement validé sur les stocks des hubs. */
+  const applyMovementToStock = (mvt: StockMovementItem) => {
     mvt.items.forEach(item => {
       if (mvt.type === 'entree_fournisseur' && mvt.destinationHubId) {
         setStocks(prev => {
@@ -521,29 +887,28 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
               status: newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
             } : s);
-          } else {
-            const newStock: HubStockItem = {
-              id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-              hubId: mvt.destinationHubId!,
-              catalogItemId: item.catalogItemId,
-              sku: item.sku,
-              name: item.name,
-              category: 'vsat',
-              quantityAvailable: item.quantity,
-              quantityReserved: 0,
-              quantityInTransit: 0,
-              minAlertThreshold: 2,
-              unitPriceUSD: item.unitPriceUSD,
-              totalValueUSD: item.quantity * item.unitPriceUSD,
-              locationRack: 'Travée Réception',
-              serialNumbers: item.serialNumbers,
-              lastAuditDate: new Date().toISOString().split('T')[0],
-              status: 'normal'
-            };
-            return [newStock, ...prev];
           }
+          const newStock: HubStockItem = {
+            id: newId('stk'),
+            hubId: mvt.destinationHubId!,
+            catalogItemId: item.catalogItemId,
+            sku: item.sku,
+            name: item.name,
+            category: 'vsat',
+            quantityAvailable: item.quantity,
+            quantityReserved: 0,
+            quantityInTransit: 0,
+            minAlertThreshold: 2,
+            unitPriceUSD: item.unitPriceUSD,
+            totalValueUSD: item.quantity * item.unitPriceUSD,
+            locationRack: 'Travée Réception',
+            serialNumbers: item.serialNumbers,
+            lastAuditDate: new Date().toISOString().split('T')[0],
+            status: 'normal'
+          };
+          return [newStock, ...prev];
         });
-      } else if (mvt.type === 'sortie_deploiement' && mvt.sourceHubId) {
+      } else if ((mvt.type === 'sortie_deploiement' || mvt.type === 'transfert_inter_hub') && mvt.sourceHubId) {
         setStocks(prev => prev.map(s => {
           if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
             const newQty = Math.max(0, s.quantityAvailable - item.quantity);
@@ -555,86 +920,196 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
             };
           }
-          return s;
-        }));
-      } else if (mvt.type === 'transfert_inter_hub' && mvt.sourceHubId && mvt.destinationHubId) {
-        setStocks(prev => prev.map(s => {
-          if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
-            const newQty = Math.max(0, s.quantityAvailable - item.quantity);
-            return {
-              ...s,
-              quantityAvailable: newQty,
-              totalValueUSD: newQty * s.unitPriceUSD,
-              serialNumbers: s.serialNumbers.filter(sn => !item.serialNumbers.includes(sn)),
-              status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-            };
-          }
-          if (s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId) {
-            return {
-              ...s,
-              quantityInTransit: s.quantityInTransit + item.quantity
-            };
+          if (mvt.type === 'transfert_inter_hub' && s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId) {
+            return { ...s, quantityInTransit: s.quantityInTransit + item.quantity };
           }
           return s;
         }));
       }
-    });
-
-    // Génération automatique du Document d'Approbation scellé
-    const docPrefix = mvt.type === 'entree_fournisseur' ? 'Bon d\'Entrée en Stock (BES)' : mvt.type === 'sortie_deploiement' ? 'Bon de Sortie & Mise en Service (BSS)' : 'Ordre de Transfert Inter-Hubs (OTIH)';
-    const docItem: DocumentItem = {
-      id: `doc-${mvt.id}`,
-      title: `${docPrefix} : ${mvt.movementNumber}`,
-      referenceNumber: mvt.movementNumber,
-      category: 'chaine_logistique_commerciale',
-      subtype: 'bon_livraison',
-      organizationId: currentOrg.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.departmentName || 'Service Logistique & Hubs',
-      createdAt: mvt.date,
-      status: 'signe',
-      size: '230 KB',
-      fileType: 'PDF',
-      amount: mvt.totalValueUSD,
-      currency: 'USD',
-      description: `Opération logistique ${mvt.movementNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}.`,
-      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-      permissions: {
-        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
-        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
-        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
-      },
-      electronicSignature: {
-        signedBy: currentUser.name,
-        signedAt: new Date().toISOString(),
-        role: currentUser.roleTitle,
-        certificateHash: mvt.electronicSealHash
-      }
-    };
-    setDocuments(prev => [docItem, ...prev]);
-
-    addAuditLog({
-      action: `Mouvement de Stock (${mvt.type})`,
-      category: 'document',
-      details: `Émission du document ${mvt.movementNumber} pour un montant de $${mvt.totalValueUSD.toLocaleString()} USD.`,
     });
   };
 
+  /** Mouvement entièrement validé : stock mis à jour, transfert mis en route avec sa tâche de réception. */
+  const finalizeMovement = (mvt: StockMovementItem, approverName: string) => {
+    const isTransfer = mvt.type === 'transfert_inter_hub';
+    const validated: StockMovementItem = {
+      ...mvt,
+      status: isTransfer ? 'en_transit' : 'valide',
+      approvedByManagerName: approverName,
+      approvedAt: nowShort(),
+    };
+    setStockMovements(prev => prev.map(m => (m.id === mvt.id ? validated : m)));
+    applyMovementToStock(validated);
+    if (isTransfer) {
+      const hub = hubs.find(h => h.id === mvt.destinationHubId);
+      const receiver = findUser(hub?.managerId) || findUser(mvt.operatorId) || currentUser;
+      setTasks(prev => [logisticsTask({
+        title: `Réceptionner le transfert ${mvt.movementNumber} au ${mvt.destinationHubName || 'hub de destination'}`,
+        description: `Transfert validé depuis ${mvt.sourceHubName || 'le hub source'}. Articles : ${mvt.items.map(i => `${i.quantity} × ${i.name}`).join(', ')}.`,
+        kind: 'mouvement',
+        refId: mvt.id,
+        refNumber: mvt.movementNumber,
+        executor: receiver,
+        steps: ['Contrôler le colisage et les scellés à l\'arrivée', 'Scanner les numéros de série reçus', 'Confirmer la réception dans le module Hubs'],
+        site: mvt.destinationHubName,
+        linkedDocumentIds: [`doc-${mvt.id}`],
+      }), ...prev]);
+    }
+  };
+
+  /** Suites logistiques d'une décision prise dans le circuit d'un document. */
+  const onDocumentWorkflowChange = (before: DocumentItem, after: DocumentItem) => {
+    if (after.source?.module !== 'logistique') return;
+    const completed = ['signe', 'approuve'].includes(after.status) && !['signe', 'approuve'].includes(before.status);
+    const rejected = after.status === 'rejete' && before.status !== 'rejete';
+    const resubmitted = before.status === 'rejete' && after.status === 'en_revue';
+    const reason = after.workflow?.rejection?.reason;
+    const { kind, refId } = after.source;
+
+    if (kind === 'bon_commande') {
+      const order = purchaseOrders.find(o => o.id === refId);
+      if (!order) return;
+      if (completed) {
+        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? {
+          ...o, status: 'approuve', approvedByManagerId: currentUser.id, approvedByManagerName: currentUser.name,
+          approvedAt: nowShort(), signatureHash: after.electronicSignature?.certificateHash,
+        } : o)));
+        startOrderExecution(order, after.id);
+      } else if (rejected) {
+        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? { ...o, status: 'brouillon', notes: `${o.notes ? `${o.notes} — ` : ''}Rejeté : ${reason}` } : o)));
+      } else if (resubmitted) {
+        setPurchaseOrders(prev => prev.map(o => (o.id === refId ? { ...o, status: 'en_attente_approbation' } : o)));
+      }
+    } else if (kind === 'mouvement') {
+      const mvt = stockMovements.find(m => m.id === refId);
+      if (!mvt) return;
+      if (completed) finalizeMovement(mvt, currentUser.name);
+      else if (rejected) setStockMovements(prev => prev.map(m => (m.id === refId ? { ...m, status: 'rejete', notes: `${m.notes} — Rejeté : ${reason}` } : m)));
+      else if (resubmitted) setStockMovements(prev => prev.map(m => (m.id === refId ? { ...m, status: 'en_attente_visa' } : m)));
+    } else if (kind === 'facture' && completed) {
+      const inv = netInvoices.find(i => i.id === refId);
+      if (inv) startInvoiceFollowUp(inv, after.id);
+    }
+  };
+
+  /** Bon de commande validé : tâche d'exécution pour son émetteur. */
+  const startOrderExecution = (order: PurchaseOrderItem, docId: string) => {
+    const executor = findUser(order.createdByAgentId) || currentUser;
+    setTasks(prev => [logisticsTask({
+      title: `Exécuter le bon de commande ${order.orderNumber} — ${order.supplierName}`,
+      description: `Bon de commande validé (${order.totalTTC_USD.toLocaleString('fr-FR')} USD TTC). Livraison attendue à ${order.destinationSite}.`,
+      kind: 'bon_commande',
+      refId: order.id,
+      refNumber: order.orderNumber,
+      executor,
+      steps: ['Transmettre le bon de commande signé au fournisseur', 'Confirmer la date de livraison avec le fournisseur', 'Réceptionner et contrôler les numéros de série', "Établir le bon d'entrée en stock"],
+      dueDate: order.deliveryDueDate,
+      site: order.destinationSite,
+      linkedDocumentIds: [docId],
+    }), ...prev]);
+  };
+
+  /** Facture validée : tâche de suivi de l'encaissement pour son émetteur. */
+  const startInvoiceFollowUp = (inv: NetToPayInvoiceItem, docId: string) => {
+    const executor = findUser(inv.preparedByAgentId) || currentUser;
+    setTasks(prev => [logisticsTask({
+      title: `Suivre l'encaissement de la facture ${inv.invoiceNumber} — ${inv.clientName}`,
+      description: `Facture signée : net à payer ${inv.netToPayUSD.toLocaleString('fr-FR')} USD, échéance ${inv.dueDate}.`,
+      kind: 'facture',
+      refId: inv.id,
+      refNumber: inv.invoiceNumber,
+      executor,
+      steps: ['Transmettre la facture signée au client', "Relancer le client à l'échéance", 'Enregistrer le règlement reçu'],
+      dueDate: inv.dueDate,
+      linkedDocumentIds: [docId],
+      priority: 'normale',
+    }), ...prev]);
+  };
+
+  /** Crée le document d'un objet logistique et le soumet à son circuit. */
+  const publishLogisticsDocument = (input: {
+    id: string; title: string; subtype: DocumentItem['subtype']; referenceNumber: string; description: string;
+    amount?: number; kind: string; refId: string; signatureHash?: string;
+  }) => createDocument({
+    id: input.id,
+    title: input.title,
+    subtype: input.subtype,
+    description: input.description,
+    author: currentUser,
+    organizationId: currentOrg.id,
+    entities,
+    users,
+    referenceNumber: input.referenceNumber,
+    amount: input.amount,
+    currency: 'USD',
+    audience: 'perimetre',
+    source: { module: 'logistique', kind: input.kind, refId: input.refId, refNumber: input.referenceNumber },
+    autoSignIfAlone: true,
+    signatureHash: input.signatureHash,
+  });
+
+  const logisticsCreatedToast = (doc: DocumentItem, what: string) => {
+    const step = currentStep(doc.workflow);
+    showToast(step ? 'info' : 'success', step
+      ? `${what} créé et soumis : en attente de ${waitingFor(step)}.`
+      : `${what} créé et validé.`);
+  };
+
+  const handleAddMovement = (mvt: StockMovementItem) => {
+    const subtype: DocumentItem['subtype'] = mvt.type === 'entree_fournisseur' ? 'bon_entree_stock'
+      : mvt.type === 'sortie_deploiement' ? 'bon_sortie_stock'
+      : mvt.type === 'transfert_inter_hub' ? 'ordre_transfert' : 'bon_reception';
+    const doc = publishLogisticsDocument({
+      id: `doc-${mvt.id}`,
+      title: `${documentType(subtype).label} : ${mvt.movementNumber}`,
+      subtype,
+      referenceNumber: mvt.movementNumber,
+      description: `Opération logistique ${mvt.movementNumber}${mvt.sourceHubName ? ` — depuis ${mvt.sourceHubName}` : ''}${mvt.destinationHubName ? ` — vers ${mvt.destinationHubName}` : ''}${mvt.destinationClientSite ? ` — site ${mvt.destinationClientSite}` : ''}.\nArticles : ${mvt.items.map(i => `${i.quantity} × ${i.name} (S/N : ${i.serialNumbers.join(', ')})`).join(' ; ')}.${mvt.notes ? `\nNotes : ${mvt.notes}` : ''}`,
+      amount: mvt.totalValueUSD,
+      kind: 'mouvement',
+      refId: mvt.id,
+      signatureHash: mvt.electronicSealHash,
+    });
+    const validated = ['signe', 'approuve'].includes(doc.status);
+    // Le stock ne bouge qu'une fois le bon validé.
+    const stored: StockMovementItem = { ...mvt, status: 'en_attente_visa', approvedByManagerName: undefined, approvedAt: undefined };
+    setStockMovements(prev => [stored, ...prev]);
+    setDocuments(prev => [doc, ...prev]);
+    if (validated) finalizeMovement(stored, currentUser.name);
+    addAuditLog({
+      action: `Mouvement de Stock (${mvt.type})`,
+      category: 'document',
+      details: `${mvt.movementNumber} — ${validated ? 'validé' : `soumis à ${waitingFor(currentStep(doc.workflow))}`} (${mvt.totalValueUSD.toLocaleString('fr-FR')} USD).`,
+    });
+    logisticsCreatedToast(doc, 'Bon de mouvement');
+  };
+
   const handleApproveMovement = (mvtId: string) => {
+    const doc = documents.find(d => d.id === `doc-${mvtId}`);
+    if (doc?.workflow) {
+      applyDocumentAction(doc.id, { type: 'approve' });
+      return;
+    }
+    // Ancien mouvement sans circuit.
+    if (!isLogisticsManager(currentUser)) {
+      showToast('error', 'Le visa des mouvements est réservé aux responsables de la logistique.');
+      return;
+    }
     setStockMovements(prev => prev.map(m => m.id === mvtId ? {
       ...m,
       status: m.type === 'transfert_inter_hub' ? 'en_transit' : 'valide',
       approvedByManagerName: currentUser.name,
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+      approvedAt: nowShort()
     } : m));
   };
 
   const handleReceiveTransfer = (mvtId: string) => {
     const mvt = stockMovements.find(m => m.id === mvtId);
     if (!mvt || !mvt.destinationHubId) return;
+    if (mvt.status !== 'en_transit') {
+      showToast('error', "Ce transfert n'est pas encore validé : il ne peut pas être réceptionné.");
+      return;
+    }
 
     setStockMovements(prev => prev.map(m => m.id === mvtId ? {
       ...m,
@@ -656,74 +1131,78 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
             serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
             status: newAvail <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
           } : s);
-        } else {
-          const newStock: HubStockItem = {
-            id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-            hubId: mvt.destinationHubId!,
-            catalogItemId: item.catalogItemId,
-            sku: item.sku,
-            name: item.name,
-            category: 'vsat',
-            quantityAvailable: item.quantity,
-            quantityReserved: 0,
-            quantityInTransit: 0,
-            minAlertThreshold: 2,
-            unitPriceUSD: item.unitPriceUSD,
-            totalValueUSD: item.quantity * item.unitPriceUSD,
-            locationRack: 'Travée Réception',
-            serialNumbers: item.serialNumbers,
-            lastAuditDate: new Date().toISOString().split('T')[0],
-            status: 'normal'
-          };
-          return [newStock, ...prev];
         }
+        const newStock: HubStockItem = {
+          id: newId('stk'),
+          hubId: mvt.destinationHubId!,
+          catalogItemId: item.catalogItemId,
+          sku: item.sku,
+          name: item.name,
+          category: 'vsat',
+          quantityAvailable: item.quantity,
+          quantityReserved: 0,
+          quantityInTransit: 0,
+          minAlertThreshold: 2,
+          unitPriceUSD: item.unitPriceUSD,
+          totalValueUSD: item.quantity * item.unitPriceUSD,
+          locationRack: 'Travée Réception',
+          serialNumbers: item.serialNumbers,
+          lastAuditDate: new Date().toISOString().split('T')[0],
+          status: 'normal'
+        };
+        return [newStock, ...prev];
       });
     });
+    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Réception confirmée par ${currentUser.name}` });
+    addAuditLog({ action: 'Réception Transfert Inter-Hubs', category: 'task', details: `${mvt.movementNumber} réceptionné au ${mvt.destinationHubName}.` });
   };
 
   const handleCreateOrder = (order: PurchaseOrderItem) => {
-    setPurchaseOrders(prev => [order, ...prev]);
-    const docItem: DocumentItem = {
+    const doc = publishLogisticsDocument({
       id: `doc-${order.id}`,
-      title: `Bon de Commande : ${order.orderNumber} - ${order.supplierName}`,
-      referenceNumber: order.orderNumber,
-      category: 'chaine_logistique_commerciale',
+      title: `Bon de commande ${order.orderNumber} — ${order.supplierName}`,
       subtype: 'bon_commande_client',
-      organizationId: currentOrg.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.departmentName || 'Service Logistique',
-      createdAt: order.date,
-      status: order.status === 'approuve' ? 'approuve' : 'en_revue',
-      size: '240 KB',
-      fileType: 'PDF',
+      referenceNumber: order.orderNumber,
+      description: `Commande ${order.category.toUpperCase()} pour ${order.destinationSite}, livraison attendue le ${order.deliveryDueDate}.\nArticles : ${order.items.map(i => `${i.quantity} × ${i.designation}`).join(' ; ')}.\nConditions : ${order.paymentTerms}.${order.notes ? `\nNotes : ${order.notes}` : ''}`,
       amount: order.totalTTC_USD,
-      currency: 'USD',
-      description: `Bon de commande ${order.category.toUpperCase()} pour ${order.destinationSite}. Émis par ${currentUser.name}.`,
-      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-      permissions: {
-        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
-        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
-        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
-      }
+      kind: 'bon_commande',
+      refId: order.id,
+    });
+    const validated = ['signe', 'approuve'].includes(doc.status);
+    const stored: PurchaseOrderItem = {
+      ...order,
+      status: validated ? 'approuve' : 'en_attente_approbation',
+      approvedByManagerId: validated ? currentUser.id : undefined,
+      approvedByManagerName: validated ? currentUser.name : undefined,
+      approvedAt: validated ? nowShort() : undefined,
     };
-    setDocuments(prev => [docItem, ...prev]);
+    setPurchaseOrders(prev => [stored, ...prev]);
+    setDocuments(prev => [doc, ...prev]);
+    if (validated) startOrderExecution(stored, doc.id);
     addAuditLog({
       action: 'Émission Bon de Commande (BC)',
       category: 'document',
-      details: `Création du Bon de Commande ${order.orderNumber} ($${order.totalTTC_USD.toLocaleString()} TTC) pour ${order.destinationSite}.`,
+      details: `${order.orderNumber} (${order.totalTTC_USD.toLocaleString('fr-FR')} USD TTC) pour ${order.destinationSite}.`,
     });
+    logisticsCreatedToast(doc, 'Bon de commande');
   };
 
   const handleApproveOrder = (orderId: string) => {
+    const doc = documents.find(d => d.id === `doc-${orderId}`);
+    if (doc?.workflow) {
+      applyDocumentAction(doc.id, { type: 'approve' });
+      return;
+    }
+    if (!isLogisticsManager(currentUser)) {
+      showToast('error', 'Le visa des bons de commande est réservé aux responsables.');
+      return;
+    }
     setPurchaseOrders(prev => prev.map(o => o.id === orderId ? {
       ...o,
       status: 'approuve',
       approvedByManagerId: currentUser.id,
       approvedByManagerName: currentUser.name,
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString().slice(0, 5)}`
+      approvedAt: nowShort()
     } : o));
     addAuditLog({
       action: 'Approbation / Visa Bon de Commande',
@@ -733,39 +1212,36 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   };
 
   const handleCreateDeliveryNote = (bl: DeliveryNoteItem) => {
-    setDeliveryNotes(prev => [bl, ...prev]);
-    const docItem: DocumentItem = {
+    const doc = publishLogisticsDocument({
       id: `doc-${bl.id}`,
-      title: `Bon de Livraison : ${bl.deliveryNumber} - ${bl.transporterName}`,
-      referenceNumber: bl.deliveryNumber,
-      category: 'chaine_logistique_commerciale',
+      title: `Bon de livraison ${bl.deliveryNumber} — ${bl.transporterName}`,
       subtype: 'bon_livraison',
-      organizationId: currentOrg.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.departmentName || 'Service Logistique',
-      createdAt: bl.date,
-      status: 'signe',
-      size: '220 KB',
-      fileType: 'PDF',
-      amount: 0,
-      currency: 'USD',
-      description: `Bon de livraison et relevé de numéros de série (S/N) pour ${bl.destinationSite}.`,
-      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-      permissions: {
-        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
-        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
-        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
-      }
-    };
-    setDocuments(prev => [docItem, ...prev]);
+      referenceNumber: bl.deliveryNumber,
+      description: `Livraison vers ${bl.destinationSite}${bl.purchaseOrderNumber ? ` (BC ${bl.purchaseOrderNumber})` : ''}.\nArticles : ${bl.items.map(i => `${i.deliveredQty}/${i.orderedQty} × ${i.designation} — ${i.condition}`).join(' ; ')}.`,
+      kind: 'bon_livraison',
+      refId: bl.id,
+    });
+    setDeliveryNotes(prev => [bl, ...prev]);
+    setDocuments(prev => [doc, ...prev]);
+    if (!bl.isRecipientSigned) {
+      setTasks(prev => [logisticsTask({
+        title: `Faire signer le bon de livraison ${bl.deliveryNumber} par le destinataire`,
+        description: `Livraison vers ${bl.destinationSite} par ${bl.transporterName}. Destinataire : ${bl.recipientName || 'à préciser'}.`,
+        kind: 'bon_livraison',
+        refId: bl.id,
+        refNumber: bl.deliveryNumber,
+        executor: findUser(bl.preparedByAgentId) || currentUser,
+        steps: ['Remettre le matériel et le bon de livraison au destinataire', 'Recueillir la signature du destinataire'],
+        site: bl.destinationSite,
+        linkedDocumentIds: [doc.id],
+      }), ...prev]);
+    }
     addAuditLog({
       action: 'Enregistrement Bon de Livraison (BL)',
       category: 'document',
-      details: `Réception et pointage des numéros de série pour le BL ${bl.deliveryNumber} (${bl.destinationSite}).`,
+      details: `${bl.deliveryNumber} (${bl.destinationSite}) — numéros de série pointés.`,
     });
+    logisticsCreatedToast(doc, 'Bon de livraison');
   };
 
   const handleSignDeliveryNote = (blId: string, recipientName: string) => {
@@ -773,8 +1249,10 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       ...bl,
       isRecipientSigned: true,
       recipientName,
+      recipientSignatureDate: new Date().toISOString().split('T')[0],
       status: 'livre_conforme'
     } : bl));
+    advanceSourceTasks('bon_livraison', blId, { closeLabel: `Bon de livraison signé par ${recipientName}` });
   };
 
   const handleUpdateShipmentStep = (shipmentId: string, newStep: ShipmentWorkflowStep) => {
@@ -783,6 +1261,11 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       currentStatus: newStep.status,
       workflowSteps: [...s.workflowSteps, newStep]
     } : s));
+    if (newStep.status === 'livre_sur_site') {
+      advanceSourceTasks('expedition', shipmentId, { closeLabel: `Livré sur site (${newStep.location})` });
+    } else {
+      advanceSourceTasks('expedition', shipmentId, { tickLabel: SHIPMENT_STEP_LABELS[newStep.status] });
+    }
     addAuditLog({
       action: 'Mise à Jour Jalon Fret Logistique',
       category: 'task',
@@ -792,47 +1275,62 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   const handleCreateShipment = (shipment: ShipmentTracking) => {
     setShipments(prev => [shipment, ...prev]);
+    const executor = findUser(shipment.assignedAgentId) || currentUser;
+    setTasks(prev => [logisticsTask({
+      title: `Suivre l'expédition ${shipment.trackingNumber} jusqu'à ${shipment.destinationFinal}`,
+      description: `${shipment.title} — fret ${shipment.freightType}, transporteur ${shipment.carrierName}. Livraison estimée le ${shipment.estimatedDeliveryDate}.`,
+      kind: 'expedition',
+      refId: shipment.id,
+      refNumber: shipment.trackingNumber,
+      executor,
+      steps: Object.values(SHIPMENT_STEP_LABELS),
+      dueDate: shipment.estimatedDeliveryDate,
+      site: shipment.destinationFinal,
+    }), ...prev]);
     addAuditLog({
       action: 'Création Expédition Fret',
       category: 'task',
-      details: `Nouvelle expédition ${shipment.trackingNumber} (${shipment.freightType.toUpperCase()}) vers ${shipment.destinationFinal}.`,
+      details: `Nouvelle expédition ${shipment.trackingNumber} (${shipment.freightType.toUpperCase()}) vers ${shipment.destinationFinal}, suivie par ${executor.name}.`,
     });
   };
 
   const handleCreateProforma = (proforma: ProformaInvoiceItem) => {
-    setProformas(prev => [proforma, ...prev]);
-    const docItem: DocumentItem = {
+    const doc = publishLogisticsDocument({
       id: `doc-${proforma.id}`,
-      title: `Facture Proforma : ${proforma.proformaNumber} - ${proforma.clientOrSupplierName}`,
-      referenceNumber: proforma.proformaNumber,
-      category: 'chaine_logistique_commerciale',
+      title: `Facture proforma ${proforma.proformaNumber} — ${proforma.clientOrSupplierName}`,
       subtype: 'devis',
-      organizationId: currentOrg.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.departmentName || 'Service Facturation',
-      createdAt: proforma.date,
-      status: 'en_revue',
-      size: '210 KB',
-      fileType: 'PDF',
+      referenceNumber: proforma.proformaNumber,
+      description: `Proforma pour ${proforma.projectOrSite}, valable jusqu'au ${proforma.validityDate}. Délai : ${proforma.deliveryLeadTime}.`,
       amount: proforma.totalTTC_USD,
-      currency: 'USD',
-      description: `Devis Proforma pour ${proforma.projectOrSite}.`,
-      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-      permissions: {
-        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
-        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
-        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
-      }
-    };
-    setDocuments(prev => [docItem, ...prev]);
+      kind: 'proforma',
+      refId: proforma.id,
+    });
+    setProformas(prev => [proforma, ...prev]);
+    setDocuments(prev => [doc, ...prev]);
     addAuditLog({
       action: 'Émission Facture Proforma',
       category: 'document',
-      details: `Proforma ${proforma.proformaNumber} ($${proforma.totalTTC_USD.toLocaleString()} TTC) émise pour ${proforma.clientOrSupplierName}.`,
+      details: `${proforma.proformaNumber} (${proforma.totalTTC_USD.toLocaleString('fr-FR')} USD TTC) pour ${proforma.clientOrSupplierName}.`,
     });
+    logisticsCreatedToast(doc, 'Proforma');
+  };
+
+  /** Facture : document « facture client » soumis au circuit (plus de signature automatique). */
+  const publishInvoice = (invoice: NetToPayInvoiceItem) => {
+    const doc = publishLogisticsDocument({
+      id: `doc-${invoice.id}`,
+      title: `Facture ${invoice.invoiceNumber} — ${invoice.clientName}`,
+      subtype: 'facture_client',
+      referenceNumber: invoice.invoiceNumber,
+      description: `Facture net à payer pour ${invoice.clientName} : ${invoice.netToPayUSD.toLocaleString('fr-FR')} USD (≈ ${invoice.netToPayCDF.toLocaleString('fr-FR')} CDF), échéance ${invoice.dueDate}.`,
+      amount: invoice.netToPayUSD,
+      kind: 'facture',
+      refId: invoice.id,
+      signatureHash: invoice.electronicSealHash,
+    });
+    setDocuments(prev => [doc, ...prev]);
+    if (['signe', 'approuve'].includes(doc.status)) startInvoiceFollowUp(invoice, doc.id);
+    logisticsCreatedToast(doc, 'Facture');
   };
 
   const handleConvertProforma = (proformaId: string, target: 'order' | 'invoice') => {
@@ -846,7 +1344,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
         proformaReference: pro.proformaNumber,
         organizationId: currentOrg.id,
         date: new Date().toISOString().split('T')[0],
-        dueDate: '2026-11-20',
+        dueDate: new Date(Date.now() + 30 * 864e5).toISOString().split('T')[0],
         clientName: pro.clientOrSupplierName,
         clientTaxId: 'RCCM: CD/KN/RCCM/20-B-001 | IdNat: 01-83-N44100 | NIF: A1100223Z',
         clientAddress: 'Kinshasa / Lubumbashi - RD CONGO',
@@ -874,13 +1372,14 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
         paymentRecords: [],
         electronicSealHash: '',
         preparedByAgentId: currentUser.id,
-        preparedByAgentName: `${currentUser.name} (Agent de Service)`,
+        preparedByAgentName: currentUser.name,
         serviceName: currentUser.departmentName || 'Service Facturation',
         isOfficialDocumentEmitted: true
       };
       newInvoice.electronicSealHash = contentHashSync({ ...newInvoice, electronicSealHash: undefined });
       setNetInvoices(prev => [newInvoice, ...prev]);
       setProformas(prev => prev.map(p => p.id === proformaId ? { ...p, status: 'acceptee_convertie', convertedToInvoiceId: newInvoice.id } : p));
+      publishInvoice(newInvoice);
     }
 
     addAuditLog({
@@ -892,41 +1391,16 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   const handleCreateNetInvoice = (invoice: NetToPayInvoiceItem) => {
     setNetInvoices(prev => [invoice, ...prev]);
-    const docItem: DocumentItem = {
-      id: `doc-${invoice.id}`,
-      title: `Facture Net à Payer : ${invoice.invoiceNumber} - ${invoice.clientName}`,
-      referenceNumber: invoice.invoiceNumber,
-      category: 'financier_comptable',
-      subtype: 'facture_client',
-      organizationId: currentOrg.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.departmentName || 'Service Facturation',
-      createdAt: invoice.date,
-      status: 'signe',
-      size: '250 KB',
-      fileType: 'PDF',
-      amount: invoice.netToPayUSD,
-      currency: 'USD',
-      description: `Facture Net à Payer pour ${invoice.clientName}. Net: $${invoice.netToPayUSD.toLocaleString()} USD (~${invoice.netToPayCDF.toLocaleString()} CDF).`,
-      allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-      permissions: {
-        viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-        editRoles: ['dg', 'chef_departement', 'directeur', 'chef_service', 'agent'],
-        validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
-        signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
-      }
-    };
-    setDocuments(prev => [docItem, ...prev]);
+    publishInvoice(invoice);
     addAuditLog({
       action: 'Émission Facture Net à Payer',
       category: 'document',
-      details: `Facture ${invoice.invoiceNumber} ($${invoice.netToPayUSD.toLocaleString()} Net) émise pour ${invoice.clientName}.`,
+      details: `Facture ${invoice.invoiceNumber} (${invoice.netToPayUSD.toLocaleString('fr-FR')} USD net) émise pour ${invoice.clientName}.`,
     });
   };
 
   const handleRegisterPayment = (invoiceId: string, amountUSD: number, ref: string, method: string) => {
+    const inv = netInvoices.find(i => i.id === invoiceId);
     setNetInvoices(prev => prev.map(inv => {
       if (inv.id !== invoiceId) return inv;
       const newPaid = inv.paidAmountUSD + amountUSD;
@@ -946,15 +1420,18 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
             amountCDF: amountUSD * inv.currencyRate,
             paymentMethod: method as any,
             reference: ref,
-            registeredByAgent: `${currentUser.name} (Agent de Service)`
+            registeredByAgent: currentUser.name
           }
         ]
       };
     }));
+    if (inv && inv.paidAmountUSD + amountUSD >= inv.netToPayUSD) {
+      advanceSourceTasks('facture', invoiceId, { closeLabel: `Facture soldée (réf. ${ref})` });
+    }
     addAuditLog({
       action: 'Règlement Facture Net à Payer',
       category: 'document',
-      details: `Encaissement de $${amountUSD.toLocaleString()} USD sur la facture #${invoiceId} (Réf : ${ref}).`,
+      details: `Encaissement de ${amountUSD.toLocaleString('fr-FR')} USD sur la facture ${inv?.invoiceNumber || invoiceId} (réf. ${ref}).`,
     });
   };
 
@@ -1123,7 +1600,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="app-fond min-h-screen text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       <Navbar
         organizations={organizations}
         currentOrg={currentOrg}
@@ -1191,6 +1668,10 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               tasks={tasks}
               documents={documents}
               contracts={contracts}
+              onTaskAction={applyTaskAction}
+              onCreateTask={handleCreateTask}
+              onSubmitLeaveRequest={handleSubmitLeaveRequest}
+              onOpenTab={tab => setCurrentTab(tab)}
               onSelectUser={DEMO_MODE ? handleDemoSwitchUser : undefined}
               onOpenLogistics={() => setCurrentTab('logistics')}
               onOpenConnectKey={() => setShowConnectKeyModal(true)}
@@ -1267,28 +1748,9 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               organization={currentOrg}
               currentUser={currentUser}
               entities={entities}
-              onAddDocument={newDoc => {
-                const docWithId = { ...newDoc, id: newId('doc') };
-                setDocuments(prev => [docWithId, ...prev]);
-                addAuditLog({
-                  action: 'Publication Document',
-                  category: 'document',
-                  details: `Publication du document certifié ${docWithId.title} (${docWithId.referenceNumber})`,
-                });
-              }}
-              onUpdateDocument={(docId, updates) => {
-                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
-              }}
-              onDeleteDocument={(docId) => {
-                setDocuments(prev => prev.filter(d => d.id !== docId));
-              }}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
+              users={users}
+              onCreateDocument={handleCreateDocument}
+              onDocumentAction={applyDocumentAction}
             />
           )}
 
@@ -1300,35 +1762,11 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               users={users}
               documents={documents}
               organization={currentOrg}
-              onToggleStep={(taskId, stepId) => {
-                setTasks(prev => prev.map(t => t.id === taskId ? {
-                  ...t,
-                  steps: t.steps.map(s => s.id === stepId ? { ...s, completed: !s.completed } : s)
-                } : t));
-              }}
-              onAddTask={newTask => {
-                const createdTask = { ...newTask, id: newId('task') };
-                setTasks(prev => [createdTask, ...prev]);
-                addAuditLog({
-                  action: 'Création Tâche Workflow',
-                  category: 'task',
-                  details: `Ouverture du jalon/tâche ${createdTask.title} (${createdTask.priority})`,
-                });
-              }}
-              onUpdateDocument={(docId, updates) => {
-                setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
-              }}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
+              onCreateTask={handleCreateTask}
+              onTaskAction={applyTaskAction}
             />
           )}
 
-          {/* MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT, ÉNERGIE SOLAIRE & HUBS */}
           {currentTab === 'logistics' && (
             !canAccessLogistics(currentUser) ? (
               <div className="bg-slate-900 border border-red-500/30 rounded-2xl p-8 max-w-xl mx-auto my-12 text-center space-y-4 shadow-2xl">
@@ -1379,6 +1817,11 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 onConvertProforma={handleConvertProforma}
                 onCreateNetInvoice={handleCreateNetInvoice}
                 onRegisterPayment={handleRegisterPayment}
+                approvalState={refId => {
+                  const linked = documents.find(d => d.id === `doc-${refId}`);
+                  if (!linked?.workflow) return undefined;
+                  return { canAct: canActOnDocument(currentUser, linked), waiting: waitingFor(currentStep(linked.workflow)) };
+                }}
                 onLogAction={(action, details, category) => {
                   addAuditLog({
                     action,

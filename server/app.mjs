@@ -26,11 +26,17 @@ import {
   canSeeDocument,
   canSeeInvitation,
   canSeeInvitationNotification,
-  canWriteDocument,
   isManager,
   isPayrollStaff,
   isSecurityStaff,
 } from '../shared/access.mjs';
+import {
+  canDeleteDocument,
+  canDeleteTask,
+  canSeeTask,
+  canWriteDocumentChange,
+  canWriteTaskChange,
+} from '../shared/workflow.mjs';
 
 const COOKIE = 'rhema_session';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -344,8 +350,9 @@ export function createApp({ db, config }) {
 
   /**
    * Politique d'une donnée pour un utilisateur :
-   * - read  : 'all' | 'none' | fonction de filtre des lignes visibles
-   * - write : false | true | fonction « peut écrire cette ligne »
+   * - read   : 'all' | 'none' | fonction de filtre des lignes visibles
+   * - write  : false | true | fonction « peut écrire cette ligne » (reçoit la ligne et sa version précédente)
+   * - remove : fonction « peut supprimer cette ligne » (sinon la règle d'écriture s'applique)
    */
   function policyFor(key, user, entities) {
     const u = accessUser(user);
@@ -358,9 +365,18 @@ export function createApp({ db, config }) {
     if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
     if (key === 'entities') return { read: 'all', write: isManager(u) };
     if (key === 'documents') {
+      // Circuit de validation : chaque visa doit venir du bon titulaire, à son tour (shared/workflow.mjs).
       return {
         read: d => canSeeDocument(u, d, entities),
-        write: d => canWriteDocument(u, d, entities),
+        write: (d, before) => canWriteDocumentChange(u, before, d, entities),
+        remove: d => canDeleteDocument(u, d),
+      };
+    }
+    if (key === 'tasks') {
+      return {
+        read: t => canSeeTask(u, t, entities),
+        write: (t, before) => canWriteTaskChange(u, before, t, entities),
+        remove: t => canDeleteTask(u, t),
       };
     }
     if (key === 'invitations') {
@@ -400,7 +416,7 @@ export function createApp({ db, config }) {
       if (hiddenIds.has(row.id)) continue; // ligne invisible pour cet utilisateur : on n'y touche pas
       const before = prevById.get(row.id);
       const changed = !before || JSON.stringify(before) !== JSON.stringify(row);
-      if (changed && !(typeof policy.write === 'function' ? policy.write(row) : policy.write)) {
+      if (changed && !(typeof policy.write === 'function' ? policy.write(row, before) : policy.write)) {
         throw new HttpError(403, 'Vous n\'avez pas le droit d\'enregistrer cet élément.');
       }
       kept.push(row);
@@ -408,7 +424,10 @@ export function createApp({ db, config }) {
     // Suppressions : seulement des lignes que l'utilisateur pouvait modifier.
     for (const before of prev) {
       if (!before || hiddenIds.has(before.id) || seen.has(before.id)) continue;
-      if (!(typeof policy.write === 'function' ? policy.write(before) : policy.write)) {
+      const canRemove = typeof policy.remove === 'function'
+        ? policy.remove(before)
+        : (typeof policy.write === 'function' ? policy.write(before, before) : policy.write);
+      if (!canRemove) {
         throw new HttpError(403, 'Vous n\'avez pas le droit de supprimer cet élément.');
       }
     }
