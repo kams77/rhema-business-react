@@ -88,7 +88,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'documents',
       label: 'Documents & Workflows',
       icon: <Files className="w-4 h-4" />,
-      badge: 'RH / Paie',
+      badge: 'Circuit de visa',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
     },
     {

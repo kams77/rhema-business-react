@@ -81,6 +81,8 @@ interface LogisticsModuleViewProps {
   onCreateNetInvoice: (invoice: NetToPayInvoiceItem) => void;
   onRegisterPayment: (invoiceId: string, amountUSD: number, ref: string, method: string) => void;
   onLogAction?: (action: string, details: string, category: string) => void;
+  /** Circuit de validation du bon lié à un objet logistique. */
+  approvalState?: (refId: string) => { canAct: boolean; waiting?: string } | undefined;
 }
 
 export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
@@ -111,6 +113,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   onCreateNetInvoice,
   onRegisterPayment,
   onLogAction,
+  approvalState,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'hubs' | 'calculator' | 'serial_tracker' | 'orders' | 'delivery' | 'shipments' | 'invoices' | 'suppliers' | 'export_center'
@@ -567,6 +570,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           onApproveMovement={onApproveMovement}
           onReceiveTransfer={onReceiveTransfer}
           onPrintDocument={(mvt, type) => handlePrintItem(mvt, type)}
+          approvalState={approvalState}
           onLogAction={onLogAction}
         />
       )}
@@ -606,6 +610,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           onCreateOrder={onCreateOrder}
           onApproveOrder={onApproveOrder}
           onPrintOrder={(o) => handlePrintItem(o, 'bc')}
+          approvalState={approvalState}
         />
       )}
 

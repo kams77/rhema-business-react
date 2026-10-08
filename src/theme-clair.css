@@ -3,24 +3,18 @@
  * Relancer « npm run theme:clair » après l'ajout d'écrans ou de nouvelles couleurs.
  * ========================================================================== */
 
-[class~="bg-amber-950/10"] { background-color: color-mix(in oklab, var(--color-amber-100) 15%, transparent); }
 [class~="bg-amber-950/20"] { background-color: color-mix(in oklab, var(--color-amber-100) 30%, transparent); }
-[class~="bg-blue-950/10"] { background-color: color-mix(in oklab, var(--color-blue-100) 15%, transparent); }
 [class~="bg-blue-950/20"] { background-color: color-mix(in oklab, var(--color-blue-100) 30%, transparent); }
 [class~="bg-cyan-950/20"] { background-color: color-mix(in oklab, var(--color-cyan-100) 30%, transparent); }
 [class~="bg-emerald-900/40"] { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
-[class~="bg-emerald-950/10"] { background-color: color-mix(in oklab, var(--color-emerald-100) 15%, transparent); }
 [class~="bg-emerald-950/20"] { background-color: color-mix(in oklab, var(--color-emerald-100) 30%, transparent); }
 [class~="bg-emerald-950/30"] { background-color: color-mix(in oklab, var(--color-emerald-100) 45%, transparent); }
 [class~="bg-emerald-950/40"] { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
-[class~="bg-emerald-950/60"] { background-color: color-mix(in oklab, var(--color-emerald-100) 90%, transparent); }
 [class~="bg-emerald-950/95"] { background-color: color-mix(in oklab, var(--color-emerald-100) 100%, transparent); }
 [class~="bg-indigo-900/80"] { background-color: color-mix(in oklab, var(--color-indigo-100) 100%, transparent); }
 [class~="bg-indigo-950/30"] { background-color: color-mix(in oklab, var(--color-indigo-100) 45%, transparent); }
 [class~="bg-indigo-950/40"] { background-color: color-mix(in oklab, var(--color-indigo-100) 60%, transparent); }
-[class~="bg-neutral-800"] { background-color: #e2e7ed; }
 [class~="bg-purple-950/20"] { background-color: color-mix(in oklab, var(--color-purple-100) 30%, transparent); }
-[class~="bg-red-950/10"] { background-color: color-mix(in oklab, var(--color-red-100) 15%, transparent); }
 [class~="bg-red-950/20"] { background-color: color-mix(in oklab, var(--color-red-100) 30%, transparent); }
 [class~="bg-rose-950/15"] { background-color: color-mix(in oklab, var(--color-rose-100) 23%, transparent); }
 [class~="bg-rose-950/20"] { background-color: color-mix(in oklab, var(--color-rose-100) 30%, transparent); }
@@ -28,10 +22,10 @@
 [class~="bg-rose-950/30"] { background-color: color-mix(in oklab, var(--color-rose-100) 45%, transparent); }
 [class~="bg-rose-950/40"] { background-color: color-mix(in oklab, var(--color-rose-100) 60%, transparent); }
 [class~="bg-rose-950/95"] { background-color: color-mix(in oklab, var(--color-rose-100) 100%, transparent); }
-[class~="bg-sky-900/60"] { background-color: color-mix(in oklab, var(--color-sky-100) 90%, transparent); }
 [class~="bg-sky-950/20"] { background-color: color-mix(in oklab, var(--color-sky-100) 30%, transparent); }
 [class~="bg-sky-950/30"] { background-color: color-mix(in oklab, var(--color-sky-100) 45%, transparent); }
 [class~="bg-sky-950/40"] { background-color: color-mix(in oklab, var(--color-sky-100) 60%, transparent); }
+[class~="bg-slate-700"] { background-color: #d2d9e1; }
 [class~="bg-slate-700/50"] { background-color: color-mix(in oklab, #d2d9e1 50%, transparent); }
 [class~="bg-slate-800"] { background-color: #e2e7ed; }
 [class~="bg-slate-800/60"] { background-color: color-mix(in oklab, #e2e7ed 60%, transparent); }
@@ -83,7 +77,6 @@
 .group:hover [class~="group-hover:text-indigo-300"] { color: var(--color-indigo-700); }
 .group:hover [class~="group-hover:text-indigo-400"] { color: var(--color-indigo-700); }
 .group:hover [class~="group-hover:text-sky-300"] { color: var(--color-sky-700); }
-[class~="hover:bg-emerald-900/60"]:hover { background-color: color-mix(in oklab, var(--color-emerald-100) 90%, transparent); }
 [class~="hover:bg-emerald-950/40"]:hover { background-color: color-mix(in oklab, var(--color-emerald-100) 60%, transparent); }
 [class~="hover:bg-sky-900/30"]:hover { background-color: color-mix(in oklab, var(--color-sky-100) 45%, transparent); }
 [class~="hover:bg-sky-950"]:hover { background-color: var(--color-sky-100); }
@@ -102,6 +95,7 @@
 [class~="hover:border-slate-700"]:hover { border-color: #c5ced8; }
 [class~="hover:text-indigo-300"]:hover { color: var(--color-indigo-700); }
 [class~="hover:text-red-300"]:hover { color: var(--color-red-700); }
+[class~="hover:text-rose-300"]:hover { color: var(--color-rose-700); }
 [class~="hover:text-rose-400"]:hover { color: var(--color-rose-700); }
 [class~="hover:text-sky-300"]:hover { color: var(--color-sky-700); }
 [class~="hover:text-slate-200"]:hover { color: #283548; }

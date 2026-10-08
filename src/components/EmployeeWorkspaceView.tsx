@@ -1,40 +1,60 @@
-// src/components/EmployeeWorkspaceView.tsx
+// src/components/EmployeeWorkspaceView.tsx — Espace employé.
+// Un AGENT exécutant ne voit que ce qui le concerne : ses tâches, ses documents et demandes,
+// les documents validés de son service. Les tableaux de bord RH / effectifs sont réservés aux responsables.
 import React, { useState, useEffect, useMemo } from 'react';
 import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract } from '../types';
-import { 
-  CheckCircle2, 
-  Clock, 
-  Coffee, 
-  LogOut, 
-  Plus, 
-  Users, 
-  FileText, 
-  MessageSquare, 
-  Shield, 
-  Download,
+import {
+  CheckCircle2,
+  Clock,
+  Coffee,
+  LogOut,
+  Plus,
+  FileText,
+  MessageSquare,
+  Shield,
   Calendar,
   Send,
-  AlertCircle,
+  AlertTriangle,
   Briefcase,
-  Award,
-  ChevronRight,
   ShieldCheck,
   Eye,
   Check,
-  X,
   BarChart3,
-  CreditCard,
-  Sparkles,
   Truck,
   KeyRound,
-  TrendingUp
+  TrendingUp,
+  Sun,
+  Stamp,
+  Ban,
+  RotateCcw,
+  Info,
 } from 'lucide-react';
 import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { DepartmentTasksProgressChart } from './DepartmentTasksProgressChart';
+import { TaskCard } from './tasks/TaskCard';
+import { TaskCreateModal } from './tasks/TaskCreateModal';
+import { ApprovalChips } from './workflow/ApprovalTimeline';
 import { initialContracts } from '../data/initialData';
-import { canAccessLogistics } from '../utils/rbac';
+import { canAccessLogistics, canUserViewDocument, isLogisticsManager } from '../utils/rbac';
 import { isEntityManager } from '../utils/invitationUtils';
+import type { ActiveTab } from './Sidebar';
+import {
+  ROLE_LABELS,
+  anchorEntity,
+  canActOnDocument,
+  canSeeTask,
+  canValidateTaskNow,
+  currentStep,
+  directManager,
+  documentType,
+  isTaskLate,
+  taskRoleOf,
+  waitingFor,
+} from '../lib/workflow';
+import type { TaskAction } from '../lib/workflow';
+
+type WorkspaceTab = 'day' | 'tasks' | 'documents' | 'attendance' | 'transmissions' | 'profile' | 'dashboard' | 'task_analytics';
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -44,11 +64,80 @@ interface EmployeeWorkspaceViewProps {
   tasks?: TaskItem[];
   documents?: DocumentItem[];
   contracts?: EmployeeContract[];
+  onTaskAction?: (taskId: string, action: TaskAction) => void;
+  onCreateTask?: (task: TaskItem) => void;
+  onSubmitLeaveRequest?: (req: { type: string; start: string; end: string; reason: string }) => void;
+  onOpenTab?: (tab: ActiveTab) => void;
   onSelectUser?: (user: User) => void;
   onOpenLogistics?: () => void;
   onOpenConnectKey?: () => void;
   onOpenInviteAgent?: () => void;
   onOpenInvitationsManager?: () => void;
+}
+
+const DOC_STATUS: Record<DocumentItem['status'], { label: string; cls: string }> = {
+  brouillon: { label: 'Brouillon', cls: 'bg-slate-100 text-slate-700 border-slate-200' },
+  en_revue: { label: 'En circuit', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  approuve: { label: 'Approuvé', cls: 'bg-sky-50 text-sky-800 border-sky-200' },
+  signe: { label: 'Validé & signé', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  rejete: { label: 'Rejeté', cls: 'bg-rose-50 text-rose-800 border-rose-200' },
+};
+
+const FALLBACK_ORG: Organization = {
+  id: 'org-1',
+  name: 'RHEMA BUSINESS RDC',
+  type: 'entreprise',
+  registrationNumber: '',
+  headquarters: 'Kinshasa - RD CONGO',
+  email: 'contact@rhemabusiness.com',
+  phone: '+243 81 279 1228',
+  description: 'RHEMA BUSINESS RDC',
+  managerName: '',
+  hasDepartements: true,
+  hasDirections: true,
+  hasDivisions: true,
+  hasServices: true,
+  createdAt: '2020-01-01',
+};
+
+/** Habilitations réelles selon le rôle (fiche de poste). */
+function habilitations(user: User, logistics: boolean): { title: string; items: { label: string; value: string }[] }[] {
+  const role = user.role;
+  const manager = role !== 'agent';
+  const scope = {
+    dg: "Toute l'entreprise",
+    chef_departement: 'Votre département et ses entités',
+    directeur: 'Votre direction, ses divisions et services',
+    chef_division: 'Votre division et ses services',
+    chef_service: 'Votre service',
+    agent: 'Votre service (exécution)',
+  }[role];
+  return [
+    {
+      title: 'Tâches',
+      items: [
+        { label: 'Exécuter les tâches qui vous sont assignées', value: 'Oui' },
+        { label: 'Créer et assigner des tâches', value: manager ? `Oui — ${scope}` : 'Tâches personnelles uniquement' },
+        { label: 'Valider les tâches', value: manager ? 'Oui, à votre tour dans le circuit' : 'Non' },
+      ],
+    },
+    {
+      title: 'Documents',
+      items: [
+        { label: 'Publier', value: manager ? 'Tous les types de votre niveau' : 'Rapports, PV, demandes (achat, frais, congé), bons logistiques' },
+        { label: 'Viser / signer', value: manager ? `Les documents de votre périmètre (${scope}), à votre tour` : (user.canApproveServiceDocuments ? 'Visa délégué pour votre service (pas la signature finale)' : 'Non (sans délégation du chef de service)') },
+        { label: 'Consulter', value: manager ? `Documents validés et circuits de votre périmètre` : 'Vos documents, ceux qui vous sont destinés et les documents validés de votre service' },
+      ],
+    },
+    {
+      title: 'Modules',
+      items: [
+        { label: 'Logistique & hubs', value: logistics ? (isLogisticsManager(user) ? 'Accès responsable (visas)' : 'Accès exécutant (préparation des bons)') : 'Non' },
+        { label: 'Gestion des agents', value: manager ? 'Agents de rang inférieur de votre périmètre' : 'Non' },
+        { label: 'Sécurité & audit', value: ['dg', 'chef_departement', 'directeur'].includes(role) ? 'Oui' : 'Non' },
+      ],
+    },
+  ];
 }
 
 export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
@@ -59,139 +148,75 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   tasks = [],
   documents = [],
   contracts = initialContracts,
+  onTaskAction = () => {},
+  onCreateTask,
+  onSubmitLeaveRequest,
+  onOpenTab,
   onSelectUser,
   onOpenLogistics,
   onOpenConnectKey,
   onOpenInviteAgent,
-  onOpenInvitationsManager,
 }) => {
-  // Chronomètre de travail en direct (démarre à 01:20:10)
+  const isAgent = currentUser.role === 'agent';
+  const org = currentOrg || FALLBACK_ORG;
+  const myEntity = anchorEntity(currentUser, entities);
+  const manager = useMemo(() => directManager(currentUser, entities, users), [currentUser, entities, users]);
+  const today = new Date().toISOString().split('T')[0];
+
+  // Chronomètre de travail en direct
   const [seconds, setSeconds] = useState<number>(4810);
   const [workStatus, setWorkStatus] = useState<'working' | 'coffee_break'>('working');
   const [breakSeconds, setBreakSeconds] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'task_analytics' | 'attendance' | 'documents' | 'transmissions' | 'profile'>('dashboard');
-  const [showAnalyticsInTasks, setShowAnalyticsInTasks] = useState<boolean>(true);
-  const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('day');
+  const [taskFilter, setTaskFilter] = useState<'open' | 'late' | 'validation' | 'done'>('open');
+  const [docFilter, setDocFilter] = useState<'all' | 'mine' | 'for_me' | 'service'>('all');
   const [showNotification, setShowNotification] = useState<boolean>(true);
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState<boolean>(false);
   const [viewingDoc, setViewingDoc] = useState<DocumentItem | null>(null);
 
-  // Documents strictement accessibles à l'agent connecté selon les règles de confidentialité
-  const agentDocuments = useMemo(() => {
-    return documents.filter(doc => {
-      // Bulletin de paie : STRICTEMENT réservé à son titulaire
-      if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
-        return doc.targetUserId === currentUser.id;
-      }
-      return (
-        doc.authorId === currentUser.id ||
-        doc.targetUserId === currentUser.id ||
-        (doc.targetEntityId && (
-          doc.targetEntityId === currentUser.serviceId ||
-          doc.targetEntityId === currentUser.directionId ||
-          doc.targetEntityId === currentUser.departementId
-        ))
-      );
-    });
-  }, [documents, currentUser]);
+  // --- Ce que l'utilisateur voit (mêmes règles que le serveur) --------------------
+  const myTasks = useMemo(() => tasks.filter(t => !!taskRoleOf(currentUser, t)), [tasks, currentUser]);
+  const openTasks = myTasks.filter(t => ['a_faire', 'en_cours', 'bloquee'].includes(t.status));
+  const lateTasks = myTasks.filter(t => isTaskLate(t));
+  const blockedTasks = myTasks.filter(t => t.status === 'bloquee');
+  const inValidation = myTasks.filter(t => t.status === 'en_attente_approbation');
+  const toFix = myTasks.filter(t => t.status === 'en_cours' && !!t.lastRejection);
+  const doneTasks = myTasks.filter(t => t.status === 'validee_terminee' || t.status === 'termine');
+  const tasksToValidate = useMemo(() => tasks.filter(t => canSeeTask(currentUser, t, entities) && canValidateTaskNow(currentUser, t)), [tasks, currentUser, entities]);
 
-  // État interactif des tâches opérationnelles
-  const [taskList, setTaskList] = useState([
-    {
-      id: 'tsk-1',
-      title: "Approbation Demande d'Achat DA-2026-118 - Licences Oracle & SAP",
-      priority: 'HAUTE',
-      status: 'En cours de traitement',
-      description: "Vérifier la concordance budgétaire avec le prévisionnel DAF avant signature du bon de commande.",
-      completed: false,
-      dueDate: '2026-10-05',
-      steps: [
-        { id: 's1', label: 'Vérification prévisionnel comptable DAF', done: true },
-        { id: 's2', label: 'Contrôle des habilitations licences Oracle', done: false },
-        { id: 's3', label: 'Signature électronique DG', done: false }
-      ],
-      intervenants: [
-        { initials: 'MS', name: 'Mme Sophie Traoré', role: 'Resp.', bg: 'bg-blue-600', roleBadge: 'bg-indigo-100 text-indigo-700' },
-        { initials: 'MI', name: 'M. Ibrahima Sarr', role: 'Valid.', bg: 'bg-sky-600', roleBadge: 'bg-emerald-100 text-emerald-700' },
-      ]
-    },
-    {
-      id: 'tsk-2',
-      title: "Lancement Ordre de Fabrication OF-4402 - Baies de Brassage Réseau",
-      priority: 'CRITIQUE',
-      status: 'En cours de traitement',
-      description: "Assemblage, câblage et tests d'isolation en salle blanche selon la norme ISO 9001.",
-      completed: false,
-      dueDate: '2026-09-30',
-      steps: [
-        { id: 's1', label: 'Inspection visuelle et isolation diélectrique', done: true },
-        { id: 's2', label: 'Rapport de conformité usine', done: false }
-      ],
-      intervenants: [
-        { initials: 'AK', name: 'Aïcha Kone', role: 'Exéc.', bg: 'bg-sky-500', roleBadge: 'bg-amber-100 text-amber-700' },
-        { initials: 'MR', name: 'M. Roger Tagne', role: 'Resp.', bg: 'bg-blue-600', roleBadge: 'bg-indigo-100 text-indigo-700' },
-      ]
-    },
-    {
-      id: 'tsk-3',
-      title: "Alignement Paraboles VSAT Station Kolwezi & Test C/N",
-      priority: 'HAUTE',
-      status: 'En cours de traitement',
-      description: "Revue technique du rapport d'alignement Ku-Band et signature du PV de recette client.",
-      completed: true,
-      dueDate: '2026-09-24',
-      steps: [
-        { id: 's1', label: 'Mesure rapport signal/bruit (>13.5 dB)', done: true },
-        { id: 's2', label: 'Émargement PV de réception', done: true }
-      ],
-      intervenants: [
-        { initials: 'FM', name: 'M. Fabrice Mukendi', role: 'Chef Srv.', bg: 'bg-emerald-600', roleBadge: 'bg-emerald-100 text-emerald-700' },
-      ]
-    }
-  ]);
+  const visibleDocs = useMemo(
+    () => documents.filter(doc => canUserViewDocument(currentUser, doc, entities).allowed),
+    [documents, currentUser, entities],
+  );
+  const myDocs = visibleDocs.filter(d => d.authorId === currentUser.id);
+  const myPending = myDocs.filter(d => d.status === 'en_revue' || d.status === 'rejete' || d.status === 'brouillon');
+  const forMe = visibleDocs.filter(d => d.targetUserId === currentUser.id && d.authorId !== currentUser.id);
+  const serviceDocs = visibleDocs.filter(d => d.authorId !== currentUser.id && d.targetUserId !== currentUser.id && (d.status === 'signe' || d.status === 'approuve'));
+  const docsToAct = visibleDocs.filter(d => canActOnDocument(currentUser, d));
+  const myLeaves = myDocs.filter(d => d.subtype === 'demande_conge');
 
-  // Nouvelle tâche (formulaire)
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskDesc, setNewTaskDesc] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState<'NORMALE' | 'HAUTE' | 'CRITIQUE'>('HAUTE');
-  const [newTaskDueDate, setNewTaskDueDate] = useState('2026-10-15');
+  const docsShown = docFilter === 'mine' ? myDocs : docFilter === 'for_me' ? forMe : docFilter === 'service' ? serviceDocs : visibleDocs;
+  const tasksShown = (taskFilter === 'open' ? openTasks : taskFilter === 'late' ? lateTasks : taskFilter === 'validation' ? inValidation : doneTasks)
+    .slice()
+    .sort((a, b) => Number(isTaskLate(b)) - Number(isTaskLate(a)) || (a.dueDate || '').localeCompare(b.dueDate || ''));
 
   // Main courante / Transmissions
   const [consignes, setConsignes] = useState([
-    {
-      id: 'c-1',
-      auteur: 'M. Ibrahima Sarr (DAF)',
-      date: 'Aujourd’hui à 08:30',
-      message: 'Rappel : Tous les bons de commande du trimestre T3 doivent être signés électroniquement avant ce vendredi 17h.',
-      priorite: 'urgente'
-    },
-    {
-      id: 'c-2',
-      auteur: 'Jean-Paul Kouassi (DRH)',
-      date: 'Hier à 16:15',
-      message: 'Les fiches d’évaluation de mi-parcours sont disponibles dans votre espace documentaire. Merci de les valider.',
-      priorite: 'normale'
-    }
+    { id: 'c-1', auteur: 'M. Ibrahima Sarr (DAF)', date: 'Aujourd’hui à 08:30', message: 'Rappel : tous les bons de commande du trimestre doivent être visés avant vendredi 17h.' },
+    { id: 'c-2', auteur: 'Jean-Paul Kouassi (DRH)', date: 'Hier à 16:15', message: 'Les fiches d’évaluation de mi-parcours sont disponibles dans votre espace documentaire.' },
   ]);
   const [nouveauMessage, setNouveauMessage] = useState('');
 
-  // Demande de congé
-  const [demandeConge, setDemandeConge] = useState({ type: 'Congé annuel légal (OHADA)', debut: '2026-10-01', fin: '2026-10-15', motif: '' });
-  const [congeSucces, setCongeSucces] = useState(false);
+  // Demande de congé (document « demande de congé » soumis au circuit)
+  const [demandeConge, setDemandeConge] = useState({ type: 'Congé annuel', debut: today, fin: today, motif: '' });
+  const [congeErreur, setCongeErreur] = useState('');
 
-  // Chronomètres
   useEffect(() => {
-    let timer: any = null;
-    if (workStatus === 'working') {
-      timer = setInterval(() => {
-        setSeconds(prev => prev + 1);
-      }, 1000);
-    } else {
-      timer = setInterval(() => {
-        setBreakSeconds(prev => prev + 1);
-      }, 1000);
-    }
+    const timer = setInterval(() => {
+      if (workStatus === 'working') setSeconds(prev => prev + 1);
+      else setBreakSeconds(prev => prev + 1);
+    }, 1000);
     return () => clearInterval(timer);
   }, [workStatus]);
 
@@ -202,77 +227,46 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Bascule de statut d'une tâche
-  const toggleTaskStep = (taskId: string, stepId: string) => {
-    setTaskList(prev =>
-      prev.map(t => {
-        if (t.id !== taskId) return t;
-        const newSteps = t.steps.map(s => s.id === stepId ? { ...s, done: !s.done } : s);
-        const allDone = newSteps.every(s => s.done);
-        return {
-          ...t,
-          steps: newSteps,
-          completed: allDone,
-          status: allDone ? 'Validée & Clôturée' : 'En cours de traitement'
-        };
-      })
-    );
-  };
-
-  // Ajout de tâche
-  const handleCreateTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTaskTitle.trim()) return;
-
-    const created = {
-      id: `tsk-${Date.now()}`,
-      title: newTaskTitle,
-      priority: newTaskPriority,
-      status: 'En cours de traitement',
-      description: newTaskDesc || 'Tâche opérationnelle initiée depuis l’Espace Employé.',
-      completed: false,
-      dueDate: newTaskDueDate,
-      steps: [
-        { id: 's1', label: 'Traitement opérationnel initial', done: false },
-        { id: 's2', label: 'Visa hiérarchique de validation', done: false }
-      ],
-      intervenants: [
-        { initials: currentUser.name.charAt(0), name: currentUser.name, role: 'Initié', bg: 'bg-indigo-600', roleBadge: 'bg-sky-100 text-sky-800' }
-      ]
-    };
-
-    setTaskList(prev => [created, ...prev]);
-    setNewTaskTitle('');
-    setNewTaskDesc('');
-    setShowNewTaskModal(false);
-  };
-
-  // Envoi de consigne
   const envoyerConsigne = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nouveauMessage.trim()) return;
-    setConsignes(prev => [
-      {
-        id: `c-${Date.now()}`,
-        auteur: `${currentUser.name} (${currentUser.roleTitle})`,
-        date: 'À l’instant',
-        message: nouveauMessage,
-        priorite: 'normale'
-      },
-      ...prev
-    ]);
+    setConsignes(prev => [{ id: `c-${Date.now()}`, auteur: `${currentUser.name} (${currentUser.roleTitle})`, date: 'À l’instant', message: nouveauMessage }, ...prev]);
     setNouveauMessage('');
   };
 
   const soumettreConge = (e: React.FormEvent) => {
     e.preventDefault();
-    setCongeSucces(true);
-    setTimeout(() => setCongeSucces(false), 4000);
+    setCongeErreur('');
+    if (demandeConge.fin < demandeConge.debut) return setCongeErreur('La date de fin doit suivre la date de début.');
+    if (!demandeConge.motif.trim()) return setCongeErreur('Précisez le motif.');
+    onSubmitLeaveRequest?.({ type: demandeConge.type, start: demandeConge.debut, end: demandeConge.fin, reason: demandeConge.motif.trim() });
+    setDemandeConge(d => ({ ...d, motif: '' }));
   };
+
+  const tabs: { id: WorkspaceTab; label: string; icon: React.ReactNode; count?: number; hidden?: boolean }[] = [
+    { id: 'day', label: 'Ma journée', icon: <Sun className="w-4 h-4" /> },
+    { id: 'tasks', label: 'Mes tâches', icon: <CheckCircle2 className="w-4 h-4" />, count: openTasks.length },
+    { id: 'documents', label: 'Mes documents', icon: <FileText className="w-4 h-4" />, count: myPending.length || undefined },
+    { id: 'attendance', label: 'Pointage & congés', icon: <Clock className="w-4 h-4" /> },
+    { id: 'transmissions', label: 'Consignes', icon: <MessageSquare className="w-4 h-4" /> },
+    { id: 'profile', label: 'Ma fiche & habilitations', icon: <Shield className="w-4 h-4" /> },
+    { id: 'dashboard', label: 'Tableau de bord RH', icon: <BarChart3 className="w-4 h-4" />, hidden: isAgent },
+    { id: 'task_analytics', label: 'Progression des équipes', icon: <TrendingUp className="w-4 h-4" />, hidden: isAgent },
+  ];
+
+  const kpi = (label: string, value: number, cls: string, onClick?: () => void, icon?: React.ReactNode) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="bg-white rounded-2xl border border-sky-200 p-4 shadow-sm text-left hover:shadow-md transition"
+    >
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-500">{label}{icon}</div>
+      <div className={`text-2xl font-black font-mono mt-1 ${cls}`}>{value}</div>
+    </button>
+  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* 1. BANDEAU VERT : Pointage Automatique Conforme */}
       {showNotification && (
         <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-400/80 text-emerald-950 flex items-center justify-between gap-3 text-xs shadow-sm">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -280,669 +274,485 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
               <CheckCircle2 className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="font-bold flex items-center gap-2 flex-wrap">
-                <span>Pointage Automatique Conforme</span>
-                <span className="px-2 py-0.5 bg-emerald-200/90 text-emerald-900 text-[10px] rounded uppercase font-bold tracking-wider">
-                  Horodatage Inviolable
-                </span>
-              </div>
-              <div className="text-[11px] text-emerald-900 mt-0.5 truncate">
-                Pointage d'arrivée prélevé et certifié automatiquement à 08:15:00 pour l'agent {currentUser.name}. Compteur de travail initialisé.
-              </div>
+              <div className="font-bold">Pointage d'arrivée enregistré</div>
+              <div className="text-[11px] text-emerald-900 mt-0.5 truncate">Arrivée certifiée à 08:15:00 pour {currentUser.name}. Compteur de travail démarré.</div>
             </div>
           </div>
-          <button
-            onClick={() => setShowNotification(false)}
-            className="text-emerald-700 hover:text-emerald-950 p-1 text-xs shrink-0 font-bold"
-          >
-            ✕
-          </button>
+          <button onClick={() => setShowNotification(false)} className="text-emerald-700 hover:text-emerald-950 p-1 text-xs shrink-0 font-bold" aria-label="Fermer">✕</button>
         </div>
       )}
 
-      {/* 2. CARTE BLANCHE DU PROFIL EMPLOYÉ */}
+      {/* PROFIL */}
       <div className="bg-white rounded-3xl border border-sky-200 shadow-md p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          
-          {/* Identité de l'agent */}
-          <div className="flex items-start gap-4">
+          <div className="flex items-start gap-4 min-w-0">
             <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-2xl font-bold shadow-md shadow-blue-500/20 shrink-0">
               {currentUser.name.charAt(0)}
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-bold text-slate-900">
-                  {currentUser.name}
-                </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
-                  {currentUser.roleTitle}
-                </span>
-                <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                  Matricule: EMP-R-DG
-                </span>
+                <h2 className="text-lg font-bold text-slate-900">{currentUser.name}</h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">{currentUser.roleTitle}</span>
+                {(currentUser.matricule || currentUser.employeeCode) && (
+                  <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">Matricule : {currentUser.matricule || currentUser.employeeCode}</span>
+                )}
               </div>
-
-              <p className="text-xs text-slate-600 mt-1.5 flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-slate-700">Service :</span> 
-                <span className="text-sky-700 font-semibold">Direction Opérationnelle</span>
+              <p className="text-xs text-slate-600 mt-1.5 flex items-center gap-x-2 gap-y-1 flex-wrap">
+                <span className="font-semibold text-slate-700">Entité :</span>
+                <span className="text-sky-700 font-semibold">{myEntity?.name || currentUser.departmentName || 'Direction Générale'}</span>
+                {manager && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="font-semibold text-slate-700">N+1 :</span>
+                    <span className="text-slate-600 font-medium">{manager.name}</span>
+                  </>
+                )}
                 <span className="text-slate-300">•</span>
-                <span className="font-semibold text-slate-700">Pointage Arrivée :</span>
-                <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                  08:15:00
-                </span>
-                <span className="text-slate-300">•</span>
-                <span className="font-semibold text-slate-700">N+1 :</span>
-                <span className="text-slate-600 font-medium">{currentUser.name}</span>
+                <span className="font-semibold text-slate-700">Profil :</span>
+                <span className="text-slate-600">{isAgent ? 'Agent exécutant' : ROLE_LABELS[currentUser.role]}</span>
               </p>
             </div>
           </div>
 
-          {/* Module Horloge & Bouton Pause Café */}
           <div className="flex items-center gap-3 bg-gradient-to-r from-sky-50 to-blue-50/80 border border-sky-200 p-3.5 rounded-2xl flex-wrap">
             <div>
-              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                <Clock className="w-3 h-3 text-sky-600" />
-                <span>Temps de travail actif</span>
-              </div>
-              <div className="text-xl font-mono font-bold text-sky-950 tracking-tight mt-0.5">
-                {formatHours(seconds)}
-              </div>
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1"><Clock className="w-3 h-3 text-sky-600" /> Temps de travail</div>
+              <div className="text-xl font-mono font-bold text-sky-950 tracking-tight mt-0.5">{formatHours(seconds)}</div>
               <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
                 <span className={`w-2 h-2 rounded-full ${workStatus === 'working' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
-                <span className="font-semibold text-slate-700">
-                  {workStatus === 'working' ? 'En poste (Pointage prélevé)' : `Pause Café (${formatHours(breakSeconds)})`}
-                </span>
+                <span className="font-semibold text-slate-700">{workStatus === 'working' ? 'En poste' : `En pause (${formatHours(breakSeconds)})`}</span>
               </div>
             </div>
-
-            <div className="h-10 w-px bg-sky-200 mx-1 hidden sm:block"></div>
-
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => setWorkStatus(workStatus === 'working' ? 'coffee_break' : 'working')}
-                className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 ${
-                  workStatus === 'coffee_break'
-                    ? 'bg-emerald-600 hover:bg-emerald-500'
-                    : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'
-                }`}
+                className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 ${workStatus === 'coffee_break' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'}`}
               >
                 <Coffee className="w-4 h-4 text-amber-100" />
-                <span>
-                  {workStatus === 'working'
-                    ? 'Pause Café (Interrompre le compteur)'
-                    : 'Reprendre le travail'}
-                </span>
+                <span>{workStatus === 'working' ? 'Pause' : 'Reprendre'}</span>
               </button>
-
               {onSelectUser && (
-              <button
-                onClick={() => setShowAccountModal(true)}
-                className="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
-              >
-                <LogOut className="w-3.5 h-3.5 text-slate-500" />
-                <span>Changer de Compte</span>
-              </button>
+                <button onClick={() => setShowAccountModal(true)} className="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5">
+                  <LogOut className="w-3.5 h-3.5 text-slate-500" /> Changer de compte
+                </button>
               )}
-
               {onOpenConnectKey && (
-                <button
-                  onClick={onOpenConnectKey}
-                  className="px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-                  title="Se connecter à une entité invitée avec votre clé à 10 chiffres"
-                >
-                  <KeyRound className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Clé Inter-Entités</span>
+                <button onClick={onOpenConnectKey} className="px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-1.5" title="Se connecter à une entité invitée avec votre clé à 10 chiffres">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-600" /> Clé inter-entités
                 </button>
               )}
-
               {onOpenInviteAgent && isEntityManager(currentUser, entities) && (
-                <button
-                  onClick={onOpenInviteAgent}
-                  className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center gap-1.5 transition"
-                  title="Inviter un agent d'une autre entité via son matricule"
-                >
-                  <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>+ Inviter un Agent (Matricule)</span>
+                <button onClick={onOpenInviteAgent} className="px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-xs font-bold flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-indigo-600" /> Inviter un agent
                 </button>
               )}
-
               {onOpenLogistics && canAccessLogistics(currentUser) && (
-                <button
-                  onClick={onOpenLogistics}
-                  className="px-3 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300 text-amber-800 text-xs font-bold flex items-center gap-1.5 transition"
-                >
-                  <Truck className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Module Logistique & Hubs (Stocks)</span>
+                <button onClick={onOpenLogistics} className="px-3 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-300 text-amber-800 text-xs font-bold flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5 text-amber-600" /> Logistique
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        {/* Navigation des sous-modules du Workspace */}
         <div className="flex items-center gap-2 mt-6 pt-4 border-t border-sky-100 overflow-x-auto">
-          {[
-            { id: 'dashboard', label: 'Tableau de Bord & Ratios RH', icon: <BarChart3 className="w-4 h-4" /> },
-            { id: 'tasks', label: `Mes Tâches Opérationnelles (${taskList.length})`, icon: <CheckCircle2 className="w-4 h-4" /> },
-            { id: 'task_analytics', label: 'Progression des Tâches (30j)', icon: <TrendingUp className="w-4 h-4" /> },
-            { id: 'attendance', label: 'Pointage & Présences (2)', icon: <Clock className="w-4 h-4" /> },
-            { id: 'documents', label: `Mes Documents & Bulletins (${agentDocuments.length})`, icon: <FileText className="w-4 h-4" /> },
-            { id: 'transmissions', label: 'Transmissions Hiérarchiques & Consignes', icon: <MessageSquare className="w-4 h-4" /> },
-            { id: 'profile', label: 'Fiche de Poste & Habilitations', icon: <Shield className="w-4 h-4" /> },
-          ].map(tab => (
+          {tabs.filter(t => !t.hidden).map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30 font-bold'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-sky-50'
+                activeTab === tab.id ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30 font-bold' : 'text-slate-600 hover:text-slate-900 hover:bg-sky-50'
               }`}
             >
               {tab.icon}
               <span>{tab.label}</span>
+              {tab.count ? <span className={`text-[10px] px-1.5 rounded-full ${activeTab === tab.id ? 'bg-white/25' : 'bg-sky-100 text-sky-800'}`}>{tab.count}</span> : null}
             </button>
           ))}
         </div>
       </div>
 
-      {/* SOUS-MODULE 0 : TABLEAU DE BORD RECHARTS (EFFECTIFS, RATIOS SALARIAUX & TÂCHES 30J) */}
-      {activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          <DepartmentTasksProgressChart
-            tasks={tasks}
-            entities={entities}
-            users={users}
-            currentUser={currentUser}
-          />
-          <WorkspaceDashboard
-            entities={entities}
-            users={users}
-            contracts={contracts}
-            organization={currentOrg}
-            currentUser={currentUser}
-            onOpenLogistics={onOpenLogistics}
-          />
+      {/* MA JOURNÉE */}
+      {activeTab === 'day' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {kpi('Tâches ouvertes', openTasks.length, 'text-sky-700', () => { setTaskFilter('open'); setActiveTab('tasks'); })}
+            {kpi('En retard', lateTasks.length, lateTasks.length ? 'text-rose-600' : 'text-slate-400', () => { setTaskFilter('late'); setActiveTab('tasks'); }, <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />)}
+            {kpi('À corriger', toFix.length, toFix.length ? 'text-amber-600' : 'text-slate-400', () => { setTaskFilter('open'); setActiveTab('tasks'); }, <RotateCcw className="w-3.5 h-3.5 text-amber-500" />)}
+            {kpi('En validation', inValidation.length, 'text-indigo-700', () => { setTaskFilter('validation'); setActiveTab('tasks'); })}
+            {kpi('Mes demandes en cours', myPending.length, 'text-slate-700', () => { setDocFilter('mine'); setActiveTab('documents'); })}
+          </div>
+
+          {(docsToAct.length > 0 || tasksToValidate.length > 0) && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-amber-900 text-xs">
+                <Stamp className="w-5 h-5 text-amber-600" />
+                <span>
+                  <strong>À votre visa :</strong> {docsToAct.length} document(s){tasksToValidate.length ? ` et ${tasksToValidate.length} tâche(s)` : ''}.
+                  {isAgent && ' (délégation de votre chef de service)'}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {docsToAct.length > 0 && <button onClick={() => onOpenTab?.('documents')} className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">Documents</button>}
+                {tasksToValidate.length > 0 && <button onClick={() => onOpenTab?.('workflows')} className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">Tâches</button>}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-sky-200 p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-sky-600" /> Mes priorités</h3>
+                <button onClick={() => setActiveTab('tasks')} className="text-[11px] font-semibold text-sky-700 hover:underline">Toutes mes tâches →</button>
+              </div>
+              {openTasks.length === 0 ? (
+                <p className="text-xs text-slate-500 p-4 text-center">Aucune tâche ouverte. Les tâches qui vous sont assignées apparaîtront ici dès leur création.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {openTasks
+                    .slice()
+                    .sort((a, b) => Number(isTaskLate(b)) - Number(isTaskLate(a)) || (a.dueDate || '').localeCompare(b.dueDate || ''))
+                    .slice(0, 6)
+                    .map(t => {
+                      const next = t.steps.find(s => !s.completed && (!s.assignedToUserId || s.assignedToUserId === currentUser.id));
+                      return (
+                        <li key={t.id} className="py-2.5 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 truncate">{t.title}</div>
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {next ? `Prochaine étape : ${next.label}` : 'Toutes vos étapes sont faites — à soumettre'}
+                              {t.site ? ` · ${t.site}` : ''}
+                            </div>
+                            {t.status === 'bloquee' && <div className="text-[11px] text-rose-600 flex items-center gap-1"><Ban className="w-3 h-3" /> Bloquée : {t.blockedReason}</div>}
+                            {t.lastRejection && t.status === 'en_cours' && <div className="text-[11px] text-amber-700">À corriger : {t.lastRejection.reason}</div>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className={`text-[11px] font-mono font-bold ${isTaskLate(t) ? 'text-rose-600' : 'text-slate-600'}`}>{t.dueDate}</div>
+                            <button onClick={() => { setTaskFilter('open'); setActiveTab('tasks'); }} className="text-[11px] font-semibold text-sky-700 hover:underline">Ouvrir</button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                </ul>
+              )}
+            </div>
+
+            <div className="space-y-5">
+              <div className="bg-white rounded-2xl border border-sky-200 p-5 shadow-sm space-y-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Send className="w-4 h-4 text-sky-600" /> Mes demandes en cours</h3>
+                {myPending.length === 0 ? (
+                  <p className="text-xs text-slate-500">Aucune demande en cours.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {myPending.slice(0, 5).map(d => (
+                      <li key={d.id} className="text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-800 truncate">{d.title}</span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${DOC_STATUS[d.status].cls}`}>{DOC_STATUS[d.status].label}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {d.status === 'en_revue' ? `En attente de ${waitingFor(currentStep(d.workflow))}`
+                            : d.status === 'rejete' ? `Rejeté : ${d.workflow?.rejection?.reason || ''}`
+                            : 'Brouillon non soumis'}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="bg-white rounded-2xl border border-sky-200 p-5 shadow-sm space-y-2">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Info className="w-4 h-4 text-sky-600" /> Ce que vous voyez</h3>
+                <ul className="text-[11px] text-slate-600 space-y-1 list-disc pl-4">
+                  {isAgent ? (
+                    <>
+                      <li>Les tâches qui vous sont assignées, dès leur création.</li>
+                      <li>Vos documents et demandes, à chaque étape de leur circuit.</li>
+                      <li>Les documents de votre service <strong>une fois validés</strong>.</li>
+                      <li>Pas les brouillons ni les circuits en cours des autres, ni les données RH.</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Les tâches et documents de votre périmètre hiérarchique.</li>
+                      <li>Les circuits en cours où vous intervenez, à votre tour.</li>
+                      <li>Les brouillons restent privés à leur émetteur.</li>
+                    </>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* SOUS-MODULE DÉDIÉ : VISUALISATION RECHARTS PROGRESSION DES TÂCHES PAR DÉPARTEMENT (30 JOURS) */}
-      {activeTab === 'task_analytics' && (
-        <div className="space-y-6">
-          <DepartmentTasksProgressChart
-            tasks={tasks}
-            entities={entities}
-            users={users}
-            currentUser={currentUser}
-          />
-        </div>
-      )}
-
-      {/* SOUS-MODULE 1 : MES TÂCHES OPÉRATIONNELLES */}
+      {/* MES TÂCHES */}
       {activeTab === 'tasks' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-sky-200">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-700">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Feuille de Route & Tâches à Traiter</h3>
-                <p className="text-[11px] text-slate-500">Mettez à jour vos avancements et transmettez vos fiches finalisées.</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowAnalyticsInTasks(!showAnalyticsInTasks)}
-                className={`px-3 py-1.5 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition border ${
-                  showAnalyticsInTasks
-                    ? 'bg-sky-50 text-sky-700 border-sky-300'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
-                title="Afficher/masquer le graphique de progression Recharts sur 30 jours"
-              >
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Graphique 30j</span>
-              </button>
-              <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200 text-[11px]">
-                <button
-                  onClick={() => setTaskFilter('all')}
-                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
-                    taskFilter === 'all' ? 'bg-white text-slate-800 shadow-sm font-bold' : 'text-slate-600'
-                  }`}
-                >
-                  Toutes ({taskList.length})
+            <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200 text-[11px] overflow-x-auto">
+              {([
+                ['open', `À réaliser (${openTasks.length})`],
+                ['late', `En retard (${lateTasks.length})`],
+                ['validation', `En validation (${inValidation.length})`],
+                ['done', `Terminées (${doneTasks.length})`],
+              ] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setTaskFilter(id)} className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition ${taskFilter === id ? 'bg-white text-slate-800 shadow-sm font-bold' : 'text-slate-600'}`}>
+                  {label}
                 </button>
-                <button
-                  onClick={() => setTaskFilter('pending')}
-                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
-                    taskFilter === 'pending' ? 'bg-white text-slate-800 shadow-sm font-bold' : 'text-slate-600'
-                  }`}
-                >
-                  En cours
-                </button>
-                <button
-                  onClick={() => setTaskFilter('completed')}
-                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
-                    taskFilter === 'completed' ? 'bg-white text-slate-800 shadow-sm font-bold' : 'text-slate-600'
-                  }`}
-                >
-                  Terminées
-                </button>
-              </div>
-
-              <button
-                onClick={() => setShowNewTaskModal(true)}
-                className="px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Nouvelle Tâche</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Graphique de progression Recharts intégré aux tâches */}
-          {showAnalyticsInTasks && (
-            <DepartmentTasksProgressChart
-              tasks={tasks}
-              entities={entities}
-              users={users}
-              currentUser={currentUser}
-            />
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {taskList
-              .filter(t => taskFilter === 'all' || (taskFilter === 'pending' && !t.completed) || (taskFilter === 'completed' && t.completed))
-              .map(t => (
-                <div
-                  key={t.id}
-                  className={`bg-white rounded-2xl border p-5 shadow-sm transition flex flex-col justify-between ${
-                    t.completed ? 'border-emerald-200 bg-emerald-50/10' : 'border-sky-200'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-3 mb-2.5">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                        t.priority === 'CRITIQUE'
-                          ? 'bg-sky-100 text-sky-800 border border-sky-200'
-                          : 'bg-amber-100 text-amber-800 border border-amber-200'
-                      }`}>
-                        PRIORITÉ {t.priority}
-                      </span>
-
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        t.completed ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-blue-50 text-blue-700 border-blue-200'
-                      }`}>
-                        {t.status}
-                      </span>
-                    </div>
-
-                    <h4 className={`text-sm font-bold text-slate-900 mb-1 leading-snug ${t.completed ? 'line-through text-slate-500' : ''}`}>
-                      {t.title}
-                    </h4>
-                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">{t.description}</p>
-
-                    {/* Jalons d'émargement */}
-                    <div className="space-y-1.5 mb-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                      <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Jalons & Visas :</div>
-                      {t.steps.map(step => (
-                        <div
-                          key={step.id}
-                          onClick={() => toggleTaskStep(t.id, step.id)}
-                          className="flex items-center justify-between text-xs cursor-pointer p-1 rounded hover:bg-slate-200/50"
-                        >
-                          <span className={`flex items-center gap-1.5 ${step.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-                            <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[9px] ${step.done ? 'bg-emerald-600 text-white' : 'border border-slate-400'}`}>
-                              {step.done ? '✓' : ''}
-                            </span>
-                            {step.label}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400">{step.done ? 'Validé' : 'À faire'}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Personnes assignées */}
-                    <div className="pt-2 border-t border-sky-100">
-                      <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center justify-between">
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3 h-3 text-sky-600" />
-                          <span>Personnes assignées ({t.intervenants.length})</span>
-                        </span>
-                        <span className="text-[9px] text-sky-700 font-semibold bg-sky-50 px-1.5 py-0.5 rounded uppercase">
-                          Échéance : {t.dueDate}
-                        </span>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {t.intervenants.map(inter => (
-                          <div
-                            key={inter.name}
-                            className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg text-xs"
-                          >
-                            <div className={`w-5 h-5 rounded ${inter.bg} text-white text-[9px] font-bold flex items-center justify-center`}>
-                              {inter.initials}
-                            </div>
-                            <span className="font-semibold text-slate-800 text-[11px]">{inter.name}</span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${inter.roleBadge}`}>
-                              {inter.role}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
               ))}
+            </div>
+            {onCreateTask && (
+              <button onClick={() => setShowNewTaskModal(true)} className="px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm">
+                <Plus className="w-3.5 h-3.5" /> {isAgent ? 'Tâche personnelle' : 'Nouvelle tâche'}
+              </button>
+            )}
           </div>
+          {blockedTasks.length > 0 && taskFilter === 'open' && (
+            <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-2.5">
+              {blockedTasks.length} tâche(s) bloquée(s) : votre hiérarchie en est informée.
+            </p>
+          )}
+          {tasksShown.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-sky-200 p-10 text-center text-xs text-slate-500">Aucune tâche dans cette liste.</div>
+          ) : (
+            <div className="space-y-4">
+              {tasksShown.map(t => (
+                <TaskCard key={t.id} task={t} currentUser={currentUser} entities={entities} documents={documents} organization={org} onAction={onTaskAction} onOpenDocument={setViewingDoc} dense />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* SOUS-MODULE 2 : POINTAGE & PRÉSENCES */}
+      {/* MES DOCUMENTS */}
+      {activeTab === 'documents' && (
+        <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><FileText className="w-4 h-4 text-emerald-600" /> Mes documents</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Vos pièces et demandes avec leur circuit, ce qui vous est destiné, et les documents validés de votre service.</p>
+            </div>
+            <button onClick={() => onOpenTab?.('documents')} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Nouveau document
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px]">
+            {([
+              ['all', `Tout (${visibleDocs.length})`],
+              ['mine', `Émis par moi (${myDocs.length})`],
+              ['for_me', `Pour moi (${forMe.length})`],
+              ['service', `Validés de mon périmètre (${serviceDocs.length})`],
+            ] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setDocFilter(id)} className={`px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap ${docFilter === id ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {docsShown.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400">
+              <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              Aucun document dans cette liste.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {docsShown.map(doc => {
+                const isPayslip = doc.subtype === 'bulletin_de_paie' || doc.isConfidentialPayslip;
+                return (
+                  <div key={doc.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-sky-100 text-sky-800 border border-sky-200 truncate">{documentType(doc.subtype).label}</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${DOC_STATUS[doc.status].cls}`}>{DOC_STATUS[doc.status].label}</span>
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-900 leading-snug line-clamp-2">{doc.title}</h4>
+                        <p className="text-[11px] font-mono text-slate-500 mt-0.5">{doc.referenceNumber} · {doc.createdAt}</p>
+                      </div>
+                      {typeof doc.amount === 'number' && doc.amount > 0 && (
+                        <div className="p-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">{isPayslip ? 'Net' : 'Montant'}</span>
+                          <span className="font-mono font-black text-sm text-emerald-700">{doc.amount.toLocaleString('fr-FR')} {doc.currency || 'USD'}</span>
+                        </div>
+                      )}
+                      {doc.workflow && doc.authorId === currentUser.id && <ApprovalChips steps={doc.workflow.steps} />}
+                      {doc.status === 'rejete' && doc.workflow?.rejection && (
+                        <p className="text-[11px] text-rose-700">Rejeté : « {doc.workflow.rejection.reason} »</p>
+                      )}
+                    </div>
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500 flex items-center gap-1 truncate"><ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> {doc.authorName}</span>
+                      <button onClick={() => setViewingDoc(doc)} className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs shadow-sm">
+                        <Eye className="w-3.5 h-3.5" /> Consulter
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* POINTAGE & CONGÉS */}
       {activeTab === 'attendance' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-sky-600" /> Registre Officiel de Présence (Semaine en cours)
-            </h3>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
-                  <th className="py-2.5">Date</th>
-                  <th className="py-2.5">Prélèvement Arrivée</th>
-                  <th className="py-2.5">Départ</th>
-                  <th className="py-2.5">Temps Effectif</th>
-                  <th className="py-2.5">Statut</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                <tr>
-                  <td className="py-3 font-semibold">Aujourd'hui</td>
-                  <td className="py-3 font-mono text-emerald-700 font-bold">08:15:00</td>
-                  <td className="py-3 text-slate-400">En poste</td>
-                  <td className="py-3 font-mono font-bold">{formatHours(seconds)}</td>
-                  <td className="py-3">
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Certifié IP
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-3 font-semibold">Hier</td>
-                  <td className="py-3 font-mono text-slate-600">08:10:22</td>
-                  <td className="py-3 font-mono text-slate-600">17:05:40</td>
-                  <td className="py-3 font-mono">08h 15m</td>
-                  <td className="py-3">
-                    <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Complet
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-sky-600" /> Registre de présence (semaine en cours)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                      <th className="py-2.5">Date</th><th className="py-2.5">Arrivée</th><th className="py-2.5">Départ</th><th className="py-2.5">Temps effectif</th><th className="py-2.5">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    <tr>
+                      <td className="py-3 font-semibold">Aujourd'hui</td>
+                      <td className="py-3 font-mono text-emerald-700 font-bold">08:15:00</td>
+                      <td className="py-3 text-slate-400">En poste</td>
+                      <td className="py-3 font-mono font-bold">{formatHours(seconds)}</td>
+                      <td className="py-3"><span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">Certifié</span></td>
+                    </tr>
+                    <tr>
+                      <td className="py-3 font-semibold">Hier</td>
+                      <td className="py-3 font-mono text-slate-600">08:10:22</td>
+                      <td className="py-3 font-mono text-slate-600">17:05:40</td>
+                      <td className="py-3 font-mono">08h 55m</td>
+                      <td className="py-3"><span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">Complet</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Calendar className="w-4 h-4 text-sky-600" /> Mes demandes d'absence</h3>
+              {myLeaves.length === 0 ? (
+                <p className="text-xs text-slate-500">Aucune demande pour le moment.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {myLeaves.map(d => (
+                    <li key={d.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-800">{d.title}</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${DOC_STATUS[d.status].cls}`}>{DOC_STATUS[d.status].label}</span>
+                      </div>
+                      {d.workflow && <ApprovalChips steps={d.workflow.steps} />}
+                      {d.status === 'en_revue' && <p className="text-[11px] text-slate-500">En attente de {waitingFor(currentStep(d.workflow))}.</p>}
+                      {d.status === 'rejete' && <p className="text-[11px] text-rose-700">Refusée : {d.workflow?.rejection?.reason}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
 
-          {/* Formulaire Demande de Congé / Régularisation */}
-          <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-sky-600" /> Demande d'Absence ou Congé
-            </h3>
-
-            {congeSucces && (
-              <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-xl border border-emerald-200 font-bold">
-                ✓ Votre demande a été transmise à la Direction RH !
-              </div>
-            )}
-
+          <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4 self-start">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Calendar className="w-4 h-4 text-sky-600" /> Demander un congé ou une absence</h3>
+            <p className="text-[11px] text-slate-500">Votre demande suit le circuit : votre responsable direct, puis les Ressources Humaines.</p>
+            {congeErreur && <div className="p-2.5 bg-rose-50 text-rose-800 text-xs rounded-xl border border-rose-200">{congeErreur}</div>}
             <form onSubmit={soumettreConge} className="space-y-3 text-xs">
-              <div>
-                <label className="text-slate-600 font-semibold block mb-1">Type de demande</label>
-                <select
-                  value={demandeConge.type}
-                  onChange={e => setDemandeConge({ ...demandeConge, type: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                >
-                  <option>Congé annuel légal (OHADA)</option>
-                  <option>Mission de terrain / Déplacement VSAT</option>
-                  <option>Permission exceptionnelle / Famille</option>
-                  <option>Arrêt maladie / Justificatif médical</option>
+              <label className="block text-slate-600 font-semibold">Type de demande
+                <select value={demandeConge.type} onChange={e => setDemandeConge({ ...demandeConge, type: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800 mt-1">
+                  <option>Congé annuel</option>
+                  <option>Mission de terrain</option>
+                  <option>Permission exceptionnelle</option>
+                  <option>Arrêt maladie</option>
                 </select>
-              </div>
-
+              </label>
               <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Date Début</label>
-                  <input
-                    type="date"
-                    required
-                    value={demandeConge.debut}
-                    onChange={e => setDemandeConge({ ...demandeConge, debut: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Date Fin</label>
-                  <input
-                    type="date"
-                    required
-                    value={demandeConge.fin}
-                    onChange={e => setDemandeConge({ ...demandeConge, fin: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                  />
-                </div>
+                <label className="block text-slate-600 font-semibold">Du
+                  <input type="date" required value={demandeConge.debut} onChange={e => setDemandeConge({ ...demandeConge, debut: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800 mt-1" />
+                </label>
+                <label className="block text-slate-600 font-semibold">Au
+                  <input type="date" required value={demandeConge.fin} onChange={e => setDemandeConge({ ...demandeConge, fin: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800 mt-1" />
+                </label>
               </div>
-
-              <div>
-                <label className="text-slate-600 font-semibold block mb-1">Motif explicatif</label>
-                <textarea
-                  rows={2}
-                  required
-                  placeholder="Précisez l'objet de votre demande..."
-                  value={demandeConge.motif}
-                  onChange={e => setDemandeConge({ ...demandeConge, motif: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition shadow-sm"
-              >
-                Transmettre pour visa hiérarchique
+              <label className="block text-slate-600 font-semibold">Motif
+                <textarea rows={2} required value={demandeConge.motif} onChange={e => setDemandeConge({ ...demandeConge, motif: e.target.value })} placeholder="Précisez l'objet de votre demande…" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800 mt-1" />
+              </label>
+              <button type="submit" disabled={!onSubmitLeaveRequest} className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold shadow-sm">
+                Transmettre pour visa
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* SOUS-MODULE 3 : MES DOCUMENTS & FICHES RH (COFFRE-FORT AGENT) */}
-      {activeTab === 'documents' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-emerald-600" />
-                  <span>Coffre-Fort Numérique & Pièces RH Sécurisées</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Bulletins de paie scellés et pièces personnelles de {currentUser.name} ({currentUser.matricule || 'Agent'})
-                </p>
-              </div>
-
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Coffre-Fort Inviolable RDC</span>
-              </div>
-            </div>
-
-            {agentDocuments.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">
-                <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p>Aucun document ou bulletin n'a encore été transmis dans votre coffre-fort personnel.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {agentDocuments.map(doc => {
-                  const isPayslip = doc.subtype === 'bulletin_de_paie' || doc.isConfidentialPayslip;
-                  return (
-                    <div 
-                      key={doc.id} 
-                      className={`p-4 rounded-2xl border transition shadow-xs hover:shadow-md flex flex-col justify-between ${
-                        isPayslip 
-                          ? 'border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white' 
-                          : 'border-slate-200 bg-slate-50/60'
-                      }`}
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                            isPayslip 
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                              : 'bg-sky-100 text-sky-800 border border-sky-200'
-                          }`}>
-                            {isPayslip ? 'Bulletin de Paie Certifié' : doc.subtype.replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400">{doc.createdAt}</span>
-                        </div>
-
-                        <div>
-                          <h4 className="font-bold text-xs text-slate-900 leading-snug line-clamp-2">{doc.title}</h4>
-                          <p className="text-[11px] font-mono text-slate-500 mt-0.5">Réf : {doc.referenceNumber}</p>
-                        </div>
-
-                        {doc.amount !== undefined && (
-                          <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase">
-                              {isPayslip ? 'Net Viré en Banque' : 'Montant'} :
-                            </span>
-                            <span className="font-mono font-black text-sm text-emerald-700">
-                              {doc.amount.toLocaleString()} {doc.currency || 'USD'}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
-                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Scellé Direction</span>
-                        </div>
-
-                        <button
-                          onClick={() => setViewingDoc(doc)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs shadow-sm transition active:scale-95"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Consulter</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* SOUS-MODULE 4 : TRANSMISSIONS & CONSIGNES */}
+      {/* CONSIGNES */}
       {activeTab === 'transmissions' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-sky-600" /> Main Courante de Service & Consignes d'Équipe
-            </h3>
-
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-sky-600" /> Main courante de service</h3>
             <div className="space-y-3">
               {consignes.map(c => (
                 <div key={c.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-bold text-slate-800">{c.auteur}</span>
-                    <span className="text-slate-400 font-mono text-[11px]">{c.date}</span>
-                  </div>
+                  <div className="flex justify-between items-center text-xs"><span className="font-bold text-slate-800">{c.auteur}</span><span className="text-slate-400 font-mono text-[11px]">{c.date}</span></div>
                   <p className="text-xs text-slate-600">{c.message}</p>
                 </div>
               ))}
             </div>
           </div>
-
           <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-3">
             <h3 className="text-sm font-bold text-slate-900">Laisser une consigne</h3>
             <form onSubmit={envoyerConsigne} className="space-y-3 text-xs">
-              <textarea
-                rows={4}
-                value={nouveauMessage}
-                onChange={e => setNouveauMessage(e.target.value)}
-                placeholder="Rédigez une note de relève pour l'équipe..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800"
-              />
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold flex items-center justify-center gap-2"
-              >
-                <Send className="w-3.5 h-3.5" /> Publier la transmission
-              </button>
+              <textarea rows={4} value={nouveauMessage} onChange={e => setNouveauMessage(e.target.value)} placeholder="Note de relève pour l'équipe…" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800" />
+              <button type="submit" className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold flex items-center justify-center gap-2"><Send className="w-3.5 h-3.5" /> Publier</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* SOUS-MODULE 5 : FICHE DE POSTE & HABILITATIONS */}
+      {/* FICHE & HABILITATIONS (réelles, selon le rôle) */}
       {activeTab === 'profile' && (
         <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600" /> Accréditation & Matrice de Pouvoirs Légaux
-              </h3>
-              <p className="text-xs text-slate-500">Périmètre d'engagement et autorisations certifiées au sein de RHEMA BUSINESS</p>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-600" /> Fiche de poste & habilitations</h3>
+              <p className="text-xs text-slate-500">{currentUser.roleTitle} — {myEntity?.name || currentUser.departmentName || org.name}</p>
             </div>
             <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full border border-emerald-300">
-              Habilitation Niveau 1 (Direction)
+              {isAgent ? 'Agent exécutant' : ROLE_LABELS[currentUser.role]}
             </span>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-              <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
-                <Award className="w-4 h-4 text-blue-600" /> Autorité d'Approbation Financière
-              </h4>
-              <p className="text-slate-600">• Pouvoir de signature des devis jusqu'à : <strong>Illimité (Direction Générale)</strong></p>
-              <p className="text-slate-600">• Ordonnancement des règlements bancaires : <strong>Autorisé</strong></p>
-            </div>
-
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-              <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
-                <Briefcase className="w-4 h-4 text-indigo-600" /> Délégation RH & Recrutement
-              </h4>
-              <p className="text-slate-600">• Signature des contrats de travail : <strong>Titulaire</strong></p>
-              <p className="text-slate-600">• Pouvoir disciplinaire et sanctions : <strong>Président de commission</strong></p>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            {habilitations(currentUser, canAccessLogistics(currentUser)).map(group => (
+              <div key={group.title} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5"><Briefcase className="w-4 h-4 text-blue-600" /> {group.title}</h4>
+                {group.items.map(i => (
+                  <div key={i.label}>
+                    <div className="text-slate-500">{i.label}</div>
+                    <div className="font-semibold text-slate-800">{i.value}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
+          {manager && <p className="text-xs text-slate-600">Responsable direct (N+1) : <strong>{manager.name}</strong> — {manager.label}</p>}
         </div>
       )}
 
-      {/* MODAL 1 : CHANGER DE COMPTE */}
+      {/* RESPONSABLES : TABLEAUX DE BORD */}
+      {!isAgent && activeTab === 'dashboard' && (
+        <div className="space-y-6">
+          <DepartmentTasksProgressChart tasks={tasks} entities={entities} users={users} currentUser={currentUser} />
+          <WorkspaceDashboard entities={entities} users={users} contracts={contracts} organization={currentOrg} currentUser={currentUser} onOpenLogistics={onOpenLogistics} />
+        </div>
+      )}
+      {!isAgent && activeTab === 'task_analytics' && (
+        <DepartmentTasksProgressChart tasks={tasks} entities={entities} users={users} currentUser={currentUser} />
+      )}
+
+      {/* CHANGER DE COMPTE (démonstration) */}
       {showAccountModal && onSelectUser && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="font-bold text-sm text-slate-900">Changer d'utilisateur</h3>
-              <button onClick={() => setShowAccountModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+              <button onClick={() => setShowAccountModal(false)} className="text-slate-400 hover:text-slate-700" aria-label="Fermer">✕</button>
             </div>
             <div className="space-y-1">
               {users.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => {
-                    onSelectUser(u);
-                    setShowAccountModal(false);
-                  }}
-                  className="w-full text-left p-2.5 rounded-xl hover:bg-sky-50 text-xs flex items-center justify-between border border-transparent hover:border-sky-200"
-                >
+                <button key={u.id} onClick={() => { onSelectUser(u); setShowAccountModal(false); }} className="w-full text-left p-2.5 rounded-xl hover:bg-sky-50 text-xs flex items-center justify-between border border-transparent hover:border-sky-200">
                   <div>
                     <div className="font-bold text-slate-900">{u.name}</div>
                     <div className="text-[11px] text-slate-500">{u.roleTitle}</div>
@@ -955,109 +765,21 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 2 : NOUVELLE TÂCHE */}
-      {showNewTaskModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
-                <Plus className="w-4 h-4 text-sky-600" /> Créer une Tâche Opérationnelle
-              </h3>
-              <button onClick={() => setShowNewTaskModal(false)} className="text-slate-400 hover:text-slate-700">✕</button>
-            </div>
-
-            <form onSubmit={handleCreateTask} className="space-y-3 text-xs">
-              <div>
-                <label className="text-slate-600 font-semibold block mb-1">Titre de la tâche *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Raccordement Liaison VSAT Lubumbashi"
-                  value={newTaskTitle}
-                  onChange={e => setNewTaskTitle(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                />
-              </div>
-
-              <div>
-                <label className="text-slate-600 font-semibold block mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  placeholder="Détails des instructions..."
-                  value={newTaskDesc}
-                  onChange={e => setNewTaskDesc(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Priorité</label>
-                  <select
-                    value={newTaskPriority}
-                    onChange={e => setNewTaskPriority(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                  >
-                    <option value="NORMALE">Normale</option>
-                    <option value="HAUTE">Haute</option>
-                    <option value="CRITIQUE">Critique</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-slate-600 font-semibold block mb-1">Échéance</label>
-                  <input
-                    type="date"
-                    value={newTaskDueDate}
-                    onChange={e => setNewTaskDueDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-800"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowNewTaskModal(false)}
-                  className="px-4 py-2 bg-slate-100 rounded-xl text-slate-600 font-semibold"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow"
-                >
-                  Créer la tâche
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3 : VISUALISATION DOCUMENT OFFICIEL RHEMA */}
-      {viewingDoc && (
-        <RhemaOfficialDocument
-          document={viewingDoc}
-          organization={currentOrg || {
-            id: 'org-1',
-            name: 'RHEMA BUSINESS RDC',
-            type: 'entreprise',
-            registrationNumber: '',
-            headquarters: 'Kinshasa - RD CONGO',
-            email: 'contact@rhemabusiness.com',
-            phone: '+243 81 279 1228',
-            description: 'RHEMA BUSINESS RDC',
-            managerName: 'Junior Monya',
-            hasDepartements: true,
-            hasDirections: true,
-            hasDivisions: true,
-            hasServices: true,
-            createdAt: '2020-01-01'
-          }}
+      {showNewTaskModal && onCreateTask && (
+        <TaskCreateModal
           currentUser={currentUser}
           entities={entities}
-          onClose={() => setViewingDoc(null)}
+          users={users}
+          documents={documents}
+          tasks={tasks}
+          organizationId={org.id}
+          onCreate={onCreateTask}
+          onClose={() => setShowNewTaskModal(false)}
         />
+      )}
+
+      {viewingDoc && (
+        <RhemaOfficialDocument document={viewingDoc} organization={org} currentUser={currentUser} entities={entities} onClose={() => setViewingDoc(null)} />
       )}
     </div>
   );

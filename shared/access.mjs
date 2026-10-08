@@ -55,16 +55,72 @@ export const isSecurityStaff = u => !!u && (u.role === 'dg' || u.role === 'chef_
 /** Responsable (tout rôle sauf agent). @param {AccessUser | undefined} u */
 export const isManager = u => !!u && u.role !== 'agent';
 
-/** Module logistique. @param {AccessUser | undefined} u */
+/** Rattachement de l'utilisateur à la logistique (intitulé, direction ou service). @param {AccessUser} u */
+function isLogisticsStaff(u) {
+  const text = `${u.departmentName || ''} ${u.roleTitle || ''}`.toLowerCase();
+  return /logistique|stock|approvisionnement|transit|magasin|hub/.test(text) || u.directionId === 'dir-log';
+}
+
+/**
+ * Module logistique.
+ * - DG : toujours.
+ * - Responsables (chef de service → chef de département) de la logistique ou du département Opérations.
+ * - Agents EXÉCUTANTS rattachés à la logistique (magasiniers, agents d'approvisionnement…) :
+ *   ils préparent les bons, mais ne visent rien (voir le circuit de validation).
+ * @param {AccessUser | undefined} u
+ */
 export function canAccessLogistics(u) {
   if (!u) return false;
   if (u.role === 'dg') return true;
+  if (u.role === 'agent') return isLogisticsStaff(u);
   if (!['chef_departement', 'directeur', 'chef_division', 'chef_service'].includes(u.role)) return false;
-  const text = `${u.departmentName || ''} ${u.roleTitle || ''}`.toLowerCase();
+  return isLogisticsStaff(u) || u.departementId === 'dept-ops';
+}
+
+/** Responsable de la logistique (accès au module ET rôle d'encadrement). @param {AccessUser | undefined} u */
+export const isLogisticsManager = u => canAccessLogistics(u) && !!u && u.role !== 'agent';
+
+// ---------------------------------------------------------------------------
+// Postes et circuit de validation
+// ---------------------------------------------------------------------------
+
+/** Champ du profil qui porte l'entité dirigée, pour chaque rôle d'encadrement. */
+export const ROLE_ENTITY_FIELD = {
+  chef_service: 'serviceId',
+  chef_division: 'divisionId',
+  directeur: 'directionId',
+  chef_departement: 'departementId',
+};
+
+/**
+ * Vrai si l'utilisateur occupe le poste « rôle à la tête de l'entité ».
+ * @param {AccessUser | undefined} u @param {string} role @param {string | undefined} entityId
+ */
+export function holdsPosition(u, role, entityId) {
+  if (!u || u.role !== role) return false;
+  if (role === 'dg') return true;
+  const field = ROLE_ENTITY_FIELD[role];
+  return !!field && !!entityId && u[field] === entityId;
+}
+
+/**
+ * Vrai si l'utilisateur est la personne attendue pour une étape de validation
+ * (titulaire du poste, personne désignée, ou agent ayant reçu la délégation de visa de son service).
+ * @param {AccessUser | undefined} u
+ * @param {{ approverRole: string, entityId?: string, approverUserId?: string, kind?: string } | undefined} step
+ */
+export function isStepHolder(u, step) {
+  if (!u || !step) return false;
+  if (step.approverUserId) return step.approverUserId === u.id;
+  if (holdsPosition(u, step.approverRole, step.entityId)) return true;
+  // Règle 6 : délégation formelle de visa accordée par le chef de service (visa simple, pas la signature finale).
   return (
-    /logistique|stock|approvisionnement|transit/.test(text) ||
-    u.departementId === 'dept-ops' ||
-    u.directionId === 'dir-log'
+    step.kind === 'visa' &&
+    step.approverRole === 'chef_service' &&
+    u.role === 'agent' &&
+    u.canApproveServiceDocuments === true &&
+    !!u.serviceId &&
+    u.serviceId === step.entityId
   );
 }
 
@@ -103,7 +159,13 @@ export function isEntityInUserScope(u, entityId, entities) {
 }
 
 /**
- * Visibilité d'un document.
+ * Visibilité d'un document : QUI le voit et QUAND.
+ * - DG : tout.
+ * - Bulletins de paie : leur titulaire et la Direction / RH habilitée.
+ * - L'émetteur, le destinataire nommé et chaque valideur du circuit : toujours.
+ * - Brouillon : personne d'autre (il n'est pas encore publié).
+ * - En circuit ou rejeté : les responsables du périmètre concerné, jamais les autres agents.
+ * - Validé / signé : selon l'accréditation (rôles autorisés) et le périmètre de l'entité cible.
  * @param {AccessUser} u @param {any} doc @param {AccessEntity[]} entities
  */
 export function canSeeDocument(u, doc, entities) {
@@ -113,7 +175,14 @@ export function canSeeDocument(u, doc, entities) {
     return doc.targetUserId === u.id || isPayrollStaff(u);
   }
   if (doc.authorId === u.id || doc.targetUserId === u.id) return true;
-  if (doc.targetEntityId) return isEntityInUserScope(u, doc.targetEntityId, entities);
+  const steps = (doc.workflow && Array.isArray(doc.workflow.steps)) ? doc.workflow.steps : [];
+  if (steps.some(s => isStepHolder(u, s))) return true;
+  if (doc.status === 'brouillon') return false;
+  const inProgress = doc.status === 'en_revue' || doc.status === 'rejete';
+  if (inProgress && u.role === 'agent') return false;
+  if (Array.isArray(doc.allowedRoles) && doc.allowedRoles.length > 0 && !doc.allowedRoles.includes(u.role)) return false;
+  const scopeEntity = doc.targetEntityId || (inProgress ? doc.originEntityId : undefined);
+  if (scopeEntity) return isEntityInUserScope(u, scopeEntity, entities);
   return true;
 }
 

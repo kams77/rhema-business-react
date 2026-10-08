@@ -29,6 +29,9 @@ jobs:
       - name: Tests des empreintes SHA-256
         run: npx --yes esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=/tmp/integrity.test.mjs --log-level=error && node /tmp/integrity.test.mjs
 
+      - name: Tests du circuit de validation (documents, tâches, droits)
+        run: node shared/__tests__/workflow.test.mjs
+
       - name: Vérification TypeScript
         id: tsc
         run: |

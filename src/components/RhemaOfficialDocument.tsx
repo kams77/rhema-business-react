@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
 import { canUserApproveDocument } from '../utils/rbac';
+import { currentStep } from '../lib/workflow';
 import { ElectronicSignatureModal, type SignatureData } from './ElectronicSignatureModal';
 
 interface RhemaOfficialDocumentProps {
@@ -46,12 +47,15 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
   }, [document]);
 
   // RÈGLE STRICTE 6 & 1-5 : Vérification d'habilitation de visa/signature
-  const approvalCheck = currentUser 
-    ? canUserApproveDocument(currentUser, docState, entities) 
-    : { allowed: true };
+  const approvalCheck: { allowed: boolean; reason?: string; isFinal?: boolean } = currentUser && docState.status === 'en_revue'
+    ? canUserApproveDocument(currentUser, docState, entities)
+    : { allowed: false };
+  // Signature depuis la consultation : seulement à la DERNIÈRE étape (signature), pour son titulaire.
+  const pendingStep = docState.workflow ? currentStep(docState.workflow) : undefined;
+  const canSignHere = !!onSignDocument && approvalCheck.allowed && !!approvalCheck.isFinal && (!docState.workflow || pendingStep?.kind === 'signature');
 
   const handleOpenSignature = () => {
-    if (!approvalCheck.allowed) return;
+    if (!canSignHere) return;
     setShowSignatureModal(true);
   };
 
@@ -336,8 +340,8 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
           </p>
 
           <div className="flex items-center gap-2">
-            {!isSigned && (
-              approvalCheck.allowed ? (
+            {!isSigned && docState.status === 'en_revue' && (
+              canSignHere ? (
                 <button
                   onClick={handleOpenSignature}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg transition active:scale-95"
@@ -348,7 +352,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
               ) : (
                 <div className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>{approvalCheck.reason || "Visa restreint (Règles hiérarchiques)"}</span>
+                  <span>{approvalCheck.allowed ? 'Visa intermédiaire : apposez-le depuis la liste des documents.' : (approvalCheck.reason || 'Visa restreint (règles hiérarchiques)')}</span>
                 </div>
               )
             )}

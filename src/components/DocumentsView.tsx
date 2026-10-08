@@ -1,605 +1,498 @@
-// src/components/DocumentsView.tsx
-import React, { useState } from 'react';
+// src/components/DocumentsView.tsx — Documents & Workflows : publication, circuit de validation, signature.
+import React, { useMemo, useState } from 'react';
 import { shortHash } from '../lib/integrity';
-import type { 
-  DocumentItem, 
-  Organization, 
-  User, 
-  HierarchicalEntity, 
-  DocumentCategory, 
-  DocumentSubtype, 
-  UserRole 
+import type {
+  DocumentItem,
+  Organization,
+  User,
+  HierarchicalEntity,
+  DocumentCategory,
+  DocumentSubtype,
 } from '../types';
-import { 
-  FileText, 
-  Plus, 
-  Search, 
-  Eye, 
-  Lock, 
-  ShieldCheck, 
-  CheckCircle2, 
+import {
+  FileText,
+  Plus,
+  Search,
+  Eye,
+  ShieldCheck,
+  CheckCircle2,
   FilePlus2,
   X,
-  ShieldAlert,
-  Users2,
   AlertTriangle,
   Download,
   Clock,
   Send,
-  Check,
+  Stamp,
+  PenLine,
   RotateCcw,
-  Sparkles,
-  FileCheck2,
   Trash2,
-  Filter
+  History,
+  FileCheck2,
+  Info,
 } from 'lucide-react';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
-import { canUserViewDocument, canUserApproveDocument } from '../utils/rbac';
+import { canUserViewDocument, getEntitiesInUserScope, isPayrollStaff } from '../utils/rbac';
 import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
-import { ElectronicSignatureModal, type SignatureData } from './ElectronicSignatureModal';
+import { ElectronicSignatureModal } from './ElectronicSignatureModal';
+import { ApprovalChips, ApprovalTimeline, HistoryList } from './workflow/ApprovalTimeline';
+import {
+  DOCUMENT_CATEGORIES,
+  buildDocumentChain,
+  canActOnDocument,
+  canDeleteDocument,
+  createDocument,
+  currentStep,
+  documentType,
+  documentTypesFor,
+  waitingFor,
+  workflowSummary,
+} from '../lib/workflow';
+import type { DocumentAction } from '../lib/workflow';
 
-export type AccreditationLevel = 
-  | 'public_entreprise' 
-  | 'perimetre_entite' 
-  | 'direction_dg_only' 
-  | 'strict_confidentiel';
+export type DocumentWorkflowFilter = 'all' | 'to_act' | 'mine' | 'in_progress' | 'rejected' | 'final';
 
-export type DocumentWorkflowFilter = 
-  | 'all' 
-  | 'pending_my_visa' 
-  | 'signed' 
-  | 'draft_or_review' 
-  | 'financier' 
-  | 'logistique' 
-  | 'rh';
+/** Types qu'un agent exécutant ne publie pas (directives, contrats, pièces confidentielles). */
+const AGENT_FORBIDDEN: DocumentSubtype[] = [
+  'note_service', 'communique', 'contrat_commercial', 'contrat_travail', 'fiche_poste',
+  'bilan_comptable', 'declaration_sociale', 'bulletin_de_paie',
+];
+
+const STATUS_BADGE: Record<DocumentItem['status'], { label: string; cls: string }> = {
+  brouillon: { label: 'Brouillon (privé)', cls: 'bg-slate-800 text-slate-300 border-slate-700' },
+  en_revue: { label: 'En circuit de validation', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
+  approuve: { label: 'Approuvé', cls: 'bg-sky-500/10 text-sky-300 border-sky-500/30' },
+  signe: { label: 'Validé & signé', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+  rejete: { label: 'Rejeté — à corriger', cls: 'bg-rose-500/10 text-rose-400 border-rose-500/30' },
+};
+
+const TEMPLATES: { label: string; text: string }[] = [
+  { label: 'Note de service', text: "Par la présente note, la Direction informe les agents concernés des dispositions opérationnelles suivantes : …\nL'exécution prend effet à compter du … sous la supervision du chef de service." },
+  { label: 'Rapport', text: "Objet : …\nContexte : …\nActions réalisées : …\nRésultats et constats : …\nRecommandations : …" },
+  { label: 'Procès-verbal', text: "L'an …, le …, à …, il a été procédé à la réception / recette de … en présence de …\nConstats : …\nRéserves : néant / …" },
+  { label: 'Demande', text: "Objet de la demande : …\nJustification : …\nMontant estimé : … (joindre les cotations)\nImputation budgétaire : …" },
+];
 
 interface DocumentsViewProps {
   documents: DocumentItem[];
   organization: Organization;
   currentUser: User;
   entities?: HierarchicalEntity[];
-  onAddDocument: (doc: Omit<DocumentItem, 'id'>) => void;
-  onUpdateDocument?: (docId: string, updates: Partial<DocumentItem>) => void;
-  onDeleteDocument?: (docId: string) => void;
-  onLogAction?: (action: string, details: string, category: 'admin' | 'document' | 'task' | 'security') => void;
+  users?: User[];
+  onCreateDocument: (doc: DocumentItem) => void;
+  onDocumentAction: (docId: string, action: DocumentAction) => DocumentItem | null;
 }
+
+const inputCls = 'w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500';
 
 export const DocumentsView: React.FC<DocumentsViewProps> = ({
   documents,
   organization,
   currentUser,
   entities = [],
-  onAddDocument,
-  onUpdateDocument,
-  onDeleteDocument,
-  onLogAction,
+  users = [],
+  onCreateDocument,
+  onDocumentAction,
 }) => {
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
   const [signingDoc, setSigningDoc] = useState<DocumentItem | null>(null);
   const [viewingCertificateDoc, setViewingCertificateDoc] = useState<DocumentItem | null>(null);
+  const [historyDoc, setHistoryDoc] = useState<DocumentItem | null>(null);
+  const [visaDoc, setVisaDoc] = useState<DocumentItem | null>(null);
+  const [visaComment, setVisaComment] = useState('');
+  const [rejectDoc, setRejectDoc] = useState<DocumentItem | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [fixDoc, setFixDoc] = useState<DocumentItem | null>(null);
+  const [fixTitle, setFixTitle] = useState('');
+  const [fixDescription, setFixDescription] = useState('');
+  const [fixAmount, setFixAmount] = useState('');
   const [search, setSearch] = useState('');
   const [workflowFilter, setWorkflowFilter] = useState<DocumentWorkflowFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | DocumentCategory>('all');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [rejectModalDocId, setRejectModalDocId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // Formulaire de publication avec accréditation
-  const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>('financier_comptable');
-  const [selectedSubtype, setSelectedSubtype] = useState<DocumentSubtype>('facture_client');
+  // Formulaire de publication
+  const isAgent = currentUser.role === 'agent';
+  const allowedTypes = (cat: DocumentCategory) => documentTypesFor(cat).filter(t =>
+    !(isAgent && AGENT_FORBIDDEN.includes(t.value)) &&
+    !(t.value === 'bulletin_de_paie' && !isPayrollStaff(currentUser)) &&
+    !(t.confidential && isAgent));
+  const categories = (Object.keys(DOCUMENT_CATEGORIES) as DocumentCategory[]).filter(c => allowedTypes(c).length > 0);
+  const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>(categories[0] || 'administratif_general');
+  const [selectedSubtype, setSelectedSubtype] = useState<DocumentSubtype>(allowedTypes(categories[0] || 'administratif_general')[0]?.value || 'rapport_activite');
   const [title, setTitle] = useState('');
-  const [selectedEntityId, setSelectedEntityId] = useState('');
-  const [accreditationLevel, setAccreditationLevel] = useState<AccreditationLevel>('perimetre_entite');
-  const [initialStatus, setInitialStatus] = useState<'brouillon' | 'en_revue' | 'signe'>('en_revue');
-  const [includeFinancialAmount, setIncludeFinancialAmount] = useState<boolean>(true);
-  const [amount, setAmount] = useState<string>('');
-  const [currency, setCurrency] = useState<'USD' | 'CDF'>('USD');
   const [description, setDescription] = useState('');
-  const [formError, setFormError] = useState<string>('');
+  const [audience, setAudience] = useState<'perimetre' | 'public' | 'direction'>('perimetre');
+  const [targetEntityId, setTargetEntityId] = useState('');
+  const [includeAmount, setIncludeAmount] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<'USD' | 'CDF'>('USD');
+  const [formError, setFormError] = useState('');
 
-  const subtypeOptions: Record<DocumentCategory, { value: DocumentSubtype; label: string }[]> = {
-    financier_comptable: [
-      { value: 'facture_client', label: 'Facture Client' },
-      { value: 'facture_fournisseur', label: 'Facture Fournisseur' },
-      { value: 'bilan_comptable', label: 'Bilan Comptable & États Financiers' },
-      { value: 'devis', label: 'Note de Frais & Missions' },
-      { value: 'avoir', label: 'Avoir / Note de Crédit' }
-    ],
-    chaine_logistique_commerciale: [
-      { value: 'bon_commande_client', label: 'Bon de Commande Fournisseur (BCF)' },
-      { value: 'bon_livraison', label: 'Bon de Livraison / Expédition' },
-      { value: 'bon_reception', label: 'Inventaire Physique & Réception Stocks' },
-      { value: 'contrat_travail', label: 'Contrat Commercial Partenaire' }
-    ],
-    ressources_humaines: [
-      { value: 'bulletin_de_paie', label: 'Bulletin de Paie (Confidentiel)' },
-      { value: 'contrat_travail', label: 'Contrat de Travail (CDI / CDD)' },
-      { value: 'fiche_poste', label: 'Déclaration Trimestrielle CNSS & IPR' },
-      { value: 'feuille_de_temps', label: 'Fiche d\'Évaluation & Habilitation' }
-    ]
-  };
+  const selectedType = documentType(selectedSubtype);
+  const amountRule = selectedType.amount;
+  const scopeEntities = useMemo(() => getEntitiesInUserScope(currentUser, entities), [currentUser, entities]);
+  const parsedAmount = amount.trim() ? Number(amount.replace(/\s/g, '').replace(',', '.')) : undefined;
+  const effectiveAmount = amountRule === 'requis' || (amountRule === 'facultatif' && includeAmount) ? parsedAmount : undefined;
+
+  /** Aperçu du circuit calculé pour le type, le montant et la position de l'émetteur. */
+  const previewChain = useMemo(
+    () => buildDocumentChain({ subtype: selectedSubtype, amount: effectiveAmount, currency }, currentUser, entities, users),
+    [selectedSubtype, effectiveAmount, currency, currentUser, entities, users],
+  );
 
   const handleCategoryChange = (cat: DocumentCategory) => {
     setSelectedCategory(cat);
-    setSelectedSubtype(subtypeOptions[cat][0].value);
-    if (cat === 'ressources_humaines') {
-      setAccreditationLevel('strict_confidentiel');
-      setIncludeFinancialAmount(false);
-    } else if (cat === 'financier_comptable') {
-      setIncludeFinancialAmount(true);
-    } else {
-      setIncludeFinancialAmount(false);
-    }
+    const first = allowedTypes(cat)[0];
+    if (first) setSelectedSubtype(first.value);
+    setIncludeAmount(false);
+    if (first?.confidential) setAudience('direction');
   };
 
-  // Calcul dynamique des permissions d'accès selon le niveau d'accréditation
-  const getRolesByAccreditation = (level: AccreditationLevel): { allowed: UserRole[]; description: string; prohibited: string } => {
-    switch (level) {
-      case 'public_entreprise':
-        return {
-          allowed: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-          description: 'Tous les collaborateurs de l’entreprise ont accès à ce document.',
-          prohibited: 'Aucune restriction'
-        };
-      case 'perimetre_entite':
-        return {
-          allowed: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
-          description: 'Visible uniquement par les agents rattachés à cette entité et le Directeur Général.',
-          prohibited: 'Agents des autres départements et directions externes'
-        };
-      case 'direction_dg_only':
-        return {
-          allowed: ['dg', 'chef_departement', 'directeur'],
-          description: 'Réservé aux Directeurs, Chefs de Département et à la Direction Générale.',
-          prohibited: 'Agents exécutants, chefs de service et personnel opérationnel'
-        };
-      case 'strict_confidentiel':
-        return {
-          allowed: ['dg', 'directeur'],
-          description: 'Confidentiel absolu : Titulaire du document, Directeur RH et DG exclusivement.',
-          prohibited: 'Tout autre département, chefs de division, chefs de service et tiers'
-        };
-    }
+  const resetForm = () => {
+    setTitle('');
+    setDescription('');
+    setAmount('');
+    setIncludeAmount(false);
+    setTargetEntityId('');
+    setFormError('');
   };
 
-  // Vérification si un document nécessite le visa de l'utilisateur connecté
-  const isDocumentPendingMyVisa = (doc: DocumentItem): boolean => {
-    if (doc.status !== 'en_revue') return false;
-    const approval = canUserApproveDocument(currentUser, doc, entities);
-    return approval.allowed;
+  // ------------------------------------------------------------------ filtres
+  const visibleDocs = useMemo(
+    () => documents.filter(doc => canUserViewDocument(currentUser, doc, entities).allowed),
+    [documents, currentUser, entities],
+  );
+  const toAct = visibleDocs.filter(d => canActOnDocument(currentUser, d));
+  const counts = {
+    all: visibleDocs.length,
+    to_act: toAct.length,
+    mine: visibleDocs.filter(d => d.authorId === currentUser.id).length,
+    in_progress: visibleDocs.filter(d => d.status === 'en_revue').length,
+    rejected: visibleDocs.filter(d => d.status === 'rejete').length,
+    final: visibleDocs.filter(d => d.status === 'signe' || d.status === 'approuve').length,
   };
 
-  const pendingVisasCount = documents.filter(d => isDocumentPendingMyVisa(d)).length;
-
-  // Filtrage des documents
-  const filteredDocs = documents.filter(doc => {
-    // Règle de visibilité RBAC
-    const viewCheck = canUserViewDocument(currentUser, doc, entities);
-    if (!viewCheck.allowed) return false;
-
-    // Recherche
-    const matchSearch = doc.title.toLowerCase().includes(search.toLowerCase()) || 
-                        doc.referenceNumber.toLowerCase().includes(search.toLowerCase()) ||
-                        doc.authorName.toLowerCase().includes(search.toLowerCase()) ||
-                        (doc.description && doc.description.toLowerCase().includes(search.toLowerCase()));
-
-    if (!matchSearch) return false;
-
-    // Filtres d'état et catégories
-    if (workflowFilter === 'pending_my_visa') {
-      return isDocumentPendingMyVisa(doc);
+  const q = search.trim().toLowerCase();
+  const filteredDocs = visibleDocs.filter(doc => {
+    if (q && ![doc.title, doc.referenceNumber, doc.authorName, doc.description || '', documentType(doc.subtype).label]
+      .some(v => v.toLowerCase().includes(q))) return false;
+    if (categoryFilter !== 'all' && doc.category !== categoryFilter) return false;
+    switch (workflowFilter) {
+      case 'to_act': return canActOnDocument(currentUser, doc);
+      case 'mine': return doc.authorId === currentUser.id;
+      case 'in_progress': return doc.status === 'en_revue';
+      case 'rejected': return doc.status === 'rejete';
+      case 'final': return doc.status === 'signe' || doc.status === 'approuve';
+      default: return true;
     }
-    if (workflowFilter === 'signed') {
-      return doc.status === 'signe' || doc.status === 'approuve';
-    }
-    if (workflowFilter === 'draft_or_review') {
-      return doc.status === 'brouillon' || doc.status === 'en_revue';
-    }
-    if (workflowFilter === 'financier') {
-      return doc.category === 'financier_comptable';
-    }
-    if (workflowFilter === 'logistique') {
-      return doc.category === 'chaine_logistique_commerciale';
-    }
-    if (workflowFilter === 'rh') {
-      return doc.category === 'ressources_humaines';
-    }
-
-    return true;
   });
 
-  // Action : Soumettre pour visa
-  const handleSubmitForVisa = (docId: string) => {
-    if (onUpdateDocument) {
-      onUpdateDocument(docId, { status: 'en_revue' });
-    }
-    if (onLogAction) {
-      onLogAction('Transmission Visa Document', `Document #${docId} soumis au circuit de visa hiérarchique`, 'document');
-    }
-  };
-
-  // Action : Viser et signer électroniquement avec vérification probante
-  const handleSignDocument = (docId: string, sig: SignatureData) => {
-    // La signature vient toujours de la fenêtre de signature : mot de passe vérifié et empreinte réelle.
-    const hash = sig.certificateHash;
-    const updates: Partial<DocumentItem> = {
-      status: 'signe',
-      electronicSignature: {
-        signedBy: sig.signedBy,
-        signedAt: sig.signedAt,
-        role: sig.role,
-        certificateHash: hash,
-        signatureImage: sig.signatureImage,
-        signatureType: sig.signatureType,
-        legalConsent: sig.legalConsent,
-        verificationAudit: sig.verificationAudit,
-      }
-    };
-
-    if (onUpdateDocument) {
-      onUpdateDocument(docId, updates);
-    }
-    if (onLogAction) {
-      onLogAction('Signature Électronique', `Document #${docId} signé par ${currentUser.name} après confirmation du mot de passe (empreinte ${shortHash(hash)}).`, 'security');
-    }
-    if (selectedDoc && selectedDoc.id === docId) {
-      setSelectedDoc(prev => prev ? { ...prev, ...updates } : null);
-    }
-  };
-
-  // Action : Rejeter avec motif
-  const handleRejectDocument = () => {
-    if (!rejectModalDocId) return;
-    if (onUpdateDocument) {
-      onUpdateDocument(rejectModalDocId, {
-        status: 'rejete',
-        description: `[MOTIF REJET / RÉVISION : ${rejectReason || 'Non conforme'}]`
-      });
-    }
-    if (onLogAction) {
-      onLogAction('Rejet Document', `Document #${rejectModalDocId} rejeté : ${rejectReason}`, 'document');
-    }
-    setRejectModalDocId(null);
-    setRejectReason('');
-  };
-
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
+  // ------------------------------------------------------------------ actions
+  const handleCreate = (submit: boolean) => {
     setFormError('');
-    if (!title.trim()) {
-      setFormError('L\'intitulé officiel du document est requis.');
-      return;
-    }
-    if (!description.trim()) {
-      setFormError('Le corps descriptif du document est obligatoire. Veuillez saisir les stipulations, clauses ou l\'exposé officiel des motifs.');
-      return;
-    }
-
-    const matchedEntity = entities.find(e => e.id === selectedEntityId);
-    const numAmount = (includeFinancialAmount && amount.trim()) 
-      ? parseFloat(amount.replace(/\s/g, '')) 
-      : undefined;
-    const isPayslip = selectedSubtype === 'bulletin_de_paie' || accreditationLevel === 'strict_confidentiel';
-    const acc = getRolesByAccreditation(accreditationLevel);
-
-
-    onAddDocument({
-      title: title.trim(),
-      referenceNumber: `DOC-2026-${Math.floor(100 + Math.random() * 900)}`,
-      category: selectedCategory,
+    if (!title.trim()) return setFormError("L'intitulé du document est requis.");
+    if (description.trim().length < 10) return setFormError('Le corps du document est obligatoire (10 caractères minimum).');
+    if (amountRule === 'requis' && !(parsedAmount && parsedAmount > 0)) return setFormError(`Le montant est obligatoire pour un document « ${selectedType.label} ».`);
+    if (amountRule === 'facultatif' && includeAmount && !(parsedAmount && parsedAmount > 0)) return setFormError('Saisissez un montant valide ou décochez la case.');
+    const doc = createDocument({
+      title,
       subtype: selectedSubtype,
+      description,
+      author: currentUser,
       organizationId: organization.id,
-      authorId: currentUser.id,
-      authorName: currentUser.name,
-      authorRole: currentUser.role,
-      authorEntity: currentUser.roleTitle,
-      targetEntityId: selectedEntityId || undefined,
-      targetEntityName: matchedEntity?.name,
-      createdAt: new Date().toISOString().split('T')[0],
-      status: initialStatus,
-      size: '1.4 Mo',
-      fileType: 'PDF',
-      amount: numAmount,
-      currency: numAmount !== undefined ? currency : undefined,
-      isConfidentialPayslip: isPayslip,
-      description: description.trim(),
-      allowedRoles: acc.allowed,
-      permissions: {
-        viewRoles: acc.allowed,
-        editRoles: ['dg'],
-        validateRoles: ['dg'],
-        signRoles: ['dg']
-      }
+      entities,
+      users,
+      existingDocuments: documents,
+      targetEntityId: audience === 'perimetre' ? (targetEntityId || undefined) : undefined,
+      amount: effectiveAmount,
+      currency,
+      audience: selectedType.confidential ? 'direction' : audience,
+      source: { module: 'documents', kind: selectedSubtype, refId: currentUser.id },
+      submit,
     });
-
+    onCreateDocument(doc);
     setShowAddModal(false);
-    setTitle('');
-    setAmount('');
-    setDescription('');
-    setSelectedEntityId('');
-    setIncludeFinancialAmount(false);
-    setFormError('');
+    resetForm();
   };
+
+  const openVisa = (doc: DocumentItem) => {
+    const step = currentStep(doc.workflow);
+    if (step?.kind === 'signature') setSigningDoc(doc);
+    else { setVisaDoc(doc); setVisaComment(''); }
+  };
+
+  const openFix = (doc: DocumentItem) => {
+    setFixDoc(doc);
+    setFixTitle(doc.title);
+    setFixDescription(doc.description || '');
+    setFixAmount(doc.amount !== undefined ? String(doc.amount) : '');
+  };
+
+  const submitFix = () => {
+    if (!fixDoc) return;
+    const rule = documentType(fixDoc.subtype).amount;
+    const value = fixAmount.trim() ? Number(fixAmount.replace(/\s/g, '').replace(',', '.')) : undefined;
+    if (rule === 'requis' && !(value && value > 0)) return;
+    const res = onDocumentAction(fixDoc.id, {
+      type: 'resubmit',
+      updates: {
+        title: fixTitle.trim() || fixDoc.title,
+        description: fixDescription.trim() || fixDoc.description,
+        amount: rule === 'aucun' ? undefined : value,
+        currency: rule === 'aucun' || value === undefined ? undefined : (fixDoc.currency || 'USD'),
+      },
+    });
+    if (res) setFixDoc(null);
+  };
+
+  const filterButton = (id: DocumentWorkflowFilter, label: string, icon?: React.ReactNode, accent = 'bg-indigo-600') => (
+    <button
+      key={id}
+      onClick={() => setWorkflowFilter(id)}
+      className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
+        workflowFilter === id ? `${accent} text-white shadow-md` : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
+      }`}
+    >
+      {icon}
+      <span>{label} ({counts[id]})</span>
+    </button>
+  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* 1. BANNIÈRE SUPÉRIEURE */}
+      {/* 1. BANNIÈRE */}
       <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 uppercase tracking-wider border border-emerald-500/30 flex items-center gap-1.5">
               <FileCheck2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>GESTION ÉLECTRONIQUE DES DOCUMENTS & WORKFLOW PROBANT</span>
+              <span>Circuit de validation par rôle</span>
             </span>
-            {pendingVisasCount > 0 && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse flex items-center gap-1">
+            {counts.to_act > 0 && (
+              <button
+                onClick={() => setWorkflowFilter('to_act')}
+                className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1"
+              >
                 <AlertTriangle className="w-3 h-3 text-rose-400" />
-                <span>{pendingVisasCount} Document(s) en attente de votre visa</span>
-              </span>
+                <span>{counts.to_act} document(s) attendent votre visa</span>
+              </button>
             )}
           </div>
-          <h2 className="text-xl font-bold text-white tracking-tight">
-            Documents Officiels, Traçabilité & Circuit de Visa
-          </h2>
+          <h2 className="text-xl font-bold text-white tracking-tight">Documents officiels & circuit de visa</h2>
           <p className="text-xs text-slate-400 mt-1 max-w-3xl leading-relaxed">
-            Émission, visa hiérarchique et scellement électronique des pièces financières, logistiques et RH. Chaque pièce intègre l'en-tête officiel et, une fois signée, l'empreinte SHA-256 de son contenu.
+            Chaque type de document suit son propre circuit, calculé depuis la position de l'émetteur dans l'organigramme :
+            les visas se donnent un par un, dans l'ordre, et la dernière étape est la signature électronique.
+            Le montant n'est demandé que si le type de document l'exige.
           </p>
         </div>
 
         <button
-          onClick={() => setShowAddModal(true)}
+          onClick={() => { resetForm(); setShowAddModal(true); }}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95"
         >
           <Plus className="w-4 h-4" />
-          <span>Publier un Nouveau Document</span>
+          <span>Nouveau document</span>
         </button>
       </div>
 
-      {/* 2. RECHERCHE ET ONGLETS DE FILTRAGE WORKFLOW */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* 2. FILTRES */}
+      <div className="space-y-3">
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <button
-            onClick={() => setWorkflowFilter('all')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
-              workflowFilter === 'all'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            Tous les Documents ({documents.length})
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('pending_my_visa')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
-              workflowFilter === 'pending_my_visa'
-                ? 'bg-rose-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-rose-500/20'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5 text-rose-400" />
-            <span>À mon Visa ({pendingVisasCount})</span>
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('signed')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 ${
-              workflowFilter === 'signed'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Signés</span>
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('draft_or_review')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
-              workflowFilter === 'draft_or_review'
-                ? 'bg-amber-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            En Revue / Brouillons
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('financier')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
-              workflowFilter === 'financier'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            $ Financiers
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('logistique')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
-              workflowFilter === 'logistique'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            📦 Logistique
-          </button>
-
-          <button
-            onClick={() => setWorkflowFilter('rh')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
-              workflowFilter === 'rh'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            👥 RH & Contrats
-          </button>
+          {filterButton('all', 'Tous')}
+          {filterButton('to_act', 'À mon visa', <Clock className="w-3.5 h-3.5" />, 'bg-rose-600')}
+          {filterButton('mine', 'Mes documents')}
+          {filterButton('in_progress', 'En circuit', undefined, 'bg-amber-600')}
+          {filterButton('rejected', 'Rejetés', undefined, 'bg-rose-600')}
+          {filterButton('final', 'Validés & signés', <ShieldCheck className="w-3.5 h-3.5" />, 'bg-emerald-600')}
         </div>
-
-        <div className="relative min-w-[220px]">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Rechercher réf, titre, auteur..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-          />
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {(['all', ...Object.keys(DOCUMENT_CATEGORIES)] as ('all' | DocumentCategory)[]).map(c => (
+              <button
+                key={c}
+                onClick={() => setCategoryFilter(c)}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap transition ${
+                  categoryFilter === c ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                {c === 'all' ? 'Toutes catégories' : DOCUMENT_CATEGORIES[c]}
+              </button>
+            ))}
+          </div>
+          <div className="relative sm:min-w-[260px]">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="search"
+              placeholder="Référence, titre, type, émetteur…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            />
+          </div>
         </div>
       </div>
 
-      {/* 3. GRILLE DES DOCUMENTS OFFICIELS AVEC WORKFLOW */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {/* 3. GRILLE DES DOCUMENTS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         {filteredDocs.length === 0 ? (
           <div className="col-span-full p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl text-slate-400 space-y-2">
             <FileText className="w-8 h-8 text-slate-600 mx-auto" />
-            <p className="font-bold text-sm text-slate-300">Aucun document ne correspond à ce filtre</p>
-            <p className="text-xs text-slate-500">Ajustez vos filtres ou publiez une nouvelle pièce certifiée.</p>
+            <p className="font-bold text-sm text-slate-300">Aucun document dans cette vue</p>
+            <p className="text-xs text-slate-500">
+              {workflowFilter === 'to_act' ? "Rien n'attend votre visa pour le moment." : 'Changez de filtre ou publiez un nouveau document.'}
+            </p>
           </div>
         ) : (
           filteredDocs.map(doc => {
+            const type = documentType(doc.subtype);
+            const badge = STATUS_BADGE[doc.status] || STATUS_BADGE.brouillon;
+            const summary = workflowSummary(doc);
+            const step = currentStep(doc.workflow);
+            const canAct = canActOnDocument(currentUser, doc);
+            const isAuthor = doc.authorId === currentUser.id;
             const isSigned = doc.status === 'signe';
-            const isPendingReview = doc.status === 'en_revue';
-            const isDraft = doc.status === 'brouillon';
-            const isRejected = doc.status === 'rejete';
-            const canApprove = isPendingReview && canUserApproveDocument(currentUser, doc, entities).allowed;
+            const rejection = doc.workflow?.rejection;
 
             return (
-              <div
+              <article
                 key={doc.id}
-                className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4 transition"
+                className={`bg-slate-900/90 border rounded-2xl p-5 shadow-xl flex flex-col justify-between gap-4 transition ${
+                  canAct ? 'border-amber-500/50 ring-1 ring-amber-500/20' : 'border-slate-800 hover:border-slate-700'
+                }`}
               >
                 <div className="space-y-3">
-                  {/* Badge statut et référence */}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-mono font-bold text-sky-400 bg-sky-950/40 border border-sky-500/30 px-2 py-0.5 rounded-lg">
                       {doc.referenceNumber}
                     </span>
-
-                    {/* Statut du Workflow */}
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                      isSigned
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : isPendingReview
-                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                        : isRejected
-                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}>
-                      {isSigned && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
-                      {isPendingReview && <Clock className="w-3 h-3 text-amber-400 animate-pulse" />}
-                      {isRejected && <X className="w-3 h-3 text-rose-400" />}
-                      <span>
-                        {isSigned
-                          ? 'Validé & Signé DG'
-                          : isPendingReview
-                          ? 'En Visa Hiérarchique'
-                          : isRejected
-                          ? 'Rejeté / Révision'
-                          : 'Brouillon Interne'}
-                      </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${badge.cls}`}>
+                      {isSigned && <CheckCircle2 className="w-3 h-3" />}
+                      {doc.status === 'en_revue' && <Clock className="w-3 h-3" />}
+                      {doc.status === 'rejete' && <X className="w-3 h-3" />}
+                      <span>{badge.label}</span>
                     </span>
                   </div>
 
-                  {/* Titre et Corps descriptif obligatoire */}
-                  <div className="space-y-2">
-                    <h3 className="font-bold text-sm text-white line-clamp-1" title={doc.title}>
-                      {doc.title}
-                    </h3>
-
-                    {/* Corps descriptif obligatoire mis en valeur */}
-                    <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80 space-y-1">
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span className="font-bold uppercase tracking-wider flex items-center gap-1 text-sky-400">
-                          <FileText className="w-3 h-3 text-sky-400" />
-                          <span>Corps Descriptif Officiel</span>
-                        </span>
-                        <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                          Obligatoire
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 line-clamp-3 leading-relaxed">
-                        {doc.description}
-                      </p>
-                    </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">{type.label}</div>
+                    <h3 className="font-bold text-sm text-white line-clamp-2 mt-0.5" title={doc.title}>{doc.title}</h3>
+                    {doc.description && <p className="text-[11px] text-slate-400 line-clamp-2 mt-1 leading-relaxed whitespace-pre-line">{doc.description}</p>}
                   </div>
 
-                  {/* Données financières / métadonnées */}
-                  <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 text-xs">
-                    {doc.amount !== undefined && doc.amount !== null && doc.amount > 0 ? (
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-slate-500 font-bold uppercase">Montant engagé :</span>
-                        <span className="font-mono font-bold text-emerald-400">
-                          {doc.amount.toLocaleString()} {doc.currency || 'USD'}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-[10px] text-slate-500 font-bold uppercase">Incidence financière :</span>
-                        <span className="text-[10px] text-slate-400 italic">Sans obligation de montant</span>
+                  <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1 text-[11px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-500">Émetteur</span>
+                      <span className="text-slate-200 truncate max-w-[180px]">{doc.authorName}</span>
+                    </div>
+                    {(doc.originEntityName || doc.targetEntityName) && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-slate-500">{doc.targetEntityName ? 'Destination' : 'Entité'}</span>
+                        <span className="text-slate-300 truncate max-w-[180px]">{doc.targetEntityName || doc.originEntityName}</span>
                       </div>
                     )}
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span>Auteur :</span>
-                      <span className="text-slate-200 truncate max-w-[150px]">{doc.authorName}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-500">Montant</span>
+                      {typeof doc.amount === 'number' && doc.amount > 0
+                        ? <span className="font-mono font-bold text-emerald-400">{doc.amount.toLocaleString('fr-FR')} {doc.currency || 'USD'}</span>
+                        : <span className="text-slate-400 italic">{type.amount === 'aucun' ? 'Sans objet pour ce type' : 'Non renseigné'}</span>}
                     </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span>Date d'émission :</span>
-                      <span className="font-mono">{doc.createdAt}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-500">Émis le</span>
+                      <span className="font-mono text-slate-300">{doc.createdAt}</span>
                     </div>
                   </div>
 
-                  {/* Scellement électronique si signé */}
-                  {isSigned && doc.electronicSignature && (
-                    <div 
-                      onClick={() => setViewingCertificateDoc(doc)}
-                      className="p-2 rounded-lg bg-emerald-950/20 hover:bg-emerald-950/40 border border-emerald-500/20 hover:border-emerald-500/40 text-[10px] text-emerald-300 font-mono flex items-center justify-between gap-1.5 cursor-pointer transition group"
-                      title="Cliquer pour inspecter le certificat de scellement électronique et l'audit probant"
-                    >
-                      <span className="truncate">✓ Signé • {shortHash(doc.electronicSignature.certificateHash)}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 whitespace-nowrap group-hover:bg-emerald-500/30">
-                        Certificat
-                      </span>
+                  {/* Circuit */}
+                  {doc.workflow && doc.workflow.steps.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span className="font-bold uppercase tracking-wider">Circuit {doc.workflow.cycle > 1 ? `(cycle ${doc.workflow.cycle})` : ''}</span>
+                        <span className="font-mono">{summary.done}/{summary.total}</span>
+                      </div>
+                      <ApprovalChips steps={doc.workflow.steps} />
+                      {doc.status === 'en_revue' && step && (
+                        <p className={`text-[11px] ${canAct ? 'text-amber-300 font-semibold' : 'text-slate-400'}`}>
+                          {canAct ? `À vous : ${step.kind === 'signature' ? 'signature finale' : 'visa'} attendu.` : `En attente de ${waitingFor(step)}.`}
+                        </p>
+                      )}
+                      {doc.status === 'brouillon' && (
+                        <p className="text-[11px] text-slate-400">Circuit prévu — le document reste privé tant qu'il n'est pas soumis.</p>
+                      )}
                     </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 italic">Ancien document : circuit simplifié (une validation).</p>
+                  )}
+
+                  {rejection && doc.status === 'rejete' && (
+                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-300">
+                      <strong>Rejeté par {rejection.by}</strong> : « {rejection.reason} »
+                    </div>
+                  )}
+
+                  {isSigned && doc.electronicSignature && (
+                    <button
+                      onClick={() => setViewingCertificateDoc(doc)}
+                      className="w-full p-2 rounded-lg bg-emerald-950/20 hover:bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-300 font-mono flex items-center justify-between gap-1.5 transition"
+                      title="Inspecter le certificat de signature"
+                    >
+                      <span className="truncate">✓ Signé par {doc.electronicSignature.signedBy} • {shortHash(doc.electronicSignature.certificateHash)}</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30">Certificat</span>
+                    </button>
                   )}
                 </div>
 
-                {/* Boutons d'action contextuels du circuit de visa */}
+                {/* Actions selon le rôle et l'étape */}
                 <div className="space-y-2 pt-3 border-t border-slate-800">
-                  {/* Actions de signature / soumission selon rôle */}
-                  {canApprove && (
+                  {canAct && (
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => setSigningDoc(doc)}
-                        className="flex-1 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-xs shadow flex items-center justify-center gap-1.5 transition active:scale-95"
-                        title="Ouvrir le composant de signature électronique avec animation de vérification"
+                        onClick={() => openVisa(doc)}
+                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow flex items-center justify-center gap-1.5 transition active:scale-95"
                       >
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Viser & Signer (DG/RH)</span>
+                        {step?.kind === 'signature' ? <PenLine className="w-3.5 h-3.5" /> : <Stamp className="w-3.5 h-3.5" />}
+                        <span>{step?.kind === 'signature' ? 'Signer' : 'Viser'}</span>
                       </button>
                       <button
-                        onClick={() => setRejectModalDocId(doc.id)}
-                        className="px-2.5 py-1.5 rounded-xl border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 text-xs transition"
-                        title="Rejeter le document et demander une révision"
+                        onClick={() => { setRejectDoc(doc); setRejectReason(''); }}
+                        className="px-3 py-2 rounded-xl border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 text-xs font-semibold transition"
                       >
                         Rejeter
                       </button>
                     </div>
                   )}
 
-                  {isDraft && (
+                  {isAuthor && doc.status === 'brouillon' && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => onDocumentAction(doc.id, { type: 'submit' })}
+                        className="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-bold text-xs shadow flex items-center justify-center gap-1.5 transition active:scale-95"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Soumettre au circuit</span>
+                      </button>
+                      {canDeleteDocument(currentUser, doc) && (
+                        <button
+                          onClick={() => onDocumentAction(doc.id, { type: 'delete' })}
+                          title="Supprimer ce brouillon"
+                          className="p-2 rounded-xl border border-slate-700 text-slate-400 hover:text-rose-300 hover:border-rose-500/40 transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {isAuthor && doc.status === 'rejete' && (
                     <button
-                      onClick={() => handleSubmitForVisa(doc.id)}
-                      className="w-full py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-bold text-xs shadow flex items-center justify-center gap-1.5 transition active:scale-95"
+                      onClick={() => openFix(doc)}
+                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-bold text-xs shadow flex items-center justify-center gap-1.5 transition active:scale-95"
                     >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Transmettre au Circuit de Visa</span>
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Corriger et renvoyer</span>
                     </button>
                   )}
 
-                  {/* Consultation & Téléchargements */}
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setSelectedDoc(doc)}
@@ -608,41 +501,38 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                       <Eye className="w-3.5 h-3.5" />
                       <span>Consulter</span>
                     </button>
-
-                    {isSigned && (
+                    {doc.workflow && (
                       <button
-                        onClick={() => setViewingCertificateDoc(doc)}
-                        title="Inspecter le certificat électronique, l'empreinte SHA-256 et l'audit probant"
-                        className="p-1.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/30 transition active:scale-95"
+                        onClick={() => setHistoryDoc(doc)}
+                        title="Circuit détaillé et historique"
+                        className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
                       >
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <History className="w-3.5 h-3.5 text-amber-400" />
                       </button>
                     )}
-
                     <button
                       onClick={() => exportOfficialDocumentToPDF(doc, organization)}
-                      title="Télécharger le document certifié au format PDF A4"
-                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition active:scale-95"
+                      title="Télécharger en PDF A4"
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
                     >
                       <Download className="w-3.5 h-3.5 text-indigo-400" />
                     </button>
-
                     <button
                       onClick={() => exportOfficialDocumentToCSV(doc, organization.name)}
                       title="Exporter les métadonnées en CSV"
-                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition active:scale-95"
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
                     >
                       <FileText className="w-3.5 h-3.5 text-sky-400" />
                     </button>
                   </div>
                 </div>
-              </div>
+              </article>
             );
           })
         )}
       </div>
 
-      {/* 4. MODALE CONSULTATION PIÈCE OFFICIELLE AVEC EN-TÊTE ET FOOTER RHEMA */}
+      {/* CONSULTATION */}
       {selectedDoc && (
         <RhemaOfficialDocument
           document={selectedDoc}
@@ -651,12 +541,13 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
           entities={entities}
           onClose={() => setSelectedDoc(null)}
           onSignDocument={(docId, sigData) => {
-            handleSignDocument(docId, sigData);
+            const res = onDocumentAction(docId, { type: 'approve', signature: sigData });
+            if (res) setSelectedDoc(res);
           }}
         />
       )}
 
-      {/* 4.B MODALE SIGNATURE ÉLECTRONIQUE AVEC ANIMATION DE VÉRIFICATION */}
+      {/* SIGNATURE ÉLECTRONIQUE (dernière étape du circuit) */}
       {signingDoc && (
         <ElectronicSignatureModal
           document={signingDoc}
@@ -664,13 +555,120 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
           currentUser={currentUser}
           onClose={() => setSigningDoc(null)}
           onSignComplete={(docId, sigData) => {
-            handleSignDocument(docId, sigData);
+            onDocumentAction(docId, { type: 'approve', signature: sigData });
             setSigningDoc(null);
           }}
         />
       )}
 
-      {/* 4.C MODALE CERTIFICAT CRYPTOGRAPHIQUE & AUDIT PROBANT */}
+      {/* VISA (étape intermédiaire) */}
+      {visaDoc && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-3">
+            <h3 className="font-bold text-sm text-white flex items-center gap-2"><Stamp className="w-4 h-4 text-emerald-400" /> Viser « {visaDoc.title} »</h3>
+            <p className="text-xs text-slate-400">
+              Étape : <strong className="text-slate-200">{currentStep(visaDoc.workflow)?.label}</strong>.
+              Après votre visa, le document passe à l'étape suivante du circuit.
+            </p>
+            <textarea
+              rows={3}
+              placeholder="Observation (facultative) : réserve, précision, consigne…"
+              value={visaComment}
+              onChange={e => setVisaComment(e.target.value)}
+              className={inputCls}
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setVisaDoc(null)} className="px-3 py-1.5 bg-slate-800 rounded-lg text-xs text-slate-300">Annuler</button>
+              <button
+                onClick={() => { onDocumentAction(visaDoc.id, { type: 'approve', comment: visaComment.trim() || undefined }); setVisaDoc(null); }}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold"
+              >
+                Apposer mon visa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REJET (motif obligatoire) */}
+      {rejectDoc && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-3">
+            <h3 className="font-bold text-sm text-rose-400">Rejeter « {rejectDoc.title} »</h3>
+            <p className="text-xs text-slate-400">Le circuit s'arrête et l'émetteur est invité à corriger. Le motif est obligatoire et reste dans l'historique.</p>
+            <textarea
+              rows={3}
+              placeholder="Motif du rejet…"
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              className={inputCls}
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setRejectDoc(null)} className="px-3 py-1.5 bg-slate-800 rounded-lg text-xs text-slate-300">Annuler</button>
+              <button
+                disabled={!rejectReason.trim()}
+                onClick={() => { onDocumentAction(rejectDoc.id, { type: 'reject', comment: rejectReason.trim() }); setRejectDoc(null); }}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-lg text-xs font-bold"
+              >
+                Confirmer le rejet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CORRECTION APRÈS REJET */}
+      {fixDoc && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-lg w-full space-y-3 my-8">
+            <h3 className="font-bold text-sm text-white flex items-center gap-2"><RotateCcw className="w-4 h-4 text-amber-400" /> Corriger et renvoyer</h3>
+            {fixDoc.workflow?.rejection && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-300">
+                Motif du rejet ({fixDoc.workflow.rejection.by}) : « {fixDoc.workflow.rejection.reason} »
+              </div>
+            )}
+            <label className="block text-xs text-slate-300 font-medium">Intitulé
+              <input value={fixTitle} onChange={e => setFixTitle(e.target.value)} className={`${inputCls} mt-1`} />
+            </label>
+            <label className="block text-xs text-slate-300 font-medium">Corps du document
+              <textarea rows={6} value={fixDescription} onChange={e => setFixDescription(e.target.value)} className={`${inputCls} mt-1 leading-relaxed`} />
+            </label>
+            {documentType(fixDoc.subtype).amount !== 'aucun' && (
+              <label className="block text-xs text-slate-300 font-medium">
+                Montant ({fixDoc.currency || 'USD'}){documentType(fixDoc.subtype).amount === 'requis' ? ' *' : ' — facultatif'}
+                <input value={fixAmount} onChange={e => setFixAmount(e.target.value)} inputMode="decimal" className={`${inputCls} mt-1 font-mono`} />
+              </label>
+            )}
+            <p className="text-[11px] text-slate-400">Le circuit repart du début (nouveau cycle) ; l'historique du rejet est conservé.</p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setFixDoc(null)} className="px-3 py-1.5 bg-slate-800 rounded-lg text-xs text-slate-300">Annuler</button>
+              <button onClick={submitFix} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold">Renvoyer dans le circuit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CIRCUIT DÉTAILLÉ & HISTORIQUE */}
+      {historyDoc && historyDoc.workflow && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-lg w-full space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-sm text-white">{historyDoc.title}</h3>
+                <p className="text-[11px] text-slate-400">{historyDoc.referenceNumber} — {documentType(historyDoc.subtype).label}</p>
+              </div>
+              <button onClick={() => setHistoryDoc(null)} className="p-1 text-slate-400 hover:text-white" aria-label="Fermer"><X className="w-4 h-4" /></button>
+            </div>
+            <ApprovalTimeline steps={historyDoc.workflow.steps} />
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Historique</div>
+              <HistoryList entries={historyDoc.workflow.history || []} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CERTIFICAT */}
       {viewingCertificateDoc && viewingCertificateDoc.electronicSignature && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
           <div className="bg-slate-900 border border-emerald-500/40 w-full max-w-xl rounded-2xl shadow-2xl p-6 space-y-4 my-auto text-slate-100">
@@ -785,255 +783,148 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         </div>
       )}
 
-      {/* 5. MODALE PUBLIER UN NOUVEAU DOCUMENT */}
+      {/* PUBLICATION D'UN DOCUMENT */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4 my-8">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 max-w-3xl w-full shadow-2xl space-y-4 my-8">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <div className="flex items-center gap-2 text-white font-bold text-sm tracking-wide">
                 <FilePlus2 className="w-4 h-4 text-emerald-400" />
-                <span>Publier un Document dans le Workflow</span>
+                <span>Nouveau document</span>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white" aria-label="Fermer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-4 text-xs">
-              {/* Catégorie */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-300 font-medium block mb-1">Catégorie Opérationnelle</label>
-                  <select
-                    value={selectedCategory}
-                    onChange={e => handleCategoryChange(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="financier_comptable">Financier & Comptable</option>
-                    <option value="chaine_logistique_commerciale">Chaine Logistique & Stocks</option>
-                    <option value="ressources_humaines">Ressources Humaines</option>
-                  </select>
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 text-xs">
+              {/* Colonne formulaire */}
+              <div className="lg:col-span-3 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block text-slate-300 font-medium">Catégorie
+                    <select value={selectedCategory} onChange={e => handleCategoryChange(e.target.value as DocumentCategory)} className={`${inputCls} mt-1`}>
+                      {categories.map(c => <option key={c} value={c}>{DOCUMENT_CATEGORIES[c]}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-slate-300 font-medium">Type de document
+                    <select value={selectedSubtype} onChange={e => { setSelectedSubtype(e.target.value as DocumentSubtype); setIncludeAmount(false); }} className={`${inputCls} mt-1`}>
+                      {allowedTypes(selectedCategory).map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </label>
                 </div>
-                <div>
-                  <label className="text-slate-300 font-medium block mb-1">Type de Document</label>
-                  <select
-                    value={selectedSubtype}
-                    onChange={e => setSelectedSubtype(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    {subtypeOptions[selectedCategory].map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                {selectedType.hint && (
+                  <p className="text-[11px] text-slate-400 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />{selectedType.hint}</p>
+                )}
 
-              {formError && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{formError}</span>
-                </div>
-              )}
+                {formError && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
-              {/* Titre */}
-              <div>
-                <label className="text-slate-300 font-medium block mb-1">
-                  Intitulé du Document *
+                <label className="block text-slate-300 font-medium">Intitulé *
+                  <input value={title} onChange={e => setTitle(e.target.value)} placeholder="ex. Note relative au déploiement VSAT de Tenke" className={`${inputCls} mt-1`} />
                 </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="ex: Note d'Organisation du Déploiement VSAT Tenke..."
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
-                />
-              </div>
 
-              {/* CORPS DESCRIPTIF (OBLIGATOIRE) */}
-              <div className="space-y-1.5 p-3 rounded-xl bg-slate-950/80 border border-emerald-500/30">
-                <div className="flex items-center justify-between">
-                  <label className="text-slate-200 font-bold text-xs flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Corps Descriptif & Dispositif Officiel *</span>
-                  </label>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    OBLIGATOIRE
-                  </span>
-                </div>
-                
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Tout document officiel doit obligatoirement être motivé par un texte descriptif (contexte, clauses, directives ou stipulations).
-                </p>
-
-                {/* Modèles d'insertion rapide pour le corps descriptif */}
-                <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                  <span className="text-[10px] text-slate-500">Modèles rapides :</span>
-                  <button
-                    type="button"
-                    onClick={() => setDescription("Par la présente note, la Direction informe l'ensemble des départements et agents des dispositions opérationnelles applicables. L'exécution de cette directive prend effet immédiatement sous la supervision du Chef de Service concerné.")}
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-                  >
-                    Note de Service
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDescription("Le présent document atteste formellement l'accord intervenu entre les parties pour la réalisation conforme des prestations techniques et logistiques, selon les termes et délais convenus avec la Direction.")}
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-                  >
-                    Attestation & Accord
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDescription("Rapport circonstancié constatant l'état des opérations, la réception des livrables et la validation des étapes de déploiement réseau, sans réserve formulée à ce jour.")}
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-                  >
-                    Rapport Opérationnel
-                  </button>
-                </div>
-
-                <textarea
-                  rows={4}
-                  required
-                  minLength={10}
-                  placeholder="Saisissez ici le texte intégral, l'objet et le dispositif légal de la pièce..."
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 leading-relaxed mt-1"
-                />
-                
-                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                  <span>{description.trim().length} caractère(s)</span>
-                  <span className={description.trim().length >= 10 ? 'text-emerald-400' : 'text-amber-400'}>
-                    {description.trim().length >= 10 ? '✓ Corps textuel valide' : 'Minimum 10 caractères'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Statut initial & Entité cible */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-300 font-medium block mb-1">Entité Cible</label>
-                  <select
-                    value={selectedEntityId}
-                    onChange={e => setSelectedEntityId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="">-- Toute l'entreprise --</option>
-                    {entities.map(e => (
-                      <option key={e.id} value={e.id}>{e.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-slate-300 font-medium block mb-1">Circuit Initial</label>
-                  <select
-                    value={initialStatus}
-                    onChange={e => setInitialStatus(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="en_revue">Soumettre au Visa (En Revue)</option>
-                    <option value="brouillon">Enregistrer comme Brouillon</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* SECTION MONTANT FINANCIER (FACULTATIF / SANS OBLIGATION) */}
-              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={includeFinancialAmount}
-                      onChange={e => setIncludeFinancialAmount(e.target.checked)}
-                      className="rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 bg-slate-900"
-                    />
-                    <span className="text-xs font-semibold text-slate-300">
-                      Ce document comporte une incidence financière (prix ou montant)
-                    </span>
-                  </label>
-                  <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
-                    FACULTATIF
-                  </span>
-                </div>
-
-                {includeFinancialAmount ? (
-                  <div className="grid grid-cols-3 gap-3 pt-2 border-t border-slate-800/80 animate-in fade-in">
-                    <div className="col-span-2">
-                      <label className="text-slate-400 text-[11px] block mb-1">Montant ou Prix engagé</label>
-                      <input
-                        type="text"
-                        placeholder="ex: 15000"
-                        value={amount}
-                        onChange={e => setAmount(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400 text-[11px] block mb-1">Devise</label>
-                      <select
-                        value={currency}
-                        onChange={e => setCurrency(e.target.value as any)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
-                      >
-                        <option value="USD">USD ($)</option>
-                        <option value="CDF">CDF (FC)</option>
-                      </select>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-slate-300 font-medium">Corps du document *</span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {TEMPLATES.map(t => (
+                        <button key={t.label} type="button" onClick={() => setDescription(t.text)} className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                          {t.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
+                  <textarea rows={6} value={description} onChange={e => setDescription(e.target.value)} placeholder="Objet, contexte, dispositions, clauses…" className={`${inputCls} leading-relaxed`} />
+                  <div className="text-[10px] text-slate-500 text-right font-mono">{description.trim().length} caractère(s)</div>
+                </div>
+
+                {/* Diffusion */}
+                {!selectedType.confidential ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="block text-slate-300 font-medium">Diffusion une fois validé
+                      <select value={audience} onChange={e => setAudience(e.target.value as typeof audience)} className={`${inputCls} mt-1`}>
+                        <option value="perimetre">Mon entité / une entité ciblée</option>
+                        {!isAgent && <option value="public">Toute l'entreprise</option>}
+                        {!isAgent && <option value="direction">Cadres dirigeants uniquement</option>}
+                      </select>
+                    </label>
+                    {audience === 'perimetre' && (
+                      <label className="block text-slate-300 font-medium">Entité destinataire
+                        <select value={targetEntityId} onChange={e => setTargetEntityId(e.target.value)} className={`${inputCls} mt-1`}>
+                          <option value="">— Mon entité de rattachement —</option>
+                          {scopeEntities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                        </select>
+                      </label>
+                    )}
+                  </div>
                 ) : (
-                  <p className="text-[11px] text-slate-500 italic pt-1">
-                    Sans obligation de montant : le document sera émis comme pièce administrative, juridique ou RH sans incidence financière.
+                  <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5">
+                    Document confidentiel : visible uniquement par le circuit, le destinataire et la Direction.
                   </p>
                 )}
+
+                {/* Montant selon le type */}
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-300">Montant</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                      amountRule === 'requis' ? 'bg-amber-500/20 text-amber-300' : amountRule === 'facultatif' ? 'bg-slate-800 text-slate-400' : 'bg-slate-800 text-slate-500'
+                    }`}>
+                      {amountRule === 'requis' ? 'OBLIGATOIRE' : amountRule === 'facultatif' ? 'FACULTATIF' : 'SANS OBJET'}
+                    </span>
+                  </div>
+                  {amountRule === 'aucun' && <p className="text-[11px] text-slate-500 italic">Ce type de document ne comporte pas de prix ni de montant.</p>}
+                  {amountRule === 'facultatif' && (
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-300">
+                      <input type="checkbox" checked={includeAmount} onChange={e => setIncludeAmount(e.target.checked)} className="rounded border-slate-700 bg-slate-900" />
+                      Mentionner un montant sur ce document
+                    </label>
+                  )}
+                  {(amountRule === 'requis' || (amountRule === 'facultatif' && includeAmount)) && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="ex. 15000" className={`${inputCls} col-span-2 font-mono`} />
+                      <select value={currency} onChange={e => setCurrency(e.target.value as 'USD' | 'CDF')} className={`${inputCls} font-mono`}>
+                        <option value="USD">USD</option>
+                        <option value="CDF">CDF</option>
+                      </select>
+                    </div>
+                  )}
+                  {selectedType.dgAbove && (
+                    <p className="text-[10px] text-slate-500">Au-delà de {selectedType.dgAbove.toLocaleString('fr-FR')} USD, la Direction Générale est ajoutée au circuit.</p>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition active:scale-95 flex items-center gap-1.5"
-                >
-                  <FilePlus2 className="w-4 h-4" />
-                  <span>Publier dans le Circuit</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              {/* Colonne circuit */}
+              <aside className="lg:col-span-2 space-y-3">
+                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3">
+                  <ApprovalTimeline steps={previewChain} title="Circuit qui sera suivi" />
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Calculé d'après votre poste ({currentUser.roleTitle}). Un poste vacant est remplacé par le responsable au-dessus.
+                    Vous ne pouvez pas viser votre propre document.
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                  <div className="font-bold text-slate-300 uppercase tracking-wider text-[10px]">Qui le verra, et quand</div>
+                  <p>• Brouillon : vous seul.</p>
+                  <p>• Dans le circuit : vous, les valideurs et la hiérarchie concernée.</p>
+                  <p>• Validé : les destinataires choisis ci-contre.</p>
+                </div>
+              </aside>
+            </div>
 
-      {/* 6. MODALE REJET DOCUMENT */}
-      {rejectModalDocId && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
-            <h3 className="font-bold text-sm text-red-400">Motif de Révision ou de Rejet</h3>
-            <textarea
-              rows={3}
-              placeholder="Précisez pourquoi la pièce est rejetée..."
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white"
-            />
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setRejectModalDocId(null)}
-                className="px-3 py-1.5 bg-slate-800 rounded-lg text-xs text-slate-300"
-              >
-                Annuler
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white">Annuler</button>
+              <button type="button" onClick={() => handleCreate(false)} className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
+                Enregistrer en brouillon
               </button>
-              <button
-                onClick={handleRejectDocument}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold"
-              >
-                Confirmer le Rejet
+              <button type="button" onClick={() => handleCreate(true)} className="px-5 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition active:scale-95 flex items-center justify-center gap-1.5">
+                <Send className="w-4 h-4" />
+                <span>Soumettre au circuit</span>
               </button>
             </div>
           </div>

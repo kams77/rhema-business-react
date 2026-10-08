@@ -207,6 +207,19 @@ export const initialEntities: HierarchicalEntity[] = [
     managerRole: 'chef_service',
     description: 'Missions d\'installation sur sites miniers (Kolwezi, Tenke Fungurume, Lubumbashi) et téléassistance.',
     agentCount: 9,
+  },
+  {
+    id: 'srv-hubs',
+    name: 'Service Hubs Provinciaux & Approvisionnements',
+    code: 'SRV-HUB',
+    level: 'service',
+    parentId: 'dir-log',
+    organizationId: 'org-1',
+    managerName: 'M. Dieudonné Bofata',
+    managerEmail: 'hubs.log@rhemabusiness.com',
+    managerRole: 'chef_service',
+    description: 'Réception, stockage, transferts inter-hubs et approvisionnement des sites.',
+    agentCount: 6,
   }
 ];
 
@@ -423,6 +436,7 @@ export const initialUsers: User[] = [
     organizationId: 'org-1',
     departementId: 'dept-ops',
     directionId: 'dir-log',
+    serviceId: 'srv-hubs',
     status: 'actif',
     failedAccessAttempts: 0,
     canCreateSubAgents: true,
@@ -491,6 +505,28 @@ export const initialUsers: User[] = [
     canCreateSubAgents: false,
     phone: '+243 81 666 4433',
     lastLogin: 'Il y a 3 jours'
+  },
+
+  // --- SERVICE HUBS & APPROVISIONNEMENTS (agent exécutant logistique) ---
+  {
+    id: 'user-agent-mag',
+    name: 'Grâce Mbuyi',
+    email: 'g.mbuyi@rhemabusiness.com',
+    password: 'rhema2026',
+    matricule: 'MAT-016-MAG',
+    employeeCode: 'RH-2026-016',
+    role: 'agent',
+    roleTitle: 'Magasinière & Agent d\'Approvisionnement',
+    departmentName: 'Service Hubs Provinciaux & Approvisionnements',
+    organizationId: 'org-1',
+    departementId: 'dept-ops',
+    directionId: 'dir-log',
+    serviceId: 'srv-hubs',
+    status: 'actif',
+    failedAccessAttempts: 0,
+    canCreateSubAgents: false,
+    phone: '+243 81 444 2211',
+    lastLogin: 'Aujourd\'hui à 07:50'
   },
 
   // --- SERVICE FACTURATION ---
@@ -933,6 +969,47 @@ export const initialDisciplinaryActions: DisciplinaryAction[] = [
 // =========================================================================
 export const initialDocuments: DocumentItem[] = [
   {
+    id: 'doc-nf-tenke',
+    title: 'Note de frais — mission de déploiement VSAT à Tenke Fungurume',
+    referenceNumber: 'NF-2026-001',
+    category: 'financier_comptable',
+    subtype: 'note_frais',
+    organizationId: 'org-1',
+    authorId: 'user-agent-tech',
+    authorName: 'Christian Kalala',
+    authorRole: 'agent',
+    authorEntity: 'Service Déploiement Terrain & Liaisons VSAT',
+    originEntityId: 'srv-vsat-field',
+    originEntityName: 'Service Déploiement Terrain & Liaisons VSAT',
+    targetEntityId: 'srv-vsat-field',
+    targetEntityName: 'Service Déploiement Terrain & Liaisons VSAT',
+    createdAt: '2026-10-07',
+    status: 'en_revue',
+    size: '—',
+    fileType: 'PDF',
+    amount: 450,
+    currency: 'USD',
+    description: "Frais de mission du 6 au 8 octobre 2026 : transport Lubumbashi–Tenke (180 USD), hébergement 2 nuits (220 USD), restauration (50 USD). Justificatifs remis au chef de service.",
+    workflow: {
+      cycle: 1,
+      submittedAt: '2026-10-07T17:30:00.000Z',
+      steps: [
+        { id: 'etp-demo-1', kind: 'visa', approverRole: 'chef_service', entityId: 'srv-vsat-field', entityName: 'Service Déploiement Terrain & Liaisons VSAT', expectedHolderName: 'M. Fabrice Mukendi', label: 'Chef de service — Service Déploiement Terrain & Liaisons VSAT', status: 'en_attente' },
+        { id: 'etp-demo-2', kind: 'signature', approverRole: 'directeur', entityId: 'dir-finance', entityName: 'Direction Comptabilité & Trésorerie', expectedHolderName: 'Mme Sophie Traoré', label: 'Directeur — Direction Comptabilité & Trésorerie', status: 'en_attente' }
+      ],
+      history: [
+        { id: 'hist-demo-1', at: '2026-10-07T17:30:00.000Z', actorId: 'user-agent-tech', actorName: 'Christian Kalala', action: 'soumission', label: 'Soumis au circuit de validation' }
+      ]
+    },
+    allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+    permissions: {
+      viewRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'],
+      editRoles: ['agent'],
+      validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service'],
+      signRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service']
+    }
+  },
+  {
     id: 'doc-1',
     title: 'Facture Client FC-2026-089 - Tenke Fungurume Mining (TFM)',
     referenceNumber: 'FC-2026-089',
@@ -1284,6 +1361,85 @@ export const initialTasks: TaskItem[] = [
       { id: 's3', label: 'Signature PV de recette client TFM', completed: true }
     ],
     signatureRequired: false
+  },
+  {
+    id: 'tsk-4',
+    reference: 'TSK-2026-004',
+    title: 'Installer la station VSAT du site minier de Tenke Fungurume',
+    type: 'deploiement',
+    description: "Installation complète d'une station Ku-Band (parabole 2,4 m, modem iDirect) pour la liaison du camp de base. Contact sur site : M. Ilunga (chef de camp).",
+    organizationId: 'org-1',
+    creatorId: 'user-chef-vsat',
+    creatorName: 'M. Fabrice Mukendi',
+    creatorRole: 'chef_service',
+    assignedEntityId: 'srv-vsat-field',
+    assignedEntityName: 'Service Déploiement Terrain & Liaisons VSAT',
+    assignedIntervenants: [
+      { userId: 'user-agent-tech', userName: 'Christian Kalala', userRole: 'agent', userRoleTitle: 'Ingénieur Déploiement VSAT', roleType: 'executant' },
+      { userId: 'user-agent-field', userName: 'Marc Tshimanga', userRole: 'agent', userRoleTitle: 'Technicien Réseau & Câblage', roleType: 'contributeur' },
+      { userId: 'user-chef-vsat', userName: 'M. Fabrice Mukendi', userRole: 'chef_service', userRoleTitle: 'Chef Service Déploiement VSAT', roleType: 'validateur' }
+    ],
+    priority: 'haute',
+    status: 'en_cours',
+    startDate: '2026-10-06',
+    dueDate: '2026-10-14',
+    createdAt: '2026-10-05',
+    estimatedHours: 24,
+    spentHours: 6,
+    site: 'Site minier Tenke Fungurume (Lualaba)',
+    deliverable: 'Station opérationnelle et PV de réception signé par le client',
+    acceptanceCriteria: 'C/N ≥ 13,5 dB pendant 30 min ; photos de l\'installation ; numéros de série relevés',
+    tags: ['VSAT', 'Tenke', 'client minier'],
+    steps: [
+      { id: 's1', label: 'Préparer le kit et vérifier les numéros de série', completed: true, completedBy: 'Christian Kalala', assignedToUserId: 'user-agent-tech', assignedToUserName: 'Christian Kalala' },
+      { id: 's2', label: 'Poser la parabole et tirer le câble coaxial', completed: false, assignedToUserId: 'user-agent-field', assignedToUserName: 'Marc Tshimanga' },
+      { id: 's3', label: 'Aligner et mesurer le rapport C/N', completed: false, assignedToUserId: 'user-agent-tech', assignedToUserName: 'Christian Kalala' },
+      { id: 's4', label: 'Faire signer le PV de réception par le client', completed: false, assignedToUserId: 'user-agent-tech', assignedToUserName: 'Christian Kalala' }
+    ],
+    signatureRequired: true,
+    comments: [
+      { id: 'c1', authorId: 'user-chef-vsat', authorName: 'M. Fabrice Mukendi', at: '2026-10-06T08:10:00.000Z', text: 'Prévoir les EPI : accès au site seulement avec casque et badge du client.' }
+    ],
+    history: [
+      { id: 'h1', at: '2026-10-05T16:00:00.000Z', actorId: 'user-chef-vsat', actorName: 'M. Fabrice Mukendi', action: 'creation', label: 'Tâche créée et assignée' },
+      { id: 'h2', at: '2026-10-06T07:45:00.000Z', actorId: 'user-agent-tech', actorName: 'Christian Kalala', action: 'etape', label: 'Étape terminée : Préparer le kit et vérifier les numéros de série' }
+    ]
+  },
+  {
+    id: 'tsk-5',
+    reference: 'TSK-2026-005',
+    title: "Inventaire tournant du Hub N'sele (modems et LNB)",
+    type: 'logistique',
+    description: 'Comptage physique des modems iDirect et des LNB, rapprochement avec le stock théorique et relevé des écarts.',
+    organizationId: 'org-1',
+    creatorId: 'user-chef-log',
+    creatorName: 'M. Dieudonné Bofata',
+    creatorRole: 'chef_service',
+    assignedEntityId: 'srv-hubs',
+    assignedEntityName: 'Service Hubs Provinciaux & Approvisionnements',
+    assignedIntervenants: [
+      { userId: 'user-agent-mag', userName: 'Grâce Mbuyi', userRole: 'agent', userRoleTitle: 'Magasinière', roleType: 'executant' }
+    ],
+    priority: 'normale',
+    status: 'a_faire',
+    startDate: '2026-10-08',
+    dueDate: '2026-10-10',
+    createdAt: '2026-10-07',
+    estimatedHours: 6,
+    spentHours: 0,
+    site: "Hub N'sele — Kinshasa",
+    deliverable: "Fiche d'inventaire signée et liste des écarts",
+    acceptanceCriteria: 'Écart toléré : 0 pour les équipements sérialisés',
+    steps: [
+      { id: 's1', label: 'Compter les modems iDirect par travée', completed: false, assignedToUserId: 'user-agent-mag', assignedToUserName: 'Grâce Mbuyi' },
+      { id: 's2', label: 'Scanner les numéros de série', completed: false, assignedToUserId: 'user-agent-mag', assignedToUserName: 'Grâce Mbuyi' },
+      { id: 's3', label: 'Relever les écarts avec le stock théorique', completed: false, assignedToUserId: 'user-agent-mag', assignedToUserName: 'Grâce Mbuyi' }
+    ],
+    signatureRequired: false,
+    comments: [],
+    history: [
+      { id: 'h1', at: '2026-10-07T15:00:00.000Z', actorId: 'user-chef-log', actorName: 'M. Dieudonné Bofata', action: 'creation', label: 'Tâche créée et assignée' }
+    ]
   }
 ];
 
