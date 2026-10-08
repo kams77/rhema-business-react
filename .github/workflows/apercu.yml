@@ -13,9 +13,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - run: npm run build
+      - run: npx vite build --base=./
         env:
           VITE_DEMO_MODE: 'true'
+          VITE_APP_VERSION: 'Test1'
       - run: |
           cd dist
           git init -q -b apercu-dist
