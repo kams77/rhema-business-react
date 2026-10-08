@@ -39,6 +39,8 @@ interface SidebarProps {
   onTabChange: (tab: ActiveTab) => void;
   currentUser?: User;
   unreadAlertsCount?: number;
+  /** Éléments qui attendent l'utilisateur (visas de documents, tâches à faire / à valider). */
+  pendingCounts?: { documents?: number; tasks?: number };
   /** Mobile : le menu s'ouvre en tiroir par-dessus le contenu. */
   isMobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -49,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
   currentUser,
   unreadAlertsCount = 0,
+  pendingCounts = {},
   isMobileOpen = false,
   onMobileClose = () => {},
 }) => {
@@ -88,13 +91,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'documents',
       label: 'Documents & Workflows',
       icon: <Files className="w-4 h-4" />,
-      badge: 'Circuit de visa',
-      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      badge: pendingCounts.documents ? `${pendingCounts.documents} à viser` : 'Circuit de visa',
+      badgeColor: pendingCounts.documents ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 font-bold' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
     },
     {
       id: 'workflows',
       label: 'Tâches & Approbations',
       icon: <Workflow className="w-4 h-4" />,
+      badge: pendingCounts.tasks || undefined,
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold',
     },
     {
       id: 'logistics',

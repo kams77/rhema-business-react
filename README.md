@@ -40,6 +40,26 @@ TypeScript, compilation et image Docker.
 | Import en masse        | Employés, contrats et historiques de paie par CSV                        |
 | Sécurité & audit       | Alertes d'intrusion, verrouillage, journal horodaté exportable (PDF/CSV) |
 
+## Circuit de validation (documents, tâches, logistique)
+
+Règles communes à l'application et au serveur : `shared/workflow.mjs` (tests : `npm run test:circuit`).
+
+- **Chaque type de document a son circuit** et sa règle de montant (*aucun*, *facultatif*, *obligatoire*).
+  Exemples : note de service → chef de service → directeur ; demande d'achat → hiérarchie → Finance
+  (+ DG au-delà de 5 000 USD) ; bon de commande → chef de service → directeur → Finance (+ DG au-delà
+  de 10 000 USD) ; demande de congé → hiérarchie → RH.
+- Le circuit part du **poste de l'émetteur** ; un poste vacant remonte au responsable au-dessus ;
+  personne ne vise son propre document ; la DG signe seule ses documents.
+- Les visas se donnent **un par un, dans l'ordre** ; la dernière étape est la signature électronique ;
+  un rejet exige un motif, l'émetteur corrige puis renvoie (nouveau cycle, historique conservé).
+- **Qui voit quoi et quand** : brouillon = son émetteur ; en circuit = émetteur, valideurs et hiérarchie ;
+  validé = destinataires prévus. Un agent ne voit que ses tâches, ses documents et les documents
+  validés de son service.
+- **Tâches** : exécutants, contributeurs, responsable et valideurs ; validation dans l'ordre des valideurs
+  (à défaut, le responsable hiérarchique de l'entité).
+- **Logistique** : chaque bon passe par son circuit ; le stock ne bouge qu'après validation ; des tâches
+  de suivi sont créées automatiquement et soumises à validation une fois l'événement constaté.
+
 ## Mode démonstration et mode production
 
 Le comportement de la connexion dépend de la variable `VITE_DEMO_MODE` (fichier `.env`).

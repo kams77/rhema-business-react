@@ -234,4 +234,12 @@ test("Tâche : l'exécutant peut terminer et soumettre, jamais clôturer lui-mê
   assert.equal(canWriteTaskChange(agentVsat, task, forgedApproval, entities), false);
 });
 
+test("On ne confie pas l'exécution d'une tâche à un supérieur (il peut valider)", () => {
+  const base = { ...task, id: 't9', creatorId: chefVsat.id, source: undefined };
+  const toBoss = { ...base, assignedIntervenants: [{ userId: dirVsat.id, userRole: 'directeur', roleType: 'executant' }] };
+  assert.equal(canWriteTaskChange(chefVsat, undefined, toBoss, entities), false);
+  const bossValidates = { ...base, assignedIntervenants: [{ userId: agentVsat.id, userRole: 'agent', roleType: 'executant' }, { userId: dirVsat.id, userRole: 'directeur', roleType: 'validateur' }] };
+  assert.equal(canWriteTaskChange(chefVsat, undefined, bossValidates, entities), true);
+});
+
 console.log(`\n${passed} tests réussis.`);
