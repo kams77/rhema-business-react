@@ -17,7 +17,7 @@ import {
   Menu,
   X
 } from 'lucide-react';
-import { getRoleBadgeClass } from '../utils/rbac';
+import { getRoleBadgeClass, isSecurityStaff } from '../utils/rbac';
 import { DEMO_MODE } from '../config';
 
 interface NavbarProps {
@@ -260,7 +260,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           </button>
 
-          {/* Bouton Centre Sécurité */}
+          {/* Bouton Centre Sécurité : réservé à la Direction (DG, chefs de département, directeurs) */}
+          {currentUser && isSecurityStaff(currentUser) && (
           <button
             onClick={onOpenSecurity}
             className={`relative flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition ${
@@ -277,6 +278,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </span>
             )}
           </button>
+          )}
 
           {/* Sélecteur de Rôle / Utilisateur */}
           <div className="relative">

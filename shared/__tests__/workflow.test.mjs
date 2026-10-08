@@ -218,4 +218,20 @@ test("Tâche (serveur) : l'exécutant avance mais ne valide pas ; un agent ne cr
   assert.equal(canWriteTaskChange(agentVsat, undefined, forSelf, entities), true);
 });
 
+test("Tâche logistique d'un agent : il peut nommer son supérieur comme responsable", () => {
+  const t = { ...task, id: 't4', creatorId: magasinier.id, assignedEntityId: 'srv-hubs', source: { module: 'logistique', kind: 'bon_livraison', refId: 'bl1' },
+    assignedIntervenants: [{ userId: magasinier.id, roleType: 'executant' }, { userId: chefHubs.id, userRole: 'chef_service', roleType: 'responsable' }] };
+  assert.equal(canWriteTaskChange(magasinier, undefined, t, entities), true);
+  // Le responsable valide la tâche une fois terminée.
+  assert.deepEqual(buildTaskApprovalChain(t, entities, users).map(s => s.approverRole + ':' + s.entityId), ['chef_service:srv-hubs']);
+});
+
+test("Tâche : l'exécutant peut terminer et soumettre, jamais clôturer lui-même", () => {
+  const steps = buildTaskApprovalChain(task, entities, users);
+  const submitted = { ...task, steps: task.steps.map(s => ({ ...s, completed: true })), status: 'en_attente_approbation', approval: { cycle: 1, steps } };
+  assert.equal(canWriteTaskChange(agentVsat, task, submitted, entities), true);
+  const forgedApproval = { ...submitted, approval: { cycle: 1, steps: steps.map(s => ({ ...s, status: 'approuve', actorId: agentVsat.id })) } };
+  assert.equal(canWriteTaskChange(agentVsat, task, forgedApproval, entities), false);
+});
+
 console.log(`\n${passed} tests réussis.`);

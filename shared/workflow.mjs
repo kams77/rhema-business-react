@@ -538,7 +538,8 @@ export function canTickTaskStep(u, t, step) {
  */
 export function buildTaskApprovalChain(t, entities, users) {
   const validators = (t.assignedIntervenants || []).filter(i => i.roleType === 'validateur');
-  const executorIds = new Set((t.assignedIntervenants || []).filter(i => i.roleType !== 'validateur').map(i => i.userId));
+  // Ceux qui exécutent ne valident pas leur propre travail (le responsable, lui, peut valider).
+  const executorIds = new Set((t.assignedIntervenants || []).filter(i => i.roleType === 'executant' || i.roleType === 'contributeur').map(i => i.userId));
   const steps = validators
     .filter(v => !executorIds.has(v.userId))
     .map(v => ({
@@ -586,7 +587,8 @@ export function canWriteTaskChange(u, before, after, entities) {
     if (u.role === 'dg') return true;
     if (after.creatorId !== u.id) return false;
     if (u.role === 'agent') {
-      const others = (after.assignedIntervenants || []).filter(i => i.userId !== u.id && i.roleType !== 'validateur');
+      // Un agent ne charge personne d'autre d'exécuter : il peut seulement nommer qui suit / valide.
+      const others = (after.assignedIntervenants || []).filter(i => i.userId !== u.id && (i.roleType === 'executant' || i.roleType === 'contributeur'));
       return others.length === 0 && (!after.assignedEntityId || after.assignedEntityId === u.serviceId || isEntityInUserScope(u, after.assignedEntityId, entities));
     }
     return !after.assignedEntityId || isEntityInUserScope(u, after.assignedEntityId, entities) || !!after.source;
