@@ -1,0 +1,26 @@
+name: Apercu temporaire
+on:
+  push:
+    branches: [apercu-temporaire]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+        env:
+          VITE_DEMO_MODE: 'true'
+      - run: |
+          cd dist
+          git init -q -b apercu-dist
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -q -m "build apercu"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" apercu-dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
