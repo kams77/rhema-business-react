@@ -1489,7 +1489,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Émission Invitation Inter-Entités',
       category: 'security',
-      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
+      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé à 10 chiffres (••••••••${invitation.authKey10Digits.slice(-2)}). Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
     });
   };
 
@@ -1499,7 +1499,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Connexion Inter-Entités par Clé Unique',
       category: 'auth',
-      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${invitation.authKey10Digits}.`,
+      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via sa clé à 10 chiffres.`,
     });
   };
 

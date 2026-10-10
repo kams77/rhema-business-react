@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Données du NAS (ne jamais les envoyer sur GitHub)
+mysql/
+sauvegardes/
+*.sql.gz

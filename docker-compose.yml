@@ -1,10 +1,14 @@
 # RHEMA Business — application + serveur + base MariaDB.
-# Synology : Container Manager → Projet → Créer → choisir ce dossier (voir docs/SYNOLOGY.md).
+# Synology : Container Manager → Projet → Créer → choisir ce dossier (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
 # Ailleurs : `docker compose up -d --build`.
 #
 # ⚠️ AVANT LE PREMIER DÉMARRAGE, remplacez les trois valeurs « CHANGEZ_MOI » ci-dessous
 #    (ou définissez-les dans un fichier .env placé à côté de ce fichier).
-#    Le serveur refuse de démarrer tant qu'elles n'ont pas été changées.
+#    Le serveur refuse de démarrer tant qu'elles n'ont pas été changées
+#    (et le code d'installation doit faire au moins 8 caractères).
+#
+# 🔒 L'application n'écoute que sur le NAS lui-même (127.0.0.1:8080) : on y accède
+#    UNIQUEMENT en HTTPS, par le proxy inversé de DSM (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
 
 services:
   db:
@@ -33,6 +37,8 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --max-allowed-packet=64M
+    security_opt:
+      - no-new-privileges:true
     volumes:
       # Les données restent dans ce dossier du NAS (inclus dans vos sauvegardes Hyper Backup).
       - ./mysql:/var/lib/mysql
@@ -61,7 +67,31 @@ services:
       # Code demandé une seule fois, lors de l'installation (écran « Installation du serveur »).
       SETUP_CODE: ${SETUP_CODE:-CHANGEZ_MOI_code_installation}
       TRUST_PROXY: "true"
+      # Seul le réseau interne de ce projet (où arrive le proxy inversé de DSM) peut transmettre
+      # l'adresse réelle des postes (X-Forwarded-For). Doit correspondre au sous-réseau ci-dessous.
+      TRUSTED_PROXIES: "loopback,172.29.77.0/24"
+      # Cookie de session envoyé seulement en HTTPS (le proxy inversé de DSM fournit le HTTPS).
+      COOKIE_SECURE: "true"
       TZ: Africa/Kinshasa
+    # Durcissement : système de fichiers en lecture seule, aucun gain de privilèges possible.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # Le serveur n'a besoin d'aucun privilège système (port 8080, utilisateur « node »).
+    cap_drop:
+      - ALL
     ports:
-      # Port du NAS : http://IP-DU-NAS:8080 (à placer derrière le reverse proxy HTTPS de DSM).
-      - "8080:8080"
+      # Accessible seulement depuis le NAS (proxy inversé DSM → http://localhost:8080).
+      # Ne remplacez par "8080:8080" que pour un essai ponctuel sur le réseau local.
+      - "127.0.0.1:8080:8080"
+
+# Réseau interne du projet, à adresse fixe : le serveur sait ainsi que les en-têtes du proxy
+# inversé de DSM sont authentiques. Si ce sous-réseau est déjà utilisé sur votre NAS, choisissez-en
+# un autre (172.16.0.0 à 172.31.255.255) et reportez-le dans TRUSTED_PROXIES.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.77.0/24

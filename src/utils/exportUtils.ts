@@ -56,6 +56,27 @@ export interface PayslipExportData {
 const orNA = (v?: string) => (v && v.trim() ? v : 'Non renseigné');
 
 /**
+ * Cellule CSV sûre : guillemets doublés et neutralisation des formules.
+ * Un texte saisi par un utilisateur et commençant par = + - @ (ou une tabulation) serait exécuté
+ * comme une formule par Excel / LibreOffice à l'ouverture du fichier (injection de formule) :
+ * on le préfixe d'une apostrophe. Les nombres restent des nombres.
+ */
+export function csvCell(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  let s = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/** Ligne CSV (séparateur « ; » par défaut, celui d'Excel en français). */
+export const csvRow = (cells: unknown[], sep = ';') => cells.map(csvCell).join(sep);
+
+/** Télécharge un fichier CSV (UTF-8 avec BOM) à partir de ses lignes. */
+export function downloadCsv(lines: string[], filename: string) {
+  downloadBlob(lines.join('\r\n'), filename);
+}
+
+/**
  * Téléchargement helper pour fichiers texte / CSV avec encodage UTF-8 BOM
  * Garantit l'affichage correct des caractères accentués dans Excel & LibreOffice
  */
@@ -77,21 +98,9 @@ function downloadBlob(content: string, filename: string, mimeType = 'text/csv;ch
 
 export function exportAuditLogsToCSV(logs: AuditLog[], filename?: string) {
   const headers = ['ID', 'Horodatage', 'Opérateur', 'Rôle', 'Action', 'Catégorie', 'Détails', 'Adresse IP', 'Empreinte Cryptographique SHA-256'];
-  const rows = logs.map(l => [
-    `"${l.id}"`,
-    `"${l.timestamp}"`,
-    `"${l.userName.replace(/"/g, '""')}"`,
-    `"${l.userRole.replace(/"/g, '""')}"`,
-    `"${l.action.replace(/"/g, '""')}"`,
-    `"${l.category}"`,
-    `"${l.details.replace(/"/g, '""')}"`,
-    `"${l.ip}"`,
-    `"${l.hash}"`
-  ]);
-
-  const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\r\n');
+  const rows = logs.map(l => csvRow([l.id, l.timestamp, l.userName, l.userRole, l.action, l.category, l.details, l.ip, l.hash]));
   const targetName = filename || `journal_audit_rhema_${new Date().toISOString().slice(0, 10)}.csv`;
-  downloadBlob(csv, targetName);
+  downloadCsv([csvRow(headers), ...rows], targetName);
 }
 
 export function exportAuditLogsToPDF(
@@ -578,8 +587,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 }
 
 export function exportPayslipToCSV(data: PayslipExportData, filename?: string) {
-  const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const row = (...cells: unknown[]) => cells.map(q).join(';');
+  const row = (...cells: unknown[]) => csvRow(cells);
   const lines = [
     row('ORGANISATION', data.orgName),
     row('RCCM', orNA(data.rccm)),
@@ -637,7 +645,7 @@ export interface PayrollBookRow {
 }
 
 export function exportPayrollRunToCSV(run: PayrollRunPeriod, rows: PayrollBookRow[], filename?: string) {
-  const q = (v: unknown) => (typeof v === 'number' ? String(v) : `"${String(v ?? '').replace(/"/g, '""')}"`);
+  const q = csvCell;
   const headers = [
     'Période', 'Matricule', 'Nom & Postnom', 'Fonction', 'Type Contrat', 'Devise', 'Salaire Base',
     'Ancienneté', 'Primes & indemnités', 'Heures sup.', 'Salaire Brut', 'Cotisations salariales',
@@ -747,23 +755,23 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
 
 export function exportOfficialDocumentToCSV(docItem: DocumentItem, orgName = 'RHEMA BUSINESS RDC') {
   const lines = [
-    `ORGANISATION;${orgName}`,
-    `TITRE DOCUMENT;${docItem.title}`,
-    `NUMÉRO DE RÉFÉRENCE;${docItem.referenceNumber}`,
-    `CATÉGORIE;${docItem.category}`,
-    `SOUS-TYPE;${docItem.subtype}`,
-    `AUTEUR;${docItem.authorName} (${docItem.authorEntity})`,
-    `DATE DE CRÉATION;${docItem.createdAt}`,
-    `STATUT;${docItem.status}`,
-    `MONTANT ASSOCIÉ;${docItem.amount ? `${docItem.amount} ${docItem.currency || 'USD'}` : 'N/A'}`,
-    `DESCRIPTION;${docItem.description || ''}`,
-    `SIGNATAIRE ÉLECTRONIQUE;${docItem.electronicSignature?.signedBy || 'En attente'}`,
-    `HORODATAGE SIGNATURE;${docItem.electronicSignature?.signedAt || 'N/A'}`,
-    `EMPREINTE SHA-256;${docItem.electronicSignature?.certificateHash || 'Non signé'}`
-  ];
+    ['ORGANISATION', orgName],
+    ['TITRE DOCUMENT', docItem.title],
+    ['NUMÉRO DE RÉFÉRENCE', docItem.referenceNumber],
+    ['CATÉGORIE', docItem.category],
+    ['SOUS-TYPE', docItem.subtype],
+    ['AUTEUR', `${docItem.authorName} (${docItem.authorEntity})`],
+    ['DATE DE CRÉATION', docItem.createdAt],
+    ['STATUT', docItem.status],
+    ['MONTANT ASSOCIÉ', docItem.amount ? `${docItem.amount} ${docItem.currency || 'USD'}` : 'N/A'],
+    ['DESCRIPTION', docItem.description || ''],
+    ['SIGNATAIRE ÉLECTRONIQUE', docItem.electronicSignature?.signedBy || 'En attente'],
+    ['HORODATAGE SIGNATURE', docItem.electronicSignature?.signedAt || 'N/A'],
+    ['EMPREINTE SHA-256', docItem.electronicSignature?.certificateHash || 'Non signé'],
+  ].map(cells => csvRow(cells));
 
-  const targetName = `${docItem.referenceNumber}_archivage.csv`;
-  downloadBlob(lines.join('\r\n'), targetName);
+  const targetName = `${docItem.referenceNumber}_archivage.csv`.replace(/[\\/:*?"<>|]+/g, '_');
+  downloadCsv(lines, targetName);
 }
 
 export function exportOfficialDocumentToPDF(

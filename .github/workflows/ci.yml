@@ -113,6 +113,9 @@ jobs:
       - name: Tests de la chaîne d'audit
         run: node server/tests/audit-chain.test.mjs
 
+      - name: Tests de sécurité et de confidentialité
+        run: node server/tests/security.test.mjs
+
       - name: Démarrage de la pile complète (application + MariaDB)
         env:
           DB_PASSWORD: ci-base-${{ github.run_id }}

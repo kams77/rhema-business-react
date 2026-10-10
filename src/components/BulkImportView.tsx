@@ -39,6 +39,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { getRoleBadgeClass, titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
+import { csvRow } from '../utils/exportUtils';
 
 interface BulkImportViewProps {
   currentUser: User;
@@ -362,9 +363,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     if (!DEMO_MODE) {
       // Fichier à remettre aux collaborateurs puis à détruire : c'est la seule fois où les mots de passe sont visibles.
-      const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const csv = ['Nom;Email;Matricule;Mot de passe provisoire']
-        .concat(credentials.map(c => [c.name, c.email, c.matricule, c.password].map(esc).join(';')))
+        .concat(credentials.map(c => csvRow([c.name, c.email, c.matricule, c.password])))
         .join('\n');
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);

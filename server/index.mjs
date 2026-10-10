@@ -6,6 +6,8 @@
 //   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME   Connexion MariaDB / MySQL
 //   SETUP_CODE      Code demandé lors de la première initialisation (fortement recommandé)
 //   TRUST_PROXY     "true" si un reverse proxy (Synology, Nginx…) est placé devant (défaut true)
+//   TRUSTED_PROXIES Adresses d'où les en-têtes X-Forwarded-* sont acceptés
+//                   (défaut « loopback,172.16.0.0/12 » : le NAS et le réseau interne de Docker)
 //   COOKIE_SECURE   "true" pour forcer les cookies « Secure » (HTTPS)
 //   DIST_DIR        Dossier de l'application compilée (défaut ../dist)
 import http from 'node:http';
@@ -28,6 +30,7 @@ const config = {
   distDir: path.resolve(env.DIST_DIR || path.join(here, '..', 'dist')),
   setupCode: env.SETUP_CODE || '',
   trustProxy: (env.TRUST_PROXY ?? 'true') !== 'false',
+  trustedProxies: env.TRUSTED_PROXIES || 'loopback,172.16.0.0/12',
   cookieSecure: env.COOKIE_SECURE === 'true',
   dev: env.NODE_ENV === 'development',
 };
@@ -57,8 +60,10 @@ if (placeholders.length) {
 
 const db = await createDb();
 await db.migrate();
-if (!config.setupCode && (await db.countUsers()) === 0) {
-  console.warn('[setup] Aucun SETUP_CODE défini : n\'importe qui atteignant le serveur peut l\'initialiser. Définissez SETUP_CODE.');
+if ((await db.countUsers()) === 0 && config.setupCode.length < 8 && db.kind !== 'memory') {
+  // Sans code solide, la première personne qui atteint le serveur deviendrait Direction Générale.
+  console.error('[setup] Base vide : définissez un SETUP_CODE d\'au moins 8 caractères avant le premier démarrage.');
+  process.exit(1);
 }
 
 const server = http.createServer(createApp({ db, config }));
