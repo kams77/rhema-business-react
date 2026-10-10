@@ -14,6 +14,7 @@ import {
   rechain,
   hashToken,
   isPasswordHash,
+  needsRehash,
   newSessionToken,
   safeEqualStrings,
   validatePasswordStrength,
@@ -21,12 +22,18 @@ import {
   verifyPassword,
 } from './auth.mjs';
 import {
+  PRIVATE_ACCOUNT_FIELDS,
   canAccessLogistics,
+  canDeleteEntity,
   canManageAccount,
+  canReadLogistics,
   canSeeDocument,
+  canSeeFullAccount,
   canSeeInvitation,
   canSeeInvitationNotification,
-  isManager,
+  canWriteEntity,
+  canWriteInvitation,
+  canWriteInvitationNotification,
   isPayrollStaff,
   isSecurityStaff,
 } from '../shared/access.mjs';
@@ -50,10 +57,13 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'X-Permitted-Cross-Domain-Policies': 'none',
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; " +
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self'; " +
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
@@ -83,6 +93,57 @@ const nowStamp = (d = new Date()) =>
     year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const newId = prefix => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+/** Mot de passe provisoire lisible (sans caractères ambigus), avec lettres et chiffres. */
+export function temporaryPassword(length = 12) {
+  const letters = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const all = letters + digits;
+  for (;;) {
+    const bytes = crypto.randomBytes(length);
+    const out = Array.from(bytes, b => all[b % all.length]).join('');
+    if (/[a-zA-Z]/.test(out) && /\d/.test(out)) return out;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Proxys de confiance (TRUSTED_PROXIES) : « loopback », adresses IPv4 ou plages CIDR, séparées par des virgules.
+// ---------------------------------------------------------------------------
+const ipv4ToInt = ip => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  if (parts.some(n => n > 255)) return null;
+  return ((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+};
+
+export function parseRanges(spec) {
+  return String(spec || '').split(',').map(s => s.trim()).filter(Boolean).map(item => {
+    if (item === 'loopback') return { loopback: true };
+    const [addr, bits = '32'] = item.split('/');
+    const base = ipv4ToInt(addr);
+    const n = Number(bits);
+    if (base === null || !Number.isInteger(n) || n < 0 || n > 32) return null;
+    const mask = n === 0 ? 0 : (0xffffffff << (32 - n)) >>> 0;
+    return { base: (base & mask) >>> 0, mask };
+  }).filter(Boolean);
+}
+
+export function isInRanges(remote, ranges) {
+  const ip = String(remote || '').replace(/^::ffff:/i, '');
+  if (ip === '::1' || ip.startsWith('127.')) return ranges.some(r => r.loopback || (ipv4ToInt(ip) !== null && ((ipv4ToInt(ip) & r.mask) >>> 0) === r.base));
+  const v = ipv4ToInt(ip);
+  return v !== null && ranges.some(r => !r.loopback && ((v & r.mask) >>> 0) === r.base);
+}
+
+/** Décodage d'URL sans planter le serveur sur une adresse mal formée. */
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, 'Adresse invalide.');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Conversion utilisateur base <-> application
@@ -125,16 +186,19 @@ function validateClientUser(c) {
 }
 
 /** Construit un utilisateur « base » à partir d'un compte venant de l'application. */
-async function fromClientUser(c, existing, { allowHash }) {
+async function fromClientUser(c, existing, { allowHash, forceChange = false }) {
   validateClientUser(c);
   let passwordHash = existing?.passwordHash ?? null;
   let mustChangePassword = existing ? existing.mustChangePassword : true;
   // Le mot de passe en clair n'est pris en compte qu'à la création du compte
   // (l'application le renvoie tant qu'elle n'a pas relu l'annuaire du serveur).
   if (!existing && typeof c.password === 'string' && c.password) {
+    if (c.password.length < 8 || c.password.length > 200) {
+      throw new HttpError(400, `Mot de passe provisoire trop court pour ${c.name} (8 caractères minimum).`);
+    }
     // Mot de passe provisoire fourni par la Direction : à changer à la première connexion.
     passwordHash = await hashPassword(c.password);
-    mustChangePassword = c.mustChangePassword ?? true;
+    mustChangePassword = forceChange ? true : (c.mustChangePassword ?? true);
   } else if (allowHash && isPasswordHash(c.passwordHash)) {
     passwordHash = c.passwordHash;
     mustChangePassword = !!c.mustChangePassword;
@@ -165,11 +229,38 @@ export function createApp({ db, config }) {
   const loginAttempts = new Map(); // ip -> { count, resetAt }
 
   // --- utilitaires HTTP ----------------------------------------------------
-  const isHttps = req =>
-    !!req.socket.encrypted || (config.trustProxy && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
 
-  const clientIp = req =>
-    (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || '';
+  // Les en-têtes X-Forwarded-* ne sont crus que s'ils viennent d'un proxy de confiance
+  // (par défaut : le NAS lui-même ou le réseau interne de Docker). Un poste qui contacterait
+  // directement le serveur ne peut donc pas s'inventer une adresse pour contourner les limites.
+  const trustedRanges = parseRanges(config.trustedProxies ?? 'loopback,172.16.0.0/12');
+  const fromTrustedProxy = req => config.trustProxy && isInRanges(req.socket.remoteAddress || '', trustedRanges);
+  const isHttps = req =>
+    !!req.socket.encrypted || (fromTrustedProxy(req) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
+
+  // Derrière un reverse proxy (DSM, Nginx), la DERNIÈRE adresse de X-Forwarded-For est celle
+  // ajoutée par le proxy lui-même : les précédentes viennent du client et peuvent être inventées.
+  const clientIp = req => {
+    if (fromTrustedProxy(req)) {
+      const chain = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+      if (chain.length) return chain[chain.length - 1].slice(0, 64);
+    }
+    return req.socket.remoteAddress || '';
+  };
+
+  /** Limite de débit par adresse (connexion, vérification de mot de passe). */
+  function rateLimit(bucket, ip, max, windowMs) {
+    const now = Date.now();
+    const key = `${bucket}:${ip}`;
+    const rl = loginAttempts.get(key);
+    if (rl && rl.resetAt > now && rl.count >= max) {
+      throw new HttpError(429, 'Trop de tentatives depuis ce poste. Réessayez dans quelques minutes.');
+    }
+    loginAttempts.set(key, rl && rl.resetAt > now ? { ...rl, count: rl.count + 1 } : { count: 1, resetAt: now + windowMs });
+    if (loginAttempts.size > 10_000) {
+      for (const [k, v] of loginAttempts) if (v.resetAt <= now) loginAttempts.delete(k);
+    }
+  }
 
   function baseHeaders(req) {
     const h = { ...SECURITY_HEADERS };
@@ -217,7 +308,12 @@ export function createApp({ db, config }) {
     const out = {};
     for (const part of String(req.headers.cookie || '').split(';')) {
       const i = part.indexOf('=');
-      if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      if (i <= 0) continue;
+      try {
+        out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      } catch {
+        /* cookie mal formé : ignoré */
+      }
     }
     return out;
   }
@@ -354,41 +450,73 @@ export function createApp({ db, config }) {
    * - write  : false | true | fonction « peut écrire cette ligne » (reçoit la ligne et sa version précédente)
    * - remove : fonction « peut supprimer cette ligne » (sinon la règle d'écriture s'applique)
    */
-  function policyFor(key, user, entities) {
+  function policyFor(key, user, entities, users) {
     const u = accessUser(user);
     const own = row => row && row.userId === u.id;
     if (PAYROLL_OWN_ROWS.has(key)) {
-      return isPayrollStaff(u) ? { read: 'all', write: true } : { read: own, write: false };
+      if (!isPayrollStaff(u)) return { read: own, write: false };
+      if (u.role === 'dg') return { read: 'all', write: true };
+      // Conflit d'intérêts : un gestionnaire de paie ne modifie ni son propre contrat (salaire, banque),
+      // ni ses propres congés, avances, heures ou sanctions. Ses demandes restent « en attente »
+      // jusqu'à leur traitement par un collègue ou la Direction.
+      const selfOk = (row, before) => {
+        if (key === 'contracts' || key === 'payroll.contracts' || key === 'payroll.disciplinary') return false;
+        const pending = r => !r || !('status' in r) || r.status === 'en_attente';
+        return pending(row) && pending(before);
+      };
+      const ownRow = r => !!r && r.userId === u.id;
+      return {
+        read: () => true,
+        write: (row, before) => (ownRow(row) || ownRow(before) ? selfOk(row, before) : true),
+      };
     }
     if (PAYROLL_STAFF_ONLY.has(key)) return isPayrollStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'securityAlerts') return isSecurityStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
-    if (key === 'entities') return { read: 'all', write: isManager(u) };
+    if (key === 'entities') {
+      // Chaque responsable ne touche qu'à sa branche (sinon il pourrait s'approprier une autre entité).
+      return {
+        read: () => true,
+        write: (e, before) => canWriteEntity(u, before, e, entities),
+        remove: e => canDeleteEntity(u, e, entities),
+      };
+    }
     if (key === 'documents') {
       // Circuit de validation : chaque visa doit venir du bon titulaire, à son tour (shared/workflow.mjs).
       return {
         read: d => canSeeDocument(u, d, entities),
-        write: (d, before) => canWriteDocumentChange(u, before, d, entities),
+        write: (d, before) => canWriteDocumentChange(u, before, d, entities, users),
         remove: d => canDeleteDocument(u, d),
       };
     }
     if (key === 'tasks') {
       return {
         read: t => canSeeTask(u, t, entities),
-        write: (t, before) => canWriteTaskChange(u, before, t, entities),
+        write: (t, before) => canWriteTaskChange(u, before, t, entities, users),
         remove: t => canDeleteTask(u, t),
       };
     }
     if (key === 'invitations') {
-      return { read: inv => canSeeInvitation(u, inv, entities), write: inv => canSeeInvitation(u, inv, entities) };
+      return {
+        read: inv => canSeeInvitation(u, inv, entities),
+        write: (inv, before) => canWriteInvitation(u, before, inv, entities),
+        remove: inv => isSecurityStaff(u) || inv.inviterUserId === u.id,
+      };
     }
     if (key === 'invitationNotifications') {
       // Une notification est créée par l'invitant pour le destinataire, puis marquée lue par celui-ci.
-      return { read: n => canSeeInvitationNotification(u, n), write: () => true };
+      return {
+        read: n => canSeeInvitationNotification(u, n),
+        write: (n, before) => canWriteInvitationNotification(u, before, n),
+        remove: () => u.role === 'dg',
+      };
     }
-    if (key.startsWith('logistics.')) return { read: 'all', write: canAccessLogistics(u) };
-    // Données opérationnelles partagées (tâches, workflows…).
-    return { read: 'all', write: true };
+    if (key.startsWith('logistics.')) {
+      // Données commerciales (fournisseurs, prix, stocks) : personnel logistique, Direction, finance.
+      return { read: canReadLogistics(u) ? 'all' : 'none', write: canAccessLogistics(u) };
+    }
+    // Donnée inconnue de l'application : lecture seule, création réservée au DG.
+    return { read: 'all', write: u.role === 'dg' };
   }
 
   /** Applique la règle de lecture à une valeur (undefined = donnée non communiquée). */
@@ -439,15 +567,34 @@ export function createApp({ db, config }) {
     return result;
   }
 
+  /**
+   * Annuaire vu par un utilisateur : chacun voit les noms, postes et rattachements de ses collègues
+   * (nécessaires aux circuits de validation), mais pas leurs données personnelles (téléphone,
+   * dernière connexion, échecs de connexion) sauf s'il gère ce compte ou en est le titulaire.
+   */
+  async function directoryFor(session, list) {
+    const me = accessUser(session.user);
+    const entities = await loadEntities();
+    const all = list ?? (await db.listUsers());
+    return all.map(u => {
+      const c = toClientUser(u);
+      if (canSeeFullAccount(me, c, entities)) return c;
+      for (const f of PRIVATE_ACCOUNT_FIELDS) delete c[f];
+      // Une convocation (procédure disciplinaire) ne regarde pas les collègues.
+      if (c.status === 'convoque') c.status = 'actif';
+      return c;
+    });
+  }
+
   async function readKey(key, session) {
-    if (key === 'users') return { value: (await db.listUsers()).map(toClientUser), version: await usersVersion() };
+    if (key === 'users') return { value: await directoryFor(session), version: await usersVersion() };
     if (key === 'auditLogs') {
       const visible = isSecurityStaff(accessUser(session.user)) ? await db.listAuditLogs(AUDIT_LIMIT) : [];
       return { value: visible, version: await db.auditVersion() };
     }
     const d = await db.getData(key);
     const raw = d ? JSON.parse(d.value) : null;
-    const policy = policyFor(key, session.user, await loadEntities());
+    const policy = policyFor(key, session.user, await loadEntities(), []);
     return { value: raw === null ? null : applyRead(policy, key, raw) ?? null, version: d?.version ?? 0 };
   }
 
@@ -469,15 +616,30 @@ export function createApp({ db, config }) {
     const ids = new Set();
     const emails = new Set();
     const result = [];
-    for (const c of incoming) {
-      validateClientUser(c);
+    for (const raw of incoming) {
+      validateClientUser(raw);
+      let c = raw;
+      const prevAccount = existing.get(c.id);
+      if (prevAccount) {
+        // Champs personnels masqués à ce responsable : on garde les valeurs enregistrées.
+        const prevClient = toClientUser(prevAccount);
+        if (!canSeeFullAccount(me, prevClient, entities)) {
+          c = { ...c };
+          for (const f of PRIVATE_ACCOUNT_FIELDS) {
+            if (prevClient[f] === undefined) delete c[f];
+            else c[f] = prevClient[f];
+          }
+          // Statut « convoqué » masqué à ce responsable (voir directoryFor) : on garde la valeur enregistrée.
+          if (prevClient.status === 'convoque' && c.status === 'actif') c.status = 'convoque';
+        }
+      }
       if (ids.has(c.id)) throw new HttpError(400, `Compte en double : ${c.id}.`);
       const email = c.email.trim().toLowerCase();
       if (emails.has(email)) throw new HttpError(400, `L'email ${c.email} est utilisé par deux comptes.`);
       ids.add(c.id);
       emails.add(email);
       const prev = existing.get(c.id);
-      const next = await fromClientUser(c, prev, { allowHash: false });
+      const next = await fromClientUser(c, prev, { allowHash: false, forceChange: true });
 
       if (!isDG && (!prev || accountSignature(prev) !== accountSignature(next))) {
         // Un responsable ne gère que des comptes de rang inférieur, dans son périmètre, avant ET après modification.
@@ -491,6 +653,16 @@ export function createApp({ db, config }) {
         // Droits sensibles : réservés au DG.
         if ((next.profile?.canManagePayroll ?? null) !== (prev?.profile?.canManagePayroll ?? null)) {
           throw new HttpError(403, 'Seule la Direction Générale peut attribuer l\'accès à la paie.');
+        }
+        // Accès indirect à la paie (intitulé « RH », rattachement DAF / RH / Finance) : même règle,
+        // sauf pour un responsable qui gère lui-même la paie.
+        const before = prev ? accessUser(prev) : null;
+        const after = toClientUser(next);
+        if (isPayrollStaff(after) && !(before && isPayrollStaff(before)) && !isPayrollStaff(me)) {
+          throw new HttpError(403, `Ce poste donne accès aux salaires : seule la Direction Générale peut l'attribuer à ${next.name}.`);
+        }
+        if (canAccessLogistics(after) && !(before && canAccessLogistics(before)) && !canAccessLogistics(me)) {
+          throw new HttpError(403, `Ce poste donne accès au module logistique : demandez à la Direction ou à la logistique de l'attribuer à ${next.name}.`);
         }
       }
       result.push(next);
@@ -602,7 +774,7 @@ export function createApp({ db, config }) {
       await prependToData('securityAlerts', {
         id: newId('sec'), timestamp: nowStamp(), userId: user.id, userName: user.name, userRole: user.role,
         userEntityName: user.profile?.departmentName || user.profile?.roleTitle || '', targetEntityId: 'auth',
-        targetEntityName: context === 'signature' ? 'Signature électronique' : 'Écran de connexion', attemptCount: attempts,
+        targetEntityName: { signature: 'Signature électronique', 'changement de mot de passe': 'Changement de mot de passe' }[context] || 'Écran de connexion', attemptCount: attempts,
         status: temporary ? 'alerte_emise' : 'compte_verrouille', severity: 'critique', ipAddress: ip,
         reason: temporary
           ? `${attempts} mots de passe erronés sur le compte DG : blocage temporaire de 15 minutes.`
@@ -614,7 +786,7 @@ export function createApp({ db, config }) {
         : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.');
     }
     const remaining = MAX_FAILED_ATTEMPTS - attempts;
-    return new HttpError(401, `${context === 'signature' ? 'Mot de passe incorrect.' : 'Identifiant ou mot de passe incorrect.'} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${user.role === 'dg' ? 'blocage temporaire' : 'verrouillage'} du compte.`);
+    return new HttpError(401, `${context === 'connexion' ? 'Identifiant ou mot de passe incorrect.' : 'Mot de passe incorrect.'} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${user.role === 'dg' ? 'blocage temporaire' : 'verrouillage'} du compte.`);
   }
 
   // --- routes API ----------------------------------------------------------
@@ -639,6 +811,8 @@ export function createApp({ db, config }) {
     }
 
     if (p === '/api/setup' && method === 'POST') {
+      // Empêche de deviner le code d'installation par essais successifs.
+      rateLimit('setup', clientIp(req), 10, 15 * 60_000);
       const body = await readJson(req);
       if ((await db.countUsers()) > 0) throw new HttpError(409, 'L\'application est déjà initialisée.');
       if (config.setupCode && !safeEqualStrings(body.setupCode ?? '', config.setupCode)) {
@@ -662,11 +836,7 @@ export function createApp({ db, config }) {
     if (p === '/api/auth/login' && method === 'POST') {
       const ip = clientIp(req);
       const now = Date.now();
-      const rl = loginAttempts.get(ip);
-      if (rl && rl.resetAt > now && rl.count >= 30) {
-        throw new HttpError(429, 'Trop de tentatives depuis ce poste. Réessayez dans quelques minutes.');
-      }
-      loginAttempts.set(ip, rl && rl.resetAt > now ? { ...rl, count: rl.count + 1 } : { count: 1, resetAt: now + 15 * 60_000 });
+      rateLimit('login', ip, 30, 15 * 60_000);
 
       const body = await readJson(req);
       const identifier = String(body.identifier ?? '').slice(0, 190);
@@ -685,14 +855,16 @@ export function createApp({ db, config }) {
 
       const lastLogin = nowStamp();
       const { lockedUntil: _expired, ...profile } = user.profile || {};
-      await db.updateUser(user.id, { failedAttempts: 0, lastLogin, profile });
+      // Empreinte ancienne (moins d'itérations) : renforcée de façon transparente.
+      const rehash = needsRehash(user.passwordHash) ? { passwordHash: await hashPassword(password) } : {};
+      await db.updateUser(user.id, { failedAttempts: 0, lastLogin, profile, ...rehash });
       await db.bump(USERS_VERSION_KEY);
       const token = newSessionToken();
       await db.createSession({
         tokenHash: hashToken(token), userId: user.id, pending: user.mustChangePassword,
         createdAt: now, lastSeen: now, ip, userAgent: String(req.headers['user-agent'] || ''),
       });
-      loginAttempts.delete(ip);
+      loginAttempts.delete(`login:${ip}`);
       await audit(user, 'Connexion Certifiée (Identifiants)', 'auth', `Authentification réussie pour ${user.name} (${user.role.toUpperCase()}).`);
       return sendJson(req, res, 200,
         { user: toClientUser({ ...user, lastLogin, failedAttempts: 0 }), mustChangePassword: user.mustChangePassword },
@@ -707,9 +879,11 @@ export function createApp({ db, config }) {
 
     if (p === '/api/auth/change-password' && method === 'POST') {
       const s = await requireSession(req, { allowPending: true });
+      rateLimit('password', clientIp(req), 30, 15 * 60_000);
       const body = await readJson(req);
       if (!s.pending && !(await verifyPassword(String(body.currentPassword ?? ''), s.user.passwordHash))) {
-        throw new HttpError(400, 'Mot de passe actuel incorrect.');
+        // Compte comme une tentative : on ne devine pas un mot de passe avec une session volée.
+        throw await registerFailedAttempt(await db.getUser(s.user.id), 'changement de mot de passe', clientIp(req));
       }
       const next = String(body.newPassword ?? '');
       const weak = validatePasswordStrength(next, s.user);
@@ -727,6 +901,7 @@ export function createApp({ db, config }) {
     // Les échecs comptent comme des tentatives de connexion : 5 erreurs verrouillent le compte.
     if (p === '/api/auth/verify-password' && method === 'POST') {
       const s = await requireSession(req);
+      rateLimit('password', clientIp(req), 30, 15 * 60_000);
       const body = await readJson(req);
       const fresh = await db.getUser(s.user.id);
       const blocked = lockMessage(fresh);
@@ -750,6 +925,31 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
     }
 
+    // Réinitialisation d'un mot de passe oublié par la Direction ou le responsable du compte.
+    // Le mot de passe provisoire n'est affiché qu'une fois ; il devra être changé à la connexion.
+    const reset = p.match(/^\/api\/users\/([^/]+)\/reset-password$/);
+    if (reset && method === 'POST') {
+      const s = await requireSession(req);
+      const target = await db.getUser(safeDecode(reset[1]));
+      if (!target) throw new HttpError(404, 'Compte introuvable.');
+      if (target.id === s.user.id) throw new HttpError(400, 'Pour votre propre compte, utilisez « Changer mon mot de passe ».');
+      const entities = await loadEntities();
+      if (s.user.role !== 'dg' && !canManageAccount(accessUser(s.user), accessUser(target), entities)) {
+        throw new HttpError(403, `Vous n'avez pas autorité sur le compte de ${target.name}.`);
+      }
+      const temp = temporaryPassword();
+      const { lockedUntil: _l, ...profile } = target.profile || {};
+      await db.updateUser(target.id, {
+        passwordHash: await hashPassword(temp), mustChangePassword: true, failedAttempts: 0, profile,
+        status: target.status === 'verrouille' ? 'actif' : target.status,
+      });
+      await db.deleteUserSessions(target.id, '');
+      await db.bump(USERS_VERSION_KEY);
+      await audit(s.user, 'Réinitialisation de Mot de Passe', 'security',
+        `${s.user.name} a réinitialisé le mot de passe de ${target.name} (mot de passe provisoire, changement obligatoire).`);
+      return sendJson(req, res, 200, { temporaryPassword: temp });
+    }
+
     // ----- Données (session obligatoire) -----
     if (p === '/api/data' && method === 'GET') {
       const s = await requireSession(req);
@@ -758,8 +958,10 @@ export function createApp({ db, config }) {
       const versions = {};
       for (const row of await db.getAllData()) {
         if (row.key.startsWith('_')) continue;
+        const policy = policyFor(row.key, s.user, entities, []);
+        if (policy.read === 'none') continue;
         versions[row.key] = row.version;
-        const visible = applyRead(policyFor(row.key, s.user, entities), row.key, JSON.parse(row.value));
+        const visible = applyRead(policy, row.key, JSON.parse(row.value));
         if (visible !== null && visible !== undefined) values[row.key] = visible;
       }
       for (const key of ['users', 'auditLogs']) {
@@ -771,8 +973,16 @@ export function createApp({ db, config }) {
     }
 
     if (p === '/api/data/versions' && method === 'GET') {
-      await requireSession(req);
-      return sendJson(req, res, 200, { versions: await allVersions() });
+      const s = await requireSession(req);
+      // On ne révèle pas l'activité des données auxquelles l'utilisateur n'a pas accès (paie, sécurité…).
+      const entities = await loadEntities();
+      const versions = await allVersions();
+      for (const k of Object.keys(versions)) {
+        if (k === 'users' || k === 'auditLogs') continue;
+        if (policyFor(k, s.user, entities, []).read === 'none') delete versions[k];
+      }
+      if (!isSecurityStaff(accessUser(s.user))) delete versions.auditLogs;
+      return sendJson(req, res, 200, { versions });
     }
 
     // Vérification de l'intégrité du journal (chaîne d'empreintes).
@@ -823,7 +1033,7 @@ export function createApp({ db, config }) {
 
     const m = p.match(/^\/api\/data\/([^/]+)$/);
     if (m) {
-      const key = decodeURIComponent(m[1]);
+      const key = safeDecode(m[1]);
       if (!DATA_KEY_RE.test(key)) throw new HttpError(400, 'Nom de donnée invalide.');
       const s = await requireSession(req);
 
@@ -859,14 +1069,16 @@ export function createApp({ db, config }) {
         if (key === 'users') {
           const current = await usersVersion();
           if (body.version !== current) {
-            return sendJson(req, res, 409, { error: 'conflict', value: (await db.listUsers()).map(toClientUser), version: current });
+            return sendJson(req, res, 409, { error: 'conflict', value: await directoryFor(s), version: current });
           }
           await syncUsers(s, body.value);
           return sendJson(req, res, 200, { version: await usersVersion() });
         }
 
         const entities = await loadEntities();
-        const policy = policyFor(key, s.user, entities);
+        // L'annuaire sert à vérifier que le circuit d'un document est bien celui de l'organigramme.
+        const users = key === 'documents' || key === 'tasks' ? (await db.listUsers()).map(toClientUser) : [];
+        const policy = policyFor(key, s.user, entities, users);
         const current = await db.getData(key);
         const expected = Number(body.version) || 0;
         if ((current?.version ?? 0) !== expected) {
@@ -907,7 +1119,7 @@ export function createApp({ db, config }) {
       res.writeHead(404, { ...baseHeaders(req), 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Application non compilée (dossier dist introuvable).');
     }
-    let rel = decodeURIComponent(url.pathname);
+    let rel = safeDecode(url.pathname);
     let file = path.join(distDir, path.normalize(rel).replace(/^([/\\])+/, ''));
     if (!file.startsWith(distDir)) file = path.join(distDir, 'index.html');
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -937,7 +1149,15 @@ export function createApp({ db, config }) {
   return async function handler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     try {
-      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      if (url.pathname.startsWith('/api/')) {
+        // Défense en profondeur contre les requêtes forgées depuis un autre site (CSRF) :
+        // les navigateurs indiquent l'origine de chaque requête dans Sec-Fetch-Site.
+        const site = String(req.headers['sec-fetch-site'] || '');
+        if (req.method !== 'GET' && req.method !== 'HEAD' && site && site !== 'same-origin' && site !== 'none') {
+          throw new HttpError(403, 'Requête refusée : elle ne provient pas de l\'application.');
+        }
+        return await handleApi(req, res, url);
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée.');
       return serveStatic(req, res, url);
     } catch (err) {

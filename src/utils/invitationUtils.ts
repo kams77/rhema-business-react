@@ -6,14 +6,21 @@ import type { User, HierarchicalEntity, EntityInvitation, EntityInvitationNotifi
  * Exemple: "7492018365"
  */
 export function generate10DigitAuthKey(): string {
+  // Générateur cryptographique (Math.random est prévisible : une clé ne doit pas pouvoir être devinée).
+  // Tirage par rejet pour une répartition uniforme des chiffres.
+  const digit = (min: number): number => {
+    const buf = new Uint8Array(1);
+    for (;;) {
+      crypto.getRandomValues(buf);
+      const span = 10 - min;
+      const limit = 256 - (256 % span);
+      if (buf[0] < limit) return min + (buf[0] % span);
+    }
+  };
   // Premier chiffre entre 1 et 9 pour éviter les zéros en tête ambigus
-  const firstDigit = Math.floor(Math.random() * 9) + 1;
-  // Les 9 chiffres suivants entre 0 et 9
-  let remainingDigits = '';
-  for (let i = 0; i < 9; i++) {
-    remainingDigits += Math.floor(Math.random() * 10).toString();
-  }
-  return `${firstDigit}${remainingDigits}`;
+  let key = String(digit(1));
+  for (let i = 0; i < 9; i++) key += String(digit(0));
+  return key;
 }
 
 /**

@@ -73,6 +73,9 @@ export const api = {
     apiFetch<{ ok: boolean; count: number; legacy?: number; brokenAt?: number; lastHash?: string; entry?: { id: string; timestamp: string; action: string } }>('GET', '/api/audit/verify'),
   setup: (payload: { setupCode: string; users: unknown[]; data: Record<string, unknown> }) =>
     apiFetch<{ ok: boolean }>('POST', '/api/setup', payload),
+  /** Mot de passe oublié : un responsable génère un mot de passe provisoire pour un compte qu'il gère. */
+  resetPassword: (userId: string) =>
+    apiFetch<{ temporaryPassword: string }>('POST', `/api/users/${encodeURIComponent(userId)}/reset-password`, {}),
   exportBackup: () => apiFetch<any>('GET', '/api/data/export'),
   importBackup: (backup: unknown) => apiFetch<{ ok: boolean; relogin: boolean }>('POST', '/api/data/import', backup),
 };

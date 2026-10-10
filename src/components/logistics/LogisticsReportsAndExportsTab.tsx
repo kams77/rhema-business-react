@@ -1,6 +1,7 @@
 // src/components/logistics/LogisticsReportsAndExportsTab.tsx
 import React, { useState, useMemo } from 'react';
 import type { LogisticsHub, HubStockItem, StockMovementItem, PurchaseOrderItem, DeliveryNoteItem, User, Organization } from '../../types';
+import { csvRow, downloadCsv } from '../../utils/exportUtils';
 import { 
   FileSpreadsheet, 
   Download, 
@@ -84,32 +85,25 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
     const rows = relevantStocks.map(s => {
       const hub = hubs.find(h => h.id === s.hubId);
       return [
-        `"${s.hubId}"`,
-        `"${hub?.name || 'N/A'}"`,
-        `"${s.sku}"`,
-        `"${s.name.replace(/"/g, '""')}"`,
-        `"${s.category}"`,
+        s.hubId,
+        hub?.name || 'N/A',
+        s.sku,
+        s.name,
+        s.category,
         s.quantityAvailable,
         s.quantityReserved,
         s.quantityInTransit,
         s.minAlertThreshold,
         s.unitPriceUSD,
         s.totalValueUSD,
-        `"${s.locationRack || 'N/A'}"`,
-        `"${s.status}"`,
-        `"${s.lastAuditDate}"`
+        s.locationRack || 'N/A',
+        s.status,
+        s.lastAuditDate
       ];
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
     const fileName = `inventaire_logistique_rhema_${selectedHubId}_${new Date().toISOString().split('T')[0]}.csv`;
-    link.setAttribute('download', fileName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv([csvRow(headers, ','), ...rows.map(e => csvRow(e, ','))], fileName);
 
     if (onLogAction) {
       onLogAction('Export Fichier CSV Inventaire', `Extraction de ${relevantStocks.length} articles pour le hub ${selectedHubId}.`, 'export');

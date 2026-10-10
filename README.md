@@ -89,7 +89,7 @@ Dans les deux modes :
 | Partage entre collègues | ❌ | ✅ tout le monde voit les mêmes données |
 | Connexion | Vérifiée dans le navigateur | Vérifiée par le serveur (cookie sécurisé) |
 | Installation | Hébergement statique (Cloudflare Pages…) | Docker : `docker compose up -d --build` |
-| Guide | [docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md) | [docs/SYNOLOGY.md](docs/SYNOLOGY.md) |
+| Guide | [docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md) | [docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md](docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md) |
 
 En mode serveur, deux personnes peuvent modifier le même module en même temps : leurs
 changements sont **fusionnés automatiquement**, et chacun voit ceux des autres en moins de 20 secondes.
