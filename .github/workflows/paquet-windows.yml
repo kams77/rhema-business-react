@@ -55,41 +55,35 @@ jobs:
           for ($i = 0; $i -lt 60; $i++) { if ((Test-NetConnection 127.0.0.1 -Port 3306 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }; Start-Sleep 2 }
           "MDB_BIN=$b" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Démarrage par le lanceur du paquet
+      # Démarrage et tests dans la MÊME étape : sous Windows, les programmes lancés par une étape
+      # sont arrêtés à la fin de celle-ci.
+      - name: Démarrage par le lanceur et tests de l'API sur MySQL (Windows)
         shell: pwsh
         run: |
           $p = 'C:\rhema\RHEMA-Test-Windows'
           Start-Process -FilePath "$p\node\node.exe" -ArgumentList "$p\app\lanceur.mjs",'--sans-navigateur' -WorkingDirectory $p -RedirectStandardOutput C:\lanceur.log -RedirectStandardError C:\lanceur.err
           $ok = $false
           for ($i = 0; $i -lt 60; $i++) { try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health).StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep 2 }
-          Get-Content C:\lanceur.log; Get-Content C:\lanceur.err
-          if (-not $ok) {
-            $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 20) -join '%0A'
-            Write-Output "::error title=Journal du lanceur::$log"
-            throw 'Le serveur ne répond pas.'
-          }
-          Get-Content "$p\configuration.txt"
-
-      - name: Tests de l'API sur MySQL (Windows)
-        shell: pwsh
-        run: |
-          $p = 'C:\rhema\RHEMA-Test-Windows'
-          $code = (Select-String -Path "$p\configuration.txt" -Pattern '^CODE_INSTALLATION=(.*)$').Matches[0].Groups[1].Value
+          $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 20) -join '%0A'
+          if (-not $ok) { Write-Output "::error title=Journal du lanceur::$log"; throw 'Le serveur ne répond pas.' }
+          $setup = (Select-String -Path "$p\configuration.txt" -Pattern '^CODE_INSTALLATION=(.*)$').Matches[0].Groups[1].Value
           $env:BASE_URL = 'http://127.0.0.1:8080'
-          $env:SETUP_CODE = $code
+          $env:SETUP_CODE = $setup
           $out = & "$p\node\node.exe" server\tests\api.test.mjs 2>&1 | Out-String
-          $code = $LASTEXITCODE
+          $rc = $LASTEXITCODE
           $out
-          # Résumé lisible dans les annotations de la vérification (les journaux complets ne sont pas toujours accessibles).
           $tail = (($out -split "`n") | Select-Object -Last 12) -join '%0A'
-          $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 15) -join '%0A'
-          if ($code -ne 0) {
+          if ($rc -ne 0) {
             Write-Output "::error title=Tests API Windows::$tail"
             Write-Output "::error title=Journal du lanceur::$log"
             throw 'Tests API en échec.'
           }
-          Write-Output "::notice title=Tests API Windows::$tail"
-          & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM rhema_test; SELECT name, role FROM rhema_test.users;"
+          $out2 = & "$p\node\node.exe" server\tests\permissions.test.mjs 2>&1 | Out-String
+          $rc2 = $LASTEXITCODE
+          $tail2 = (($out2 -split "`n") | Select-Object -Last 6) -join '%0A'
+          if ($rc2 -ne 0) { Write-Output "::error title=Tests des droits Windows::$tail2"; throw 'Tests des droits en échec.' }
+          $tables = & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM rhema_test; SELECT COUNT(*) AS comptes FROM rhema_test.users;" | Out-String
+          Write-Output "::notice title=Windows + MariaDB::API : $((($out -split "`n") | Select-String 'vérifications réussies').ToString().Trim()) | Droits : $((($out2 -split "`n") | Select-String 'réussies').ToString().Trim())%0A$($tables -replace "`r?`n", '%0A')"
 
       - name: Réinitialisation par reinitialiser.bat
         shell: pwsh
