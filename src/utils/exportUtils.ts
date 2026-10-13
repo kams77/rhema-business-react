@@ -98,6 +98,9 @@ function downloadBlob(content: string, filename: string, mimeType = 'text/csv;ch
 // 1. EXPORT DES JOURNAUX D'AUDIT (CSV & PDF)
 // ============================================================================
 
+/** Espace fine insécable (séparateur de milliers français) absente des polices PDF standard : espace simple. */
+const pdfNumber = (text: string) => text.replace(/[\u202f\u00a0]/g, ' ');
+
 export function exportAuditLogsToCSV(logs: AuditLog[], filename?: string) {
   const headers = ['ID', 'Horodatage', 'Opérateur', 'Rôle', 'Action', 'Catégorie', 'Détails', 'Adresse IP', 'Empreinte Cryptographique SHA-256'];
   const rows = logs.map(l => csvRow([l.id, l.timestamp, l.userName, l.userRole, l.action, l.category, l.details, l.ip, l.hash]));
@@ -201,7 +204,7 @@ export function exportAuditLogsToPDF(
       doc.setFont('helvetica', 'bold');
     } else {
       doc.setTextColor(15, 23, 42);
-      doc.setFont('helvetica', 'medium');
+      doc.setFont('helvetica', 'normal');
     }
     doc.text(doc.splitTextToSize(log.action, 50)[0] || '', colX.action + 2, currentY + 5);
 
@@ -359,7 +362,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 
   currentY += 8;
 
-  const fmt = (num: number) => num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (num: number) => pdfNumber(num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
   // Lignes détaillées du moteur de paie (taux réellement appliqués) ; ancien format en secours.
   const tableRows = data.earnings && data.deductions
@@ -660,7 +663,7 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
   };
   drawHeader();
 
-  const f = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  const f = (n: number) => pdfNumber(n.toLocaleString('fr-FR', { maximumFractionDigits: 2 }));
   rows.forEach(({ contract: c, user, payslip: p }, idx) => {
     if (currentY > bottomLimit) {
       doc.addPage();
@@ -768,7 +771,7 @@ export function exportOfficialDocumentToPDF(
     { k: 'Auteur / Émetteur :', v: `${docItem.authorName} (${docItem.authorEntity})` },
     { k: 'Date de Création :', v: docItem.createdAt },
     { k: 'Statut du Document :', v: docItem.status.toUpperCase() },
-    ...(docItem.amount ? [{ k: 'Montant Financier :', v: `${docItem.amount.toLocaleString()} ${docItem.currency || 'USD'}` }] : [])
+    ...(docItem.amount ? [{ k: 'Montant Financier :', v: `${pdfNumber(docItem.amount.toLocaleString('fr-FR'))} ${docItem.currency || 'USD'}` }] : [])
   ];
 
   meta.forEach((m, idx) => {
