@@ -30,7 +30,10 @@ jobs:
         run: npx --yes esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=/tmp/integrity.test.mjs --log-level=error && node /tmp/integrity.test.mjs
 
       - name: Tests des en-têtes et pieds de page PDF (logo, papier à en-tête)
-        run: npx --yes esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=/tmp/pdf-branding.test.mjs --log-level=error && node /tmp/pdf-branding.test.mjs
+        run: |
+          npx --yes esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=/tmp/pdf-branding.test.mjs --log-level=error
+          node /tmp/pdf-branding.test.mjs > /tmp/pdf.txt 2>&1 || { cat /tmp/pdf.txt; echo "::error::$(grep -v '^ *at ' /tmp/pdf.txt | tail -12 | tr '\n' ' ' | cut -c1-1500)"; exit 1; }
+          cat /tmp/pdf.txt
 
       - name: Tests du circuit de validation (documents, tâches, droits)
         run: node shared/__tests__/workflow.test.mjs
