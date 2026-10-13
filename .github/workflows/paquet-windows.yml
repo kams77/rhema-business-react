@@ -63,7 +63,11 @@ jobs:
           $ok = $false
           for ($i = 0; $i -lt 60; $i++) { try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health).StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep 2 }
           Get-Content C:\lanceur.log; Get-Content C:\lanceur.err
-          if (-not $ok) { throw 'Le serveur ne répond pas.' }
+          if (-not $ok) {
+            $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 20) -join '%0A'
+            Write-Output "::error title=Journal du lanceur::$log"
+            throw 'Le serveur ne répond pas.'
+          }
           Get-Content "$p\configuration.txt"
 
       - name: Tests de l'API sur MySQL (Windows)
@@ -73,8 +77,18 @@ jobs:
           $code = (Select-String -Path "$p\configuration.txt" -Pattern '^CODE_INSTALLATION=(.*)$').Matches[0].Groups[1].Value
           $env:BASE_URL = 'http://127.0.0.1:8080'
           $env:SETUP_CODE = $code
-          & "$p\node\node.exe" server\tests\api.test.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Tests API en échec.' }
+          $out = & "$p\node\node.exe" server\tests\api.test.mjs 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          # Résumé lisible dans les annotations de la vérification (les journaux complets ne sont pas toujours accessibles).
+          $tail = (($out -split "`n") | Select-Object -Last 12) -join '%0A'
+          $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 15) -join '%0A'
+          if ($code -ne 0) {
+            Write-Output "::error title=Tests API Windows::$tail"
+            Write-Output "::error title=Journal du lanceur::$log"
+            throw 'Tests API en échec.'
+          }
+          Write-Output "::notice title=Tests API Windows::$tail"
           & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM rhema_test; SELECT name, role FROM rhema_test.users;"
 
       - name: Réinitialisation par reinitialiser.bat
@@ -84,5 +98,27 @@ jobs:
           $p = 'C:\rhema\RHEMA-Test-Windows'
           cmd /c "(echo EFFACER& echo.) | `"$p\reinitialiser.bat`""
           $n = & "$env:MDB_BIN\mariadb.exe" -uroot -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='rhema_test'"
-          if ($n.Trim() -ne '0') { throw 'La base de test existe encore.' }
-          'Réinitialisation : OK'
+          if ($n.Trim() -ne '0') { Write-Output "::error title=Réinitialisation::La base rhema_test existe encore."; throw 'La base de test existe encore.' }
+          Write-Output "::notice title=Réinitialisation::Base rhema_test effacée par reinitialiser.bat."
+
+
+  # Le paquet validé est aussi déposé sur la branche « paquet-windows » (téléchargeable depuis GitHub :
+  # Code -> branche paquet-windows -> RHEMA-Test-Windows.zip -> Download raw file).
+  publication:
+    needs: essai-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: RHEMA-Test-Windows
+      - name: Dépôt sur la branche paquet-windows
+        run: |
+          mkdir depot && mv RHEMA-Test-Windows.zip depot/ && cd depot
+          printf 'Paquet RHEMA Business « test sans Docker » (Windows + XAMPP).\nConstruit depuis %s, essayé sur Windows avec MariaDB.\n' "$GITHUB_SHA" > LISEZ-MOI.txt
+          git init -q -b paquet-windows
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add . && git commit -q -m "Paquet Windows sans Docker ($GITHUB_SHA)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" paquet-windows
