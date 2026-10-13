@@ -1,0 +1,2 @@
+Paquet ERP-WORKFLOW « test sans Docker » (Windows + XAMPP).
+Construit depuis e3ebc193bdfc3e08973c65bb353e9b194913f22a, essayé sur Windows avec MariaDB.
