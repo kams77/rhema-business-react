@@ -1,0 +1,75 @@
+✓ images d'exemple acceptées par le contrôle du serveur
+✓ document officiel : papier à en-tête et image de pied de page intégrés
+✓ document officiel : en-tête automatique avec le logo
+✓ document officiel : sans logo, initiales et coordonnées
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+✓ journal d'audit : plusieurs pages, pied de page sur chacune
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+Unable to look up font label for font 'helvetica', 'medium'. Refer to getFontList() for available fonts.
+✓ journal d'audit : appel avec le seul nom toujours accepté
+✓ bordereau de visa : en-tête de l'organisation
+✓ livre de paie : en-tête image et pagination
+✓ bulletin de paie : logo de l'organisation (et sans organisation fournie)
+
+9 vérifications des en-têtes et pieds de page PDF réussies (fichiers dans /home/runner/work/rhema-business-react/rhema-business-react/apercu).
