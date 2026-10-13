@@ -182,7 +182,7 @@ process.on('uncaughtException', err => {
 });
 
 const url = `http://localhost:${conf.PORT}`;
-// Le serveur RHEMA (le même que sur le Synology) démarre dans cette fenêtre.
+// Le serveur ERP-WORKFLOW (le même que sur le Synology) démarre dans cette fenêtre.
 await import(pathToFileURL(path.join(ici, 'server', 'index.mjs')).href);
 
 if (await attendreServeur(`http://127.0.0.1:${conf.PORT}`)) {
