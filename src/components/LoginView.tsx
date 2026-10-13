@@ -233,7 +233,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono">
-              {organization.registrationNumber} • Kinshasa
+              {[organization.registrationNumber, organization.headquarters].filter(Boolean).join(' • ')}
             </p>
           </div>
         </div>

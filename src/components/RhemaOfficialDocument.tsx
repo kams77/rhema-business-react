@@ -214,7 +214,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                   <div className="text-right">
                     <span className="text-[10px] font-bold text-slate-500 uppercase block">Statut de validation</span>
                     <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 uppercase">
-                      {document.status === 'signe' ? 'APPROUVÉ & SIGNÉ' : 'APPROUVÉ'}
+                      {({ brouillon: 'BROUILLON', en_revue: 'EN COURS DE VALIDATION', approuve: 'APPROUVÉ', signe: 'APPROUVÉ & SIGNÉ', rejete: 'REJETÉ' } as const)[docState.status] || 'APPROUVÉ'}
                     </span>
                   </div>
                 </div>

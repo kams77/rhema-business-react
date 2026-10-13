@@ -585,11 +585,11 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
           {/* ÉTAPE 2 : IDENTITÉ VISUELLE (LOGO, EN-TÊTE, PIED DE PAGE) */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="bg-violet-950/40 border border-violet-500/30 rounded-2xl p-4 text-xs text-violet-200 flex items-start gap-3">
-                <ImageIcon className="w-5 h-5 text-violet-400 shrink-0 mt-0.5" />
+              <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-4 text-xs text-indigo-200 flex items-start gap-3">
+                <ImageIcon className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="font-bold text-white text-sm">Logo, papier à en-tête et pied de page</h4>
-                  <p className="mt-1 leading-relaxed text-violet-200/90">
+                  <p className="mt-1 leading-relaxed text-indigo-200/90">
                     Joignez le logo et, si vous en avez, l'en-tête et le pied de page officiels de l'entreprise : ils seront imprimés sur les documents, bordereaux et exports PDF. Tout est facultatif et modifiable plus tard par le DG (« Identité & Logo »).
                   </p>
                 </div>

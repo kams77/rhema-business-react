@@ -49,7 +49,7 @@ export async function apiFetch<T = any>(
 export interface PublicStatus {
   initialized: boolean;
   setupCodeRequired: boolean;
-  organization: { id: string; name: string; logo?: string; registrationNumber?: string; type?: string } | null;
+  organization: { id: string; name: string; logo?: string; registrationNumber?: string; type?: string; headquarters?: string } | null;
 }
 
 export interface LoginResponse {

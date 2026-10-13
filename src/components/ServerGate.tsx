@@ -29,7 +29,7 @@ const fallbackOrg = (s: PublicStatus | null): Organization => ({
   type: (s?.organization?.type as Organization['type']) ?? 'entreprise',
   registrationNumber: s?.organization?.registrationNumber ?? '',
   logo: s?.organization?.logo,
-  headquarters: 'Kinshasa',
+  headquarters: s?.organization?.headquarters ?? '',
   email: '',
   phone: '',
 } as Organization);

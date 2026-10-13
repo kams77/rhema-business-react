@@ -808,7 +808,7 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, {
         initialized,
         setupCodeRequired: !!config.setupCode,
-        organization: o ? { id: o.id, name: o.name, logo: o.logo, registrationNumber: o.registrationNumber, type: o.type } : null,
+        organization: o ? { id: o.id, name: o.name, logo: o.logo, registrationNumber: o.registrationNumber, type: o.type, headquarters: o.headquarters } : null,
       });
     }
 
