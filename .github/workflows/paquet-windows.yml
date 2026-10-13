@@ -1,0 +1,88 @@
+# Paquet « test sans Docker » pour Windows (XAMPP / MySQL) : construction puis essai réel sur Windows.
+name: Paquet Windows sans Docker
+
+on:
+  push:
+    branches: [main, 'securite/**', 'amelioration/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paquet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compilation de l'application (mode serveur)
+        run: |
+          npm install --no-audit --no-fund
+          VITE_BACKEND=api VITE_DEMO_MODE=false npm run build
+      - name: Construction du paquet
+        run: sh test-sans-docker/construire-paquet.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RHEMA-Test-Windows
+          path: paquet/RHEMA-Test-Windows.zip
+          retention-days: 30
+
+  essai-windows:
+    needs: paquet
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: RHEMA-Test-Windows
+      - name: Décompression du paquet
+        shell: pwsh
+        run: Expand-Archive RHEMA-Test-Windows.zip -DestinationPath C:\rhema
+
+      - name: "MariaDB, comme XAMPP (root sans mot de passe)"
+        shell: pwsh
+        run: |
+          $v = '10.11.9'
+          Invoke-WebRequest "https://archive.mariadb.org/mariadb-$v/winx64-packages/mariadb-$v-winx64.zip" -OutFile C:\mdb.zip
+          Expand-Archive C:\mdb.zip -DestinationPath C:\mdb
+          $b = "C:\mdb\mariadb-$v-winx64\bin"
+          $init = if (Test-Path "$b\mariadb-install-db.exe") { "$b\mariadb-install-db.exe" } else { "$b\mysql_install_db.exe" }
+          & $init --datadir=C:\mdbdata
+          $srv = if (Test-Path "$b\mariadbd.exe") { "$b\mariadbd.exe" } else { "$b\mysqld.exe" }
+          Start-Process -FilePath $srv -ArgumentList '--datadir=C:\mdbdata','--port=3306' -WindowStyle Hidden
+          for ($i = 0; $i -lt 60; $i++) { if ((Test-NetConnection 127.0.0.1 -Port 3306 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }; Start-Sleep 2 }
+          "MDB_BIN=$b" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Démarrage par le lanceur du paquet
+        shell: pwsh
+        run: |
+          $p = 'C:\rhema\RHEMA-Test-Windows'
+          Start-Process -FilePath "$p\node\node.exe" -ArgumentList "$p\app\lanceur.mjs",'--sans-navigateur' -WorkingDirectory $p -RedirectStandardOutput C:\lanceur.log -RedirectStandardError C:\lanceur.err
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) { try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health).StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep 2 }
+          Get-Content C:\lanceur.log; Get-Content C:\lanceur.err
+          if (-not $ok) { throw 'Le serveur ne répond pas.' }
+          Get-Content "$p\configuration.txt"
+
+      - name: Tests de l'API sur MySQL (Windows)
+        shell: pwsh
+        run: |
+          $p = 'C:\rhema\RHEMA-Test-Windows'
+          $code = (Select-String -Path "$p\configuration.txt" -Pattern '^CODE_INSTALLATION=(.*)$').Matches[0].Groups[1].Value
+          $env:BASE_URL = 'http://127.0.0.1:8080'
+          $env:SETUP_CODE = $code
+          & "$p\node\node.exe" server\tests\api.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Tests API en échec.' }
+          & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM rhema_test; SELECT name, role FROM rhema_test.users;"
+
+      - name: Réinitialisation par reinitialiser.bat
+        shell: pwsh
+        run: |
+          Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+          $p = 'C:\rhema\RHEMA-Test-Windows'
+          cmd /c "(echo EFFACER& echo.) | `"$p\reinitialiser.bat`""
+          $n = & "$env:MDB_BIN\mariadb.exe" -uroot -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='rhema_test'"
+          if ($n.Trim() -ne '0') { throw 'La base de test existe encore.' }
+          'Réinitialisation : OK'

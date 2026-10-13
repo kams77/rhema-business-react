@@ -11,3 +11,6 @@ coverage/
 mysql/
 sauvegardes/
 *.sql.gz
+
+# Kit de test sans Docker : réglages et mots de passe locaux
+configuration.txt

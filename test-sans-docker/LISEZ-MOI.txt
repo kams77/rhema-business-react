@@ -1,0 +1,56 @@
+﻿RHEMA BUSINESS - TEST SANS DOCKER (WINDOWS, AVEC MYSQL)
+=======================================================
+
+Ce dossier contient l'application RHEMA Business prête à lancer, avec son propre
+Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdmin).
+
+1. INSTALLER XAMPP (une seule fois)
+   - Téléchargez XAMPP pour Windows : https://www.apachefriends.org/fr/
+   - Installez-le dans C:\xampp (choix par défaut). Seuls « MySQL » et
+     « phpMyAdmin » (avec « Apache ») sont nécessaires.
+
+2. DÉMARRER MYSQL
+   - Ouvrez « XAMPP Control Panel ».
+   - Cliquez sur « Start » en face de MySQL (et de Apache pour phpMyAdmin).
+   - Les lignes passent au vert.
+
+3. DÉMARRER RHEMA BUSINESS
+   - Décompressez TOUT ce fichier ZIP dans un dossier simple, par exemple C:\RHEMA.
+   - Double-cliquez sur demarrer.bat.
+     (Si Windows affiche « Windows a protégé votre ordinateur » :
+      « Informations complémentaires » puis « Exécuter quand même ».)
+   - La première fois, la base « rhema_test » est créée automatiquement.
+   - La fenêtre affiche le CODE D'INSTALLATION puis ouvre le navigateur sur
+     http://localhost:8080
+   - LAISSEZ CETTE FENÊTRE OUVERTE pendant le test (la fermer arrête l'application).
+
+4. SAISIR VOS DONNÉES
+   - Collez le code d'installation, puis « Créer mon organisation ».
+   - À l'étape 2, choisissez « Partir d'un organigramme vide ».
+   - Connectez-vous avec le compte DG, puis :
+       Organigramme & Entités  -> Nouvelle Entité
+       Gestion & CRUD Agents   -> Enrôler un Collaborateur
+       (ou Import Massif CSV & Paie pour tous vos agents en une fois)
+
+5. VOIR LES DONNÉES DANS MYSQL
+   - http://localhost/phpmyadmin (Apache démarré dans XAMPP)
+   - Base « rhema_test » : tables users, app_data, audit_logs, sessions.
+   - Consultez sans modifier : passez toujours par l'application.
+
+6. ARRÊTER, REPRENDRE, EFFACER
+   - Arrêter   : fermez la fenêtre de demarrer.bat (les données restent dans MySQL).
+   - Reprendre : démarrez MySQL dans XAMPP, puis double-cliquez sur demarrer.bat.
+   - Effacer   : reinitialiser.bat, puis tapez EFFACER.
+
+RÉGLAGES : configuration.txt (créé au premier lancement)
+   - MYSQL_ADMIN_MOT_DE_PASSE : à remplir si votre MySQL root a un mot de passe
+     (XAMPP : vide par défaut).
+   - PORT : à changer (ex. 8090) si le port 8080 est déjà utilisé.
+   - Ce fichier contient les mots de passe de test : ne le partagez pas.
+
+PROBLÈMES FRÉQUENTS
+   - « MySQL ne répond pas »   : MySQL n'est pas démarré dans XAMPP.
+   - « MySQL refuse l'utilisateur root » : renseignez MYSQL_ADMIN_MOT_DE_PASSE.
+   - « Le port 8080 est déjà utilisé » : changez PORT dans configuration.txt.
+   - MySQL ne démarre pas dans XAMPP (port 3306 occupé) : un autre MySQL tourne
+     déjà ; utilisez-le en renseignant ses identifiants dans configuration.txt.

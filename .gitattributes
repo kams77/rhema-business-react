@@ -2,3 +2,4 @@
 *.bat text eol=crlf
 *.ps1 text eol=crlf
 *.sh  text eol=lf
+test-sans-docker/*.txt text eol=crlf
