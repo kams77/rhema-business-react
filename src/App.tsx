@@ -1728,6 +1728,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   details: `Ajout de l'entité ${entWithId.name} (${entWithId.level.toUpperCase()})`,
                 });
               }}
+              onUpdateEntity={(id, changes) => {
+                const before = entities.find(e => e.id === id);
+                setEntities(prev => prev.map(e => (e.id === id ? { ...e, ...changes } : e)));
+                // Le nom de l'entité figure aussi sur la fiche des agents qui y sont affectés.
+                if (before && changes.name && changes.name !== before.name) {
+                  setUsers(prev => prev.map(u => (u.departmentName === before.name &&
+                    [u.serviceId, u.divisionId, u.directionId, u.departementId].includes(id) ? { ...u, departmentName: changes.name } : u)));
+                }
+                addAuditLog({
+                  action: 'Modification Entité',
+                  category: 'hierarchy',
+                  details: `Entité ${before?.name ?? id} modifiée${changes.name && before && changes.name !== before.name ? ` (nouveau nom : ${changes.name})` : ''}.`,
+                });
+              }}
               onDeleteEntity={id => {
                 const target = entities.find(e => e.id === id);
                 setEntities(prev => prev.filter(e => e.id !== id));
@@ -1967,6 +1981,17 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   `Compte créé pour ${createdUser.name}. Identifiant : ${createdUser.email} — mot de passe ${DEMO_MODE ? 'de démonstration' : 'provisoire'} : ${tempPassword}. Notez-le : il ne sera plus affiché.`,
                   0
                 );
+              }}
+              onUpdateUser={(id, changes) => {
+                const target = users.find(u => u.id === id);
+                if (!target) return;
+                setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...changes } : u)));
+                addAuditLog({
+                  action: 'Modification Fiche Collaborateur',
+                  category: 'admin',
+                  details: `Fiche de ${target.name} modifiée (poste : ${changes.roleTitle ?? target.roleTitle}, affectation : ${changes.departmentName ?? target.departmentName ?? 'Direction Générale'}).`,
+                });
+                showToast('success', `Fiche de ${changes.name ?? target.name} enregistrée.`);
               }}
               onRevokeUser={id => {
                 const target = users.find(u => u.id === id);

@@ -12,9 +12,13 @@ import {
   ShieldAlert,
   ChevronRight,
   FolderTree,
-  KeyRound
+  KeyRound,
+  Pencil,
+  Trash2,
+  Users
 } from 'lucide-react';
-import { isEntityInUserScope } from '../utils/rbac';
+import { isEntityInUserScope, isEntityDescendantOf } from '../utils/rbac';
+import { canWriteEntity, canDeleteEntity } from '../../shared/access.mjs';
 
 interface HierarchyViewProps {
   organization: Organization;
@@ -23,6 +27,8 @@ interface HierarchyViewProps {
   users?: User[];
   onAddEntity?: (entity: Omit<HierarchicalEntity, 'id'>) => void;
   onDeleteEntity?: (id: string) => void;
+  /** Modification d'une entité (nom, code, responsable, rattachement). */
+  onUpdateEntity?: (id: string, changes: Partial<HierarchicalEntity>) => void;
   onOpenOrgIdentity?: () => void;
   onOpenInvitationsManager?: () => void;
   onOpenInviteAgent?: () => void;
@@ -33,7 +39,10 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
   organization,
   entities = [],
   currentUser,
+  users = [],
   onAddEntity = (_entity: Omit<HierarchicalEntity, 'id'>) => {},
+  onDeleteEntity,
+  onUpdateEntity,
   onOpenOrgIdentity = () => {},
   onOpenInvitationsManager,
   onOpenInviteAgent,
@@ -42,49 +51,177 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
 
-  // Formulaire d'ajout
-  const [newEntity, setNewEntity] = useState({
+  // Formulaire d'ajout / de modification d'une entité
+  const emptyForm = {
     name: '',
     code: '',
-    level: 'direction' as EntityLevel,
-    parentId: 'dept-daf',
+    level: 'departement' as EntityLevel,
+    parentId: '',
     managerName: '',
     managerEmail: '',
     description: '',
-  });
+  };
+  const [newEntity, setNewEntity] = useState(emptyForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const departements = entities.filter(e => e.level === 'departement');
-  const getDirections = (deptId: string) => entities.filter(e => e.level === 'direction' && e.parentId === deptId);
-  const getDivisions = (dirId: string) => entities.filter(e => e.level === 'division' && e.parentId === dirId);
-  const getServices = (divId: string) => entities.filter(e => e.level === 'service' && e.parentId === divId);
+  const LEVEL_ORDER: Record<EntityLevel, number> = { departement: 1, direction: 2, division: 3, service: 4 };
+  const LEVEL_LABEL: Record<EntityLevel, string> = { departement: 'Département', direction: 'Direction', division: 'Division', service: 'Service' };
+  const byId = new Map(entities.map(e => [e.id, e]));
+  const childrenOf = (id?: string) => entities.filter(e => (id ? e.parentId === id : !e.parentId || !byId.has(e.parentId)));
+  const countOf = (level: EntityLevel) => entities.filter(e => e.level === level).length;
+
+  /** Agents rattachés à l'entité ou à l'une de ses sous-entités (comptes non suspendus). */
+  const membersOf = (entityId: string) => users.filter(u => {
+    if (u.status === 'suspendu') return false;
+    const anchor = u.serviceId || u.divisionId || u.directionId || u.departementId;
+    return !!anchor && isEntityDescendantOf(anchor, entityId, entities);
+  }).length;
+
+  const dgNames = users.filter(u => u.role === 'dg' && u.status !== 'suspendu').map(u => u.name).join(' & ');
+  const responsible = organization.managerName || organization.directorGeneral || 'la Direction Générale';
+
+  /** Rattachements possibles : entités d'un niveau supérieur, hors de l'entité modifiée et de ses sous-entités. */
+  const parentOptions = entities.filter(e =>
+    LEVEL_ORDER[e.level] < LEVEL_ORDER[newEntity.level] &&
+    !(editingId && isEntityDescendantOf(e.id, editingId, entities))
+  );
+
+  const openCreate = () => {
+    setEditingId(null);
+    setFormError(null);
+    setNewEntity({ ...emptyForm, level: countOf('departement') ? 'direction' : 'departement', parentId: entities.find(e => e.level === 'departement')?.id || '' });
+    setShowAddModal(true);
+  };
+
+  const openEdit = (ent: HierarchicalEntity) => {
+    setEditingId(ent.id);
+    setFormError(null);
+    setNewEntity({
+      name: ent.name,
+      code: ent.code,
+      level: ent.level,
+      parentId: ent.parentId || '',
+      managerName: ent.managerName && ent.managerName !== 'Non assigné' ? ent.managerName : '',
+      managerEmail: ent.managerEmail || '',
+      description: ent.description || '',
+    });
+    setShowAddModal(true);
+  };
+
+  const askDelete = (ent: HierarchicalEntity) => {
+    const subs = childrenOf(ent.id).length;
+    const members = membersOf(ent.id);
+    if (subs > 0) {
+      setNotice(`« ${ent.name} » contient ${subs} sous-entité(s) : supprimez-les ou rattachez-les ailleurs d'abord.`);
+      return;
+    }
+    if (members > 0) {
+      setNotice(`${members} agent(s) sont affectés à « ${ent.name} » : changez leur affectation (Gestion & CRUD Agents → Modifier) avant de supprimer l'entité.`);
+      return;
+    }
+    if (!window.confirm(`Supprimer l'entité « ${ent.name} » (${ent.code}) ?`)) return;
+    onDeleteEntity?.(ent.id);
+    setNotice(`Entité « ${ent.name} » supprimée.`);
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEntity.name || !newEntity.code) return;
-
-    onAddEntity({
-      name: newEntity.name,
-      code: newEntity.code.toUpperCase(),
+    const name = newEntity.name.trim();
+    const code = newEntity.code.trim().toUpperCase();
+    if (!name || !code) return;
+    if (entities.some(x => x.id !== editingId && x.code.toUpperCase() === code)) {
+      setFormError(`Le code ${code} est déjà utilisé par une autre entité.`);
+      return;
+    }
+    const fields = {
+      name,
+      code,
       level: newEntity.level,
       parentId: newEntity.parentId || undefined,
-      organizationId: organization.id,
-      managerName: newEntity.managerName || 'Non assigné',
-      managerEmail: newEntity.managerEmail || 'contact@rhemabusiness.com',
-      managerRole: 'directeur',
-      description: newEntity.description || 'Entité rattachée à l’organigramme.',
-      agentCount: 5,
-    });
-
+      managerName: newEntity.managerName.trim() || 'Non assigné',
+      managerEmail: newEntity.managerEmail.trim() || undefined,
+      description: newEntity.description.trim() || undefined,
+    };
+    const before = editingId ? byId.get(editingId) : undefined;
+    const after = { ...(before || {}), ...fields, id: editingId || 'nouvelle', organizationId: organization.id };
+    if (!canWriteEntity(currentUser, before, after, entities)) {
+      setFormError('Ce rattachement sort de votre périmètre : choisissez une entité placée sous votre responsabilité.');
+      return;
+    }
+    if (editingId) {
+      onUpdateEntity?.(editingId, fields);
+      setNotice(`Entité « ${name} » modifiée.`);
+    } else {
+      onAddEntity({ ...fields, organizationId: organization.id, agentCount: 0 });
+      setNotice(`Entité « ${name} » ajoutée.`);
+    }
     setShowAddModal(false);
-    setNewEntity({
-      name: '',
-      code: '',
-      level: 'direction',
-      parentId: 'dept-daf',
-      managerName: '',
-      managerEmail: '',
-      description: '',
-    });
+    setEditingId(null);
+    setNewEntity(emptyForm);
+  };
+
+  /** Carte d'une entité et, en dessous, ses sous-entités (tous niveaux, rattachements libres). */
+  const LEVEL_STYLE: Record<EntityLevel, { tag: string; card: string; badge: string }> = {
+    departement: { tag: 'DEP', card: 'bg-slate-900/90 border-purple-500/40', badge: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
+    direction: { tag: 'DIR', card: 'bg-slate-900/80 border-blue-500/40', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+    division: { tag: 'DIV', card: 'bg-slate-900/70 border-cyan-500/40', badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' },
+    service: { tag: 'SRV', card: 'bg-emerald-950/20 border-emerald-500/40', badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+  };
+  const renderNode = (ent: HierarchicalEntity, depth: number): React.ReactNode => {
+    const st = LEVEL_STYLE[ent.level] || LEVEL_STYLE.service;
+    const inScope = isEntityInUserScope(currentUser, ent.id, entities);
+    const editable = !!onUpdateEntity && canWriteEntity(currentUser, ent, ent, entities);
+    const removable = !!onDeleteEntity && canDeleteEntity(currentUser, ent, entities);
+    const kids = childrenOf(ent.id).sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || a.name.localeCompare(b.name, 'fr'));
+    const members = membersOf(ent.id);
+    return (
+      <div key={ent.id} className="space-y-2">
+        <div className={`p-3.5 rounded-xl border transition-all ${st.card} ${inScope ? '' : 'opacity-85'}`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+              <div className={`w-9 h-9 rounded-lg border flex items-center justify-center text-[11px] font-bold shrink-0 ${st.badge}`}>{st.tag}</div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${st.badge}`}>
+                    {LEVEL_LABEL[ent.level]} ({ent.code})
+                  </span>
+                  <span className="text-xs text-slate-300">Responsable : {ent.managerName || 'Non assigné'}</span>
+                  {inScope && currentUser.role !== 'dg' && (
+                    <span className="text-[10px] px-1.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">✓ Dans votre périmètre</span>
+                  )}
+                </div>
+                <h4 className="text-sm font-bold text-white mt-0.5">{ent.name}</h4>
+                {ent.description && <p className="text-xs text-slate-400 mt-0.5">{ent.description}</p>}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+              <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                <Users className="w-3 h-3" /> {members} agent{members > 1 ? 's' : ''}
+              </span>
+              {editable && (
+                <button type="button" onClick={() => openEdit(ent)} title="Modifier" aria-label={`Modifier ${ent.name}`}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {removable && (
+                <button type="button" onClick={() => askDelete(ent)} title="Supprimer" aria-label={`Supprimer ${ent.name}`}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-900/40 text-red-400 border border-slate-700">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        {kids.length > 0 && (
+          <div className={`space-y-2 border-l-2 border-slate-700/50 ${depth === 0 ? 'pl-4 sm:pl-8' : 'pl-4 sm:pl-6'}`}>
+            {kids.map(k => renderNode(k, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -110,7 +247,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
               {organization.name}
             </h1>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
-              Identité et logo officiels définis par le Responsable (Junior Monya). Supervision globale par le DG et administration déconcentrée par les chefs d'entités.
+              Identité et logo officiels définis par {responsible}. Supervision globale par le DG et administration déconcentrée par les chefs d'entités.
             </p>
           </div>
         </div>
@@ -150,7 +287,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
           </button>
 
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={openCreate}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-lg shadow-indigo-600/30 transition"
           >
             <Plus className="w-4 h-4" />
@@ -168,7 +305,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
             <span>Départements</span>
             <CheckCircle2 className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">2 configurés</div>
+          <div className="text-[11px] text-slate-400 mt-1">{countOf('departement')} configuré{''}{countOf('departement') > 1 ? 's' : ''}</div>
         </div>
 
         {/* Niveau 2 : Directions */}
@@ -178,7 +315,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
             <span>Directions</span>
             <CheckCircle2 className="w-4 h-4 text-blue-400" />
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">3 configurées</div>
+          <div className="text-[11px] text-slate-400 mt-1">{countOf('direction')} configuré{'e'}{countOf('direction') > 1 ? 's' : ''}</div>
         </div>
 
         {/* Niveau 3 : Divisions */}
@@ -188,7 +325,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
             <span>Divisions</span>
             <CheckCircle2 className="w-4 h-4 text-cyan-400" />
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">3 configurées</div>
+          <div className="text-[11px] text-slate-400 mt-1">{countOf('division')} configuré{'e'}{countOf('division') > 1 ? 's' : ''}</div>
         </div>
 
         {/* Niveau 4 : Services & Agents */}
@@ -198,7 +335,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
             <span>Services & Agents</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">3 configurés</div>
+          <div className="text-[11px] text-slate-400 mt-1">{countOf('service')} configuré{''}{countOf('service') > 1 ? 's' : ''}</div>
         </div>
       </div>
 
@@ -213,7 +350,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
               <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Haute Hiérarchie (Super Utilisateur Global)
               </span>
-              <span className="text-xs text-slate-400">Dr. Amadou Diallo & Mme Clarisse Nguema</span>
+              <span className="text-xs text-slate-400">{dgNames || 'Direction Générale'}</span>
             </div>
             <h2 className="text-base font-bold text-white mt-0.5">
               Présidence & Direction Générale (PDG / DG / DGA)
@@ -230,171 +367,52 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
         </div>
       </div>
 
-      {/* 4. ARBORESCENCE HIÉRARCHIQUE DES DÉPARTEMENTS */}
-      <div className="space-y-6">
-        {departements.map((dept) => {
-          const hasAccessToDept = isEntityInUserScope(currentUser, dept.id, entities);
-          const deptDirections = getDirections(dept.id);
-
-          return (
-            <div key={dept.id} className="space-y-3">
-              {/* Carte Département */}
-              <div className={`p-4 rounded-xl border transition-all ${
-                hasAccessToDept 
-                  ? 'bg-slate-900/90 border-purple-500/40 shadow-md' 
-                  : 'bg-slate-900/40 border-slate-800/80 opacity-90'
-              }`}>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start sm:items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-bold shrink-0 text-sm">
-                      DEP
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                          DÉPARTEMENT ({dept.code})
-                        </span>
-                        <span className="text-xs font-semibold text-slate-300">Responsable : {dept.managerName}</span>
-                        {hasAccessToDept && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                            ✓ Dans votre périmètre
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-sm font-bold text-white mt-1">{dept.name}</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">{dept.description}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 self-end sm:self-center">
-                    <div className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700">
-                      {dept.agentCount} Agents
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Sous-Directions */}
-              {deptDirections.length > 0 && (
-                <div className="pl-4 sm:pl-8 space-y-3 border-l-2 border-purple-500/20">
-                  {deptDirections.map((dir) => {
-                    const hasAccessToDir = isEntityInUserScope(currentUser, dir.id, entities);
-                    const dirDivisions = getDivisions(dir.id);
-
-                    return (
-                      <div key={dir.id} className="space-y-2">
-                        {/* Carte Direction */}
-                        <div className={`p-3.5 rounded-xl border transition-all ${
-                          hasAccessToDir 
-                            ? 'bg-slate-900/80 border-blue-500/40' 
-                            : 'bg-slate-900/30 border-slate-800 opacity-85'
-                        }`}>
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-300 text-xs font-bold shrink-0">
-                                DIR
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                                    DIRECTION ({dir.code})
-                                  </span>
-                                  <span className="text-xs font-medium text-slate-300">Directeur : {dir.managerName}</span>
-                                </div>
-                                <h4 className="text-xs font-bold text-white mt-0.5">{dir.name}</h4>
-                              </div>
-                            </div>
-
-                            <span className="text-[11px] text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 self-end sm:self-center">
-                              {dir.agentCount} collaborateurs
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Sous-Divisions */}
-                        {dirDivisions.length > 0 && (
-                          <div className="pl-4 sm:pl-6 space-y-2 border-l-2 border-blue-500/20">
-                            {dirDivisions.map((div) => {
-                              const hasAccessToDiv = isEntityInUserScope(currentUser, div.id, entities);
-                              const divServices = getServices(div.id);
-
-                              return (
-                                <div key={div.id} className="space-y-2">
-                                  {/* Carte Division */}
-                                  <div className="p-3 rounded-lg border bg-slate-900/70 border-cyan-500/40">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-bold shrink-0">
-                                          DIV
-                                        </div>
-                                        <div>
-                                          <span className="text-[11px] font-semibold text-cyan-300">Division : {div.name}</span>
-                                          <span className="text-[11px] text-slate-400 ml-2">Chef : {div.managerName}</span>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* Sous-Services */}
-                                  {divServices.length > 0 && (
-                                    <div className="pl-4 sm:pl-6 space-y-1.5 border-l-2 border-cyan-500/20">
-                                      {divServices.map((srv) => (
-                                        <div
-                                          key={srv.id}
-                                          className="p-2.5 rounded-lg border text-xs flex items-center justify-between bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 uppercase">
-                                              SRV
-                                            </span>
-                                            <span className="font-semibold text-slate-200">
-                                              Service {srv.name}
-                                            </span>
-                                            <span className="text-slate-400 text-[11px] ml-1">
-                                              Chef de Service : {srv.managerName}
-                                            </span>
-                                          </div>
-
-                                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
-                                            Accès sécurisé
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      {/* 4. ARBORESCENCE HIÉRARCHIQUE (tous niveaux, à partir des entités sans parent) */}
+      {notice && (
+        <div role="status" className="flex items-start justify-between gap-3 p-3 rounded-xl border border-sky-500/30 bg-sky-950/30 text-xs text-sky-200">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} className="text-sky-300 hover:text-white" aria-label="Fermer">✕</button>
+        </div>
+      )}
+      <div className="space-y-4">
+        {entities.length === 0 ? (
+          <div className="p-6 rounded-2xl border border-dashed border-slate-700 text-center space-y-2">
+            <FolderTree className="w-8 h-8 text-slate-500 mx-auto" />
+            <p className="text-sm font-bold text-white">Votre organigramme est vide</p>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              Ajoutez vos départements, directions, divisions et services avec « Nouvelle Entité », puis affectez-y vos agents dans « Gestion & CRUD Agents ».
+            </p>
+            <button type="button" onClick={openCreate} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white">
+              <Plus className="w-4 h-4" /> Ajouter la première entité
+            </button>
+          </div>
+        ) : (
+          childrenOf(undefined)
+            .sort((x, y) => LEVEL_ORDER[x.level] - LEVEL_ORDER[y.level] || x.name.localeCompare(y.name, 'fr'))
+            .map(ent => renderNode(ent, 0))
+        )}
       </div>
 
-      {/* Modal Ajout d'Entité */}
+      {/* Modal Ajout / Modification d'Entité */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Plus className="w-4 h-4 text-indigo-400" /> Ajouter une Entité Hiérarchique
+                {editingId ? <Pencil className="w-4 h-4 text-indigo-400" /> : <Plus className="w-4 h-4 text-indigo-400" />}
+                {editingId ? 'Modifier l\'entité' : 'Ajouter une entité'}
               </h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">✕</button>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white" aria-label="Fermer">✕</button>
             </div>
 
             <form onSubmit={handleCreate} className="space-y-3 text-xs">
               <div>
-                <label className="text-slate-400 font-semibold block mb-1">Nom de l'entité *</label>
+                <label htmlFor="ent-name" className="text-slate-400 font-semibold block mb-1">Nom de l'entité *</label>
                 <input
+                  id="ent-name"
                   type="text"
                   required
-                  placeholder="Ex: Direction des Infrastructures Réseaux"
+                  placeholder="Ex : Direction des Infrastructures Réseaux"
                   value={newEntity.name}
                   onChange={e => setNewEntity({ ...newEntity, name: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
@@ -403,8 +421,9 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-slate-400 font-semibold block mb-1">Code Service</label>
+                  <label htmlFor="ent-code" className="text-slate-400 font-semibold block mb-1">Code *</label>
                   <input
+                    id="ent-code"
                     type="text"
                     required
                     placeholder="DIR-INFRA"
@@ -414,11 +433,17 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 font-semibold block mb-1">Niveau</label>
+                  <label htmlFor="ent-level" className="text-slate-400 font-semibold block mb-1">Niveau</label>
                   <select
+                    id="ent-level"
                     value={newEntity.level}
-                    onChange={e => setNewEntity({ ...newEntity, level: e.target.value as EntityLevel })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white"
+                    disabled={!!editingId}
+                    onChange={e => {
+                      const level = e.target.value as EntityLevel;
+                      const parentOk = entities.some(x => x.id === newEntity.parentId && LEVEL_ORDER[x.level] < LEVEL_ORDER[level]);
+                      setNewEntity({ ...newEntity, level, parentId: parentOk ? newEntity.parentId : '' });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white disabled:opacity-60"
                   >
                     <option value="departement">Département</option>
                     <option value="direction">Direction</option>
@@ -429,15 +454,62 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
               </div>
 
               <div>
-                <label className="text-slate-400 font-semibold block mb-1">Responsable désigné</label>
+                <label htmlFor="ent-parent" className="text-slate-400 font-semibold block mb-1">Rattachée à</label>
+                <select
+                  id="ent-parent"
+                  value={newEntity.parentId}
+                  onChange={e => setNewEntity({ ...newEntity, parentId: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white"
+                >
+                  <option value="">Direction Générale (aucune entité au-dessus)</option>
+                  {parentOptions.map(p => (
+                    <option key={p.id} value={p.id}>{LEVEL_LABEL[p.level]} — {p.name} ({p.code})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label htmlFor="ent-manager" className="text-slate-400 font-semibold block mb-1">Responsable</label>
+                  <input
+                    id="ent-manager"
+                    type="text"
+                    placeholder="Nom du responsable"
+                    value={newEntity.managerName}
+                    onChange={e => setNewEntity({ ...newEntity, managerName: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="ent-email" className="text-slate-400 font-semibold block mb-1">Email du responsable</label>
+                  <input
+                    id="ent-email"
+                    type="email"
+                    placeholder="nom@entreprise.cd"
+                    value={newEntity.managerEmail}
+                    onChange={e => setNewEntity({ ...newEntity, managerEmail: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="ent-desc" className="text-slate-400 font-semibold block mb-1">Mission (facultatif)</label>
                 <input
+                  id="ent-desc"
                   type="text"
-                  placeholder="M. Nom du Directeur"
-                  value={newEntity.managerName}
-                  onChange={e => setNewEntity({ ...newEntity, managerName: e.target.value })}
+                  placeholder="Ex : Paie, recrutement et dossiers du personnel"
+                  value={newEntity.description}
+                  onChange={e => setNewEntity({ ...newEntity, description: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
                 />
               </div>
+
+              <p className="text-[11px] text-slate-500">
+                Le responsable affiché ici est indicatif : les visas et validations reviennent au compte qui occupe le poste (rôle + affectation) dans « Gestion & CRUD Agents ».
+              </p>
+
+              {formError && <p role="alert" className="text-[11px] text-red-400 font-semibold">{formError}</p>}
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
                 <button
@@ -451,7 +523,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
                   type="submit"
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow"
                 >
-                  Enregistrer l'entité
+                  {editingId ? 'Enregistrer les modifications' : 'Enregistrer l\'entité'}
                 </button>
               </div>
             </form>

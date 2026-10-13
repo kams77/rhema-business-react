@@ -20,7 +20,8 @@ import {
   Crown,
   Briefcase,
   KeyRound,
-  Copy
+  Copy,
+  Pencil
 } from 'lucide-react';
 import { API_MODE } from '../config';
 import { api } from '../lib/api';
@@ -38,6 +39,8 @@ interface AgentCrudViewProps {
   entities: HierarchicalEntity[];
   organization?: Organization;
   onCreateUser: (newUser: Omit<User, 'id' | 'failedAccessAttempts'>) => void;
+  /** Modification de la fiche d'un collaborateur (nom, poste, rang, affectation…). */
+  onUpdateUser?: (userId: string, changes: Partial<User>) => void;
   onRevokeUser: (userId: string) => void;
   onToggleUserStatus: (userId: string) => void;
   onToggleDelegation?: (userId: string) => void;
@@ -49,6 +52,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   entities,
   organization,
   onCreateUser,
+  onUpdateUser,
   onRevokeUser,
   onToggleUserStatus,
   onToggleDelegation,
@@ -84,6 +88,62 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   const [phone, setPhone] = useState('');
   const [entityId, setEntityId] = useState(scopedEntities[0]?.id || '');
   const [canApproveServiceDocuments, setCanApproveServiceDocuments] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const newMatricule = () => `MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+
+  /**
+   * Affectation complète : l'entité choisie ET toutes celles au-dessus (département, direction,
+   * division, service). Sans cela, un agent d'un service ne verrait pas les documents de son département.
+   */
+  const placementFor = (targetId: string) => {
+    const out: Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> = {
+      departementId: undefined, directionId: undefined, divisionId: undefined, serviceId: undefined,
+      departmentName: 'Direction Générale',
+    };
+    const byId = new Map(entities.map(e => [e.id, e]));
+    let cur = byId.get(targetId);
+    if (cur) out.departmentName = cur.name;
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      if (cur.level === 'service' && !out.serviceId) out.serviceId = cur.id;
+      if (cur.level === 'division' && !out.divisionId) out.divisionId = cur.id;
+      if (cur.level === 'direction' && !out.directionId) out.directionId = cur.id;
+      if (cur.level === 'departement' && !out.departementId) out.departementId = cur.id;
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    return out;
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setFormError(null);
+    setName('');
+    setEmail('');
+    setPhone('');
+    setMatricule(newMatricule());
+    setRole('agent');
+    setRoleTitle('Agent Opérationnel');
+    setCanApproveServiceDocuments(false);
+    setEntityId(scopedEntities[0]?.id || '');
+    setShowModal(true);
+  };
+
+  const openEdit = (u: User) => {
+    setEditingId(u.id);
+    setFormError(null);
+    setName(u.name);
+    setEmail(u.email);
+    setPhone(u.phone || '');
+    setMatricule(u.matricule || u.employeeCode || '');
+    setRole(u.role);
+    setRoleTitle(u.roleTitle);
+    setCanApproveServiceDocuments(!!u.canApproveServiceDocuments);
+    setEntityId(u.serviceId || u.divisionId || u.directionId || u.departementId || '');
+    setShowModal(true);
+  };
 
   // 1. Filtrage selon les RÈGLES STRICTES DE CONFIDENTIALITÉ (1 à 6)
   // - DG : voit tout le personnel de l'entreprise
@@ -117,31 +177,36 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
+    const mail = email.trim().toLowerCase();
+    const mat = matricule.trim();
+    if (users.some(u => u.id !== editingId && u.email.toLowerCase() === mail)) {
+      setFormError(`L'email ${mail} est déjà utilisé par un autre compte.`);
+      return;
+    }
+    if (mat && users.some(u => u.id !== editingId && (u.matricule || '').toUpperCase() === mat.toUpperCase())) {
+      setFormError(`Le matricule ${mat} est déjà attribué.`);
+      return;
+    }
 
-    const targetEnt = entities.find(e => e.id === entityId);
-
-    onCreateUser({
+    const fields = {
       name: name.trim(),
-      email: email.trim().toLowerCase(),
-      matricule,
-      employeeCode: matricule,
+      email: mail,
+      matricule: mat,
+      employeeCode: mat,
       role,
-      roleTitle,
-      organizationId: organization?.id || 'org-1',
-      serviceId: targetEnt?.level === 'service' ? targetEnt.id : undefined,
-      divisionId: targetEnt?.level === 'division' ? targetEnt.id : undefined,
-      directionId: targetEnt?.level === 'direction' ? targetEnt.id : undefined,
-      departementId: targetEnt?.level === 'departement' ? targetEnt.id : undefined,
-      departmentName: targetEnt?.name || 'Service Opérationnel',
-      status: 'actif',
-      phone,
+      roleTitle: roleTitle.trim(),
+      ...placementFor(entityId),
+      phone: phone.trim(),
       canCreateSubAgents: role !== 'agent',
       canApproveServiceDocuments: role === 'agent' ? canApproveServiceDocuments : true,
-    });
+    };
 
-    setName('');
-    setEmail('');
-    setMatricule(`MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+    if (editingId) {
+      onUpdateUser?.(editingId, fields);
+    } else {
+      onCreateUser({ ...fields, organizationId: organization?.id || 'org-1', status: 'actif' });
+    }
+    setEditingId(null);
     setShowModal(false);
   };
 
@@ -164,10 +229,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
 
         {canRecruit && (
           <button
-            onClick={() => {
-              if (scopedEntities.length > 0) setEntityId(scopedEntities[0].id);
-              setShowModal(true);
-            }}
+            onClick={openCreate}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition active:scale-95"
           >
             <UserPlus className="w-4 h-4" />
@@ -347,6 +409,15 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                     )}
                   </button>
 
+                  {onUpdateUser && (
+                    <button
+                      onClick={() => openEdit(user)}
+                      className="flex items-center gap-1.5 text-slate-300 hover:text-white transition"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Modifier
+                    </button>
+                  )}
+
                   {API_MODE && (
                     <button
                       onClick={() => void handleResetPassword(user)}
@@ -422,7 +493,8 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-blue-400" /> Enrôler un Nouveau Collaborateur
+                {editingId ? <Pencil className="w-5 h-5 text-blue-400" /> : <UserPlus className="w-5 h-5 text-blue-400" />}
+                {editingId ? `Modifier la fiche de ${name || 'ce collaborateur'}` : 'Enrôler un Nouveau Collaborateur'}
               </h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -448,7 +520,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   <input
                     type="email"
                     required
-                    placeholder="p.kabeya@rhemabusiness.com"
+                    placeholder="p.kabeya@entreprise.cd"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
@@ -516,6 +588,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   onChange={e => setEntityId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                 >
+                  {currentUser.role === 'dg' && <option value="">Direction Générale (aucune entité)</option>}
                   {scopedEntities.map(ent => (
                     <option key={ent.id} value={ent.id}>
                       {ent.name} ({ent.level.toUpperCase()})
@@ -543,6 +616,8 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                 </div>
               )}
 
+              {formError && <p role="alert" className="text-[11px] text-red-400 font-semibold">{formError}</p>}
+
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
@@ -555,7 +630,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   type="submit"
                   className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-600/30"
                 >
-                  Enrôler l'agent
+                  {editingId ? 'Enregistrer' : "Enrôler l'agent"}
                 </button>
               </div>
             </form>
