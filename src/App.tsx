@@ -2032,7 +2032,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           )}
 
           {currentTab === 'audit' && (
-            <AuditView logs={logs} organizationName={currentOrg?.name} />
+            <AuditView logs={logs} organizationName={currentOrg?.name} organization={currentOrg} />
           )}
 
           {currentTab === 'laravel' && (

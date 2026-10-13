@@ -829,7 +829,7 @@ export const HubsStockManagementTab: React.FC<HubsStockManagementTabProps> = ({
                 <span>Documents & Circuits d'Approbation du Hub</span>
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Conformément aux normes RHEMA BUSINESS et à l'arrêté ministériel RDC sur les télécoms, tout flux de matériel est régi par un document normé et scellé par signature électronique.
+                Conformément aux normes de {organization.name} et à l'arrêté ministériel RDC sur les télécoms, tout flux de matériel est régi par un document normé et scellé par signature électronique.
               </p>
             </div>
 
@@ -1077,7 +1077,7 @@ const AddHubModal: React.FC<AddHubModalProps> = ({ hubs, onClose, onSave }) => {
             </div>
             <div>
               <h3 className="font-bold text-sm text-white">Nouveau Hub Provincial RDC</h3>
-              <p className="text-xs text-slate-400">Création et rattachement au réseau logistique de RHEMA BUSINESS</p>
+              <p className="text-xs text-slate-400">Création et rattachement au réseau logistique de l'organisation</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white">

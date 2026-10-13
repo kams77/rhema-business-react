@@ -24,9 +24,14 @@ import {
   X,
   Lock,
   Eye,
-  EyeOff
+  EyeOff,
+  Image as ImageIcon
 } from 'lucide-react';
 import { getRoleBadgeClass, getRoleTitleFr } from '../utils/rbac';
+import { BrandingFields, type BrandingValue } from './branding/BrandingFields';
+import { sanitizeBranding } from '../../shared/branding.mjs';
+
+type WizardStep = 1 | 2 | 3 | 4 | 5;
 
 interface OrganizationOnboardingWizardProps {
   isOpen: boolean;
@@ -43,7 +48,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
   onClose,
   onCompleteOnboarding,
 }) => {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<WizardStep>(1);
   const [copiedLogins, setCopiedLogins] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -69,7 +74,10 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
     dgPassword: initialPassword(),
   });
 
-  // Étape 2 : organigramme vide (saisie de vos propres entités et agents ensuite) ou modèle d'exemple.
+  // Étape 2 : identité visuelle (logo, papier à en-tête, pied de page).
+  const [brand, setBrand] = useState<BrandingValue>({ branding: {} });
+
+  // Étape 3 : organigramme vide (saisie de vos propres entités et agents ensuite) ou modèle d'exemple.
   const [useModel, setUseModel] = useState<boolean>(DEMO_MODE);
   const [stepError, setStepError] = useState<string | null>(null);
 
@@ -220,7 +228,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
   const goNext = () => {
     const err = step === 1 ? stepOneError() : null;
     setStepError(err);
-    if (!err) setStep((step + 1) as 1 | 2 | 3 | 4);
+    if (!err) setStep((step + 1) as WizardStep);
   };
 
   const copyAllCredentials = () => {
@@ -263,6 +271,8 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       hasServices: true,
       description: orgForm.description,
       createdAt: new Date().toISOString().slice(0, 10),
+      logo: brand.logo,
+      branding: sanitizeBranding(brand.branding),
     };
 
     const modelEntities: HierarchicalEntity[] = [
@@ -361,7 +371,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white">Assistant Déploiement & Première Utilisation</h2>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-bold border border-indigo-500/30">
-                  Étape {step} / 4
+                  Étape {step} / 5
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -378,19 +388,22 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
           </button>
         </div>
 
-        {/* Barre de progression des 4 étapes */}
-        <div className="grid grid-cols-4 border-b border-slate-800 text-xs font-semibold text-center bg-slate-950/40">
+        {/* Barre de progression des 5 étapes */}
+        <div className="grid grid-cols-5 border-b border-slate-800 text-[11px] sm:text-xs font-semibold text-center bg-slate-950/40">
           <div className={`p-3 border-r border-slate-800 transition ${step === 1 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
             1. Organisation & Légal
           </div>
           <div className={`p-3 border-r border-slate-800 transition ${step === 2 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            2. Arborescence & Postes
+            2. Logo, En-tête & Pied
           </div>
           <div className={`p-3 border-r border-slate-800 transition ${step === 3 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            3. Logins Obligatoires Agents
+            3. Arborescence & Postes
           </div>
-          <div className={`p-3 transition ${step === 4 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            4. Déploiement & Connexion
+          <div className={`p-3 border-r border-slate-800 transition ${step === 4 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
+            4. Logins des Agents
+          </div>
+          <div className={`p-3 transition ${step === 5 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
+            5. Déploiement & Connexion
           </div>
         </div>
 
@@ -496,6 +509,28 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     placeholder="Avenue Bangala, Kinshasa - RD CONGO"
                   />
                 </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Email officiel de l'entreprise</label>
+                  <input
+                    type="email"
+                    value={orgForm.email}
+                    onChange={e => setOrgForm({ ...orgForm, email: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
+                    placeholder="contact@votre-entreprise.cd"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Téléphone</label>
+                  <input
+                    type="tel"
+                    value={orgForm.phone}
+                    onChange={e => setOrgForm({ ...orgForm, phone: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
+                    placeholder="+243 …"
+                  />
+                </div>
               </div>
 
               {/* Compte Directeur Général */}
@@ -547,8 +582,36 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             </div>
           )}
 
-          {/* ÉTAPE 2 : ARBORESCENCE & DÉPARTEMENTS */}
+          {/* ÉTAPE 2 : IDENTITÉ VISUELLE (LOGO, EN-TÊTE, PIED DE PAGE) */}
           {step === 2 && (
+            <div className="space-y-4">
+              <div className="bg-violet-950/40 border border-violet-500/30 rounded-2xl p-4 text-xs text-violet-200 flex items-start gap-3">
+                <ImageIcon className="w-5 h-5 text-violet-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-white text-sm">Logo, papier à en-tête et pied de page</h4>
+                  <p className="mt-1 leading-relaxed text-violet-200/90">
+                    Joignez le logo et, si vous en avez, l'en-tête et le pied de page officiels de l'entreprise : ils seront imprimés sur les documents, bordereaux et exports PDF. Tout est facultatif et modifiable plus tard par le DG (« Identité & Logo »).
+                  </p>
+                </div>
+              </div>
+              <BrandingFields
+                value={brand}
+                onChange={setBrand}
+                identity={{
+                  name: orgForm.name || 'Votre entreprise',
+                  headquarters: orgForm.headquarters,
+                  rccm: orgForm.rccm,
+                  idNat: orgForm.idNat,
+                  numImpot: orgForm.numImpot,
+                  email: orgForm.email,
+                  phone: orgForm.phone,
+                }}
+              />
+            </div>
+          )}
+
+          {/* ÉTAPE 3 : ARBORESCENCE & DÉPARTEMENTS */}
+          {step === 3 && (
             <div className="space-y-4">
               <div className="bg-sky-950/40 border border-sky-500/30 rounded-2xl p-4 text-xs text-sky-200 flex items-start gap-3">
                 <Layers className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
@@ -635,8 +698,8 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             </div>
           )}
 
-          {/* ÉTAPE 3 : OBLIGATION DE CONNECTIVITÉ DE TOUS LES AGENTS */}
-          {step === 3 && (
+          {/* ÉTAPE 4 : OBLIGATION DE CONNECTIVITÉ DE TOUS LES AGENTS */}
+          {step === 4 && (
             <div className="space-y-4">
               <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 text-xs text-emerald-200 flex items-start gap-3">
                 <Key className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
@@ -719,8 +782,8 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             </div>
           )}
 
-          {/* ÉTAPE 4 : DÉPLOIEMENT & VALIDATION FINALE */}
-          {step === 4 && (
+          {/* ÉTAPE 5 : DÉPLOIEMENT & VALIDATION FINALE */}
+          {step === 5 && (
             <div className="space-y-6 text-center py-4">
               <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border-2 border-emerald-500/40 shadow-xl">
                 <CheckCircle2 className="w-8 h-8" />
@@ -777,7 +840,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             {step > 1 && (
               <button
                 type="button"
-                onClick={() => { setStepError(null); setStep((step - 1) as 1 | 2 | 3 | 4); }}
+                onClick={() => { setStepError(null); setStep((step - 1) as WizardStep); }}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -795,7 +858,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               Annuler
             </button>
 
-            {step < 4 ? (
+            {step < 5 ? (
               <button
                 type="button"
                 onClick={goNext}

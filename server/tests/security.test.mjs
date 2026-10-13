@@ -194,6 +194,33 @@ let last;
 for (let i = 0; i < 11; i++) last = await anon('POST', '/api/setup', { setupCode: `essai-${i}` });
 assert(last.status === 429, 'installation : essais répétés du code bloqués');
 
+// --- Identité visuelle : logo, en-tête et pied de page ------------------------
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+const JPG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQ==';
+r = await put(boss, 'currentOrg', {
+  id: 'o', name: 'SEC', logo: PNG,
+  branding: { slogan: '  Réseaux & VSAT  ', color: '#1E40AF', headerImage: JPG, footerImage: PNG, footerText: 'Ligne 1\nLigne 2\nLigne 3\nLigne 4', inconnu: 'x' },
+});
+assert(r.status === 200, 'identité visuelle : enregistrement par le DG');
+r = await boss('GET', '/api/data/currentOrg');
+let o = r.json.value;
+assert(o.logo === PNG && o.branding.headerImage === JPG && o.branding.footerImage === PNG, 'identité visuelle : logo, en-tête et pied (PNG/JPEG intégrés) conservés');
+assert(o.branding.slogan === 'Réseaux & VSAT' && o.branding.color === '#1e40af' && o.branding.footerText.split('\n').length === 3 && !('inconnu' in o.branding),
+  'identité visuelle : textes nettoyés, pied limité à 3 lignes, champs inconnus retirés');
+r = await put(boss, 'currentOrg', {
+  id: 'o', name: 'SEC', logo: 'https://pisteur.example/logo.png',
+  branding: { headerImage: 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+', footerImage: 'data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==', color: 'red;}' },
+});
+o = (await boss('GET', '/api/data/currentOrg')).json.value;
+assert(r.status === 200 && !o.logo && !o.branding, 'identité visuelle : lien externe, SVG, faux PNG et couleur invalide rejetés');
+r = await put(boss, 'currentOrg', { id: 'o', name: 'SEC', logo: `data:image/png;base64,iVBORw0KGgo${'A'.repeat(500_000)}` });
+o = (await boss('GET', '/api/data/currentOrg')).json.value;
+assert(!o.logo, 'identité visuelle : logo trop lourd rejeté');
+r = await put(a1, 'currentOrg', { id: 'o', name: 'PIRATE', logo: PNG });
+assert(r.status === 403, 'identité visuelle : un agent ne peut pas changer le logo ni l\'en-tête');
+const csp = (await fetch(`${BASE}/api/public/status`)).headers.get('content-security-policy') || '';
+assert(/img-src 'self' data: blob:;/.test(csp) && !/img-src[^;]*https:/.test(csp), 'images externes interdites (aucun pistage des agents par un logo distant)');
+
 // --- Sauvegardes : nouveau nom, et l'ancien (« rhema-business ») toujours accepté -------
 r = await boss('GET', '/api/data/export');
 assert(r.status === 200 && r.json.app === 'erp-workflow', 'sauvegarde au nom ERP-WORKFLOW');

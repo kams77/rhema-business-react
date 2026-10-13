@@ -44,6 +44,7 @@ import {
   canWriteDocumentChange,
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
+import { sanitizeOrgData } from '../shared/branding.mjs';
 
 const COOKIE = 'rhema_session';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -63,7 +64,7 @@ const SECURITY_HEADERS = {
   'X-Permitted-Cross-Domain-Policies': 'none',
   'Content-Security-Policy':
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self'; " +
+    "font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; " +
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
@@ -718,7 +719,8 @@ export function createApp({ db, config }) {
     for (const [k, v] of Object.entries(data)) {
       if (k === 'users' || k === 'auditLogs' || k === 'session') continue;
       if (!DATA_KEY_RE.test(k)) throw new HttpError(400, `Nom de donnée invalide : ${k}`);
-      const json = JSON.stringify(v);
+      // Logo, en-tête et pied de page : images intégrées PNG/JPEG uniquement.
+      const json = JSON.stringify(sanitizeOrgData(k, v));
       if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, `Donnée « ${k} » trop volumineuse.`);
       entries.push([k, json]);
     }
@@ -1097,6 +1099,7 @@ export function createApp({ db, config }) {
         } else if (!policy.write) {
           throw new HttpError(403, 'Vous n\'avez pas le droit de modifier ces données.');
         }
+        value = sanitizeOrgData(key, value);
         const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
         const r = await db.putData(key, json, expected, s.user.id);
