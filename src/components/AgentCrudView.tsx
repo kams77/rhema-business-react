@@ -30,7 +30,8 @@ import {
   isUserVisibleToUser, 
   canUserManageAgent, 
   getEntitiesInUserScope,
-  getRoleRank 
+  getRoleRank,
+  entityPlacement
 } from '../utils/rbac';
 
 interface AgentCrudViewProps {
@@ -93,29 +94,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
 
   const newMatricule = () => `MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
 
-  /**
-   * Affectation complète : l'entité choisie ET toutes celles au-dessus (département, direction,
-   * division, service). Sans cela, un agent d'un service ne verrait pas les documents de son département.
-   */
-  const placementFor = (targetId: string) => {
-    const out: Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> = {
-      departementId: undefined, directionId: undefined, divisionId: undefined, serviceId: undefined,
-      departmentName: 'Direction Générale',
-    };
-    const byId = new Map(entities.map(e => [e.id, e]));
-    let cur = byId.get(targetId);
-    if (cur) out.departmentName = cur.name;
-    const seen = new Set<string>();
-    while (cur && !seen.has(cur.id)) {
-      seen.add(cur.id);
-      if (cur.level === 'service' && !out.serviceId) out.serviceId = cur.id;
-      if (cur.level === 'division' && !out.divisionId) out.divisionId = cur.id;
-      if (cur.level === 'direction' && !out.directionId) out.directionId = cur.id;
-      if (cur.level === 'departement' && !out.departementId) out.departementId = cur.id;
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
-    }
-    return out;
-  };
+  const placementFor = (targetId: string) => entityPlacement(targetId, entities);
 
   const openCreate = () => {
     setEditingId(null);
