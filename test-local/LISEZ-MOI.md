@@ -26,9 +26,13 @@ La première fois : 5 à 15 minutes (téléchargement et compilation). La fenêt
 ## 3. Saisir vos données
 
 1. Écran « Installation du serveur » : collez le code d'installation.
-2. **Créer mon organisation** : votre entreprise, votre organigramme, vos agents.
-3. Connectez-vous avec le compte DG, puis testez (documents, tâches, paie, logistique…).
-   Import en masse : *Import Massif CSV & Paie* (gabarits CSV téléchargeables dans l'écran).
+2. **Créer mon organisation** : votre entreprise et le compte DG ; à l'étape 2, choisissez
+   **Partir d'un organigramme vide**.
+3. Connectez-vous avec le compte DG, puis :
+   - *Organigramme & Entités* → **Nouvelle Entité** : vos départements, directions, services ;
+   - *Gestion & CRUD Agents* → **Enrôler un Collaborateur** : vos agents (ou en masse :
+     *Import Massif CSV & Paie*, gabarit CSV téléchargeable dans l'écran) ;
+   - puis testez documents, tâches, paie, logistique…
 
 ## 4. Voir les données dans MySQL
 
