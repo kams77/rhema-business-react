@@ -425,7 +425,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   spellCheck={false}
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder="nom@rhemabusiness.com"
+                  placeholder="nom@organisation.cd"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
                 />
               </div>

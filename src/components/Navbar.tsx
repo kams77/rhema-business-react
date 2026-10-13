@@ -75,7 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const activeOrg: Pick<Organization, 'id' | 'name' | 'type' | 'logo'> = currentOrg || organizations[0] || {
     id: 'org-1',
-    name: 'RHEMA BUSINESS',
+    name: 'ERP-WORKFLOW',
     type: 'entreprise' as const,
   };
 

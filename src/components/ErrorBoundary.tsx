@@ -25,7 +25,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[RHEMA] Erreur d\'affichage :', error, info.componentStack);
+    console.error('[ERP-WORKFLOW] Erreur d\'affichage :', error, info.componentStack);
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps) {

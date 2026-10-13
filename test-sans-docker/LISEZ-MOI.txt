@@ -1,5 +1,5 @@
-﻿RHEMA BUSINESS - TEST SANS DOCKER (WINDOWS, AVEC MYSQL)
-=======================================================
+﻿ERP-WORKFLOW - TEST SANS DOCKER (WINDOWS, AVEC MYSQL)
+======================================================
 
 Ce dossier contient l'application ERP-WORKFLOW prête à lancer, avec son propre
 Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdmin).
@@ -14,8 +14,8 @@ Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdm
    - Cliquez sur « Start » en face de MySQL (et de Apache pour phpMyAdmin).
    - Les lignes passent au vert.
 
-3. DÉMARRER RHEMA BUSINESS
-   - Décompressez TOUT ce fichier ZIP dans un dossier simple, par exemple C:\RHEMA.
+3. DÉMARRER ERP-WORKFLOW
+   - Décompressez TOUT ce fichier ZIP dans un dossier simple, par exemple C:\erp.
    - Double-cliquez sur demarrer.bat.
      (Si Windows affiche « Windows a protégé votre ordinateur » :
       « Informations complémentaires » puis « Exécuter quand même ».)

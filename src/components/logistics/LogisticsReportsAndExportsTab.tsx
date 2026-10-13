@@ -102,7 +102,7 @@ export const LogisticsReportsAndExportsTab: React.FC<Props> = ({
       ];
     });
 
-    const fileName = `inventaire_logistique_rhema_${selectedHubId}_${new Date().toISOString().split('T')[0]}.csv`;
+    const fileName = `inventaire_logistique_${selectedHubId}_${new Date().toISOString().split('T')[0]}.csv`;
     downloadCsv([csvRow(headers, ','), ...rows.map(e => csvRow(e, ','))], fileName);
 
     if (onLogAction) {

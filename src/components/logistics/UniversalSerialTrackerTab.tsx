@@ -202,7 +202,7 @@ export const UniversalSerialTrackerTab: React.FC<Props> = ({
       r.purchaseOrderNumber || 'N/A'
     ]);
 
-    downloadCsv([csvRow(headers, ','), ...rows.map(e => csvRow(e, ','))], `registre_sn_rhema_${new Date().toISOString().split('T')[0]}.csv`);
+    downloadCsv([csvRow(headers, ','), ...rows.map(e => csvRow(e, ','))], `registre_sn_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   return (

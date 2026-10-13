@@ -555,7 +555,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                 <div>
                   <h4 className="font-bold text-white text-sm">Hiérarchie des 4 Niveaux Organisationnels</h4>
                   <p className="mt-1 leading-relaxed text-sky-200/90">
-                    L'architecture RHEMA garantit la stricte étanchéité des responsabilités : Département ➔ Direction ➔ Division ➔ Service.
+                    L'architecture ERP-WORKFLOW garantit la stricte étanchéité des responsabilités : Département ➔ Direction ➔ Division ➔ Service.
                   </p>
                 </div>
               </div>
