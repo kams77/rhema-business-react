@@ -18,10 +18,10 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: PDF d'exemple
         run: |
-          npx --yes esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=/tmp/pdf.mjs --log-level=error
+          npx --yes esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --external:jspdf --outfile=node_modules/.tmp/pdf.mjs --log-level=error
           set -o pipefail
           mkdir -p apercu
-          PDF_OUT=$PWD/apercu node /tmp/pdf.mjs > apercu/resultat.txt 2>&1 || { cat apercu/resultat.txt; echo "::error::$(grep -v '^ *at ' apercu/resultat.txt | tail -12 | tr '\n' ' ' | cut -c1-1500)"; exit 1; }
+          PDF_OUT=$PWD/apercu node node_modules/.tmp/pdf.mjs > apercu/resultat.txt 2>&1 || { cat apercu/resultat.txt; echo "::error::$(grep -v '^ *at ' apercu/resultat.txt | tail -12 | tr '\n' ' ' | cut -c1-1500)"; exit 1; }
           cat apercu/resultat.txt
       - name: Dépôt sur la branche captures/kit-test
         run: |

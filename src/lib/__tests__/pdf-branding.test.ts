@@ -1,7 +1,7 @@
 // Exports PDF avec l'identité visuelle de l'organisation : logo, papier à en-tête, pied de page.
 // Usage (depuis la racine du projet) :
 //   esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm \
-//     --define:import.meta.env={} --outfile=/tmp/pdf-branding.test.mjs && node /tmp/pdf-branding.test.mjs
+//     --define:import.meta.env={} --external:jspdf --outfile=node_modules/.tmp/pdf-branding.test.mjs && node node_modules/.tmp/pdf-branding.test.mjs
 // Les PDF produits sont écrits dans le dossier PDF_OUT (par défaut /tmp/pdf-branding) pour les relire.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
