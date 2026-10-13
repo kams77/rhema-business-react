@@ -1,4 +1,4 @@
-﻿# RHEMA Business - demarrage du kit de test (Windows, Docker Desktop).
+﻿# ERP-WORKFLOW - demarrage du kit de test (Windows, Docker Desktop).
 # Lance par demarrer-test.bat (double-clic).
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
@@ -6,7 +6,7 @@ Set-Location -LiteralPath $PSScriptRoot
 function Fin($code) { Write-Host ''; Read-Host 'Appuyez sur Entrée pour fermer' | Out-Null; exit $code }
 
 Write-Host ''
-Write-Host '=== RHEMA Business : kit de test avec MySQL ===' -ForegroundColor Cyan
+Write-Host '=== ERP-WORKFLOW : kit de test avec MySQL ===' -ForegroundColor Cyan
 Write-Host ''
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -73,7 +73,7 @@ Write-Host "  Application         : http://localhost:$appPort"
 Write-Host "  Code d'installation : $($cfg['SETUP_CODE'])   (demandé une seule fois, au premier accès)"
 Write-Host ''
 Write-Host "  phpMyAdmin (MySQL)  : http://localhost:$pmaPort"
-Write-Host "      utilisateur     : rhema"
+Write-Host "      utilisateur     : erp_workflow"
 Write-Host "      mot de passe    : $($cfg['DB_PASSWORD'])"
 Write-Host ''
 Write-Host 'Pour arrêter : arreter-test.bat   |   Pour tout effacer : reinitialiser-test.bat'

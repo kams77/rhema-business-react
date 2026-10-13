@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title RHEMA Business - test (laisser ouvert)
+title ERP-WORKFLOW - test (laisser ouvert)
 cd /d "%~dp0"
 if not exist "%~dp0node\node.exe" (
   echo Le dossier "node" est introuvable : decompressez tout le fichier ZIP avant de lancer.

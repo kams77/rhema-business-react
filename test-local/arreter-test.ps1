@@ -1,4 +1,4 @@
-﻿# RHEMA Business - arret du kit de test (les donnees sont conservees).
+﻿# ERP-WORKFLOW - arret du kit de test (les donnees sont conservees).
 Set-Location -LiteralPath $PSScriptRoot
 docker compose stop
 Write-Host ''

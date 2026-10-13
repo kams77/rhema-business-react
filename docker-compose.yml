@@ -1,4 +1,4 @@
-# RHEMA Business — application + serveur + base MariaDB.
+# ERP-WORKFLOW — application + serveur + base MariaDB.
 # Synology : Container Manager → Projet → Créer → choisir ce dossier (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
 # Ailleurs : `docker compose up -d --build`.
 #
@@ -13,11 +13,11 @@
 services:
   db:
     image: mariadb:11.4
-    container_name: rhema-db
+    container_name: erp-workflow-db
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: rhema
-      MARIADB_USER: rhema
+      MARIADB_DATABASE: erp_workflow
+      MARIADB_USER: erp_workflow
       MARIADB_PASSWORD: ${DB_PASSWORD:-CHANGEZ_MOI_mot_de_passe_base}
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-CHANGEZ_MOI_mot_de_passe_root}
       TZ: Africa/Kinshasa
@@ -52,8 +52,8 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    image: rhema-business-serveur:latest
-    container_name: rhema-app
+    image: erp-workflow-serveur:latest
+    container_name: erp-workflow-app
     restart: unless-stopped
     depends_on:
       db:
@@ -61,8 +61,8 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: 3306
-      DB_NAME: rhema
-      DB_USER: rhema
+      DB_NAME: erp_workflow
+      DB_USER: erp_workflow
       DB_PASSWORD: ${DB_PASSWORD:-CHANGEZ_MOI_mot_de_passe_base}
       # Code demandé une seule fois, lors de l'installation (écran « Installation du serveur »).
       SETUP_CODE: ${SETUP_CODE:-CHANGEZ_MOI_code_installation}

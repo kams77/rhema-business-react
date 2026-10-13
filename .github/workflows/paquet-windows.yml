@@ -25,8 +25,8 @@ jobs:
         run: sh test-sans-docker/construire-paquet.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: RHEMA-Test-Windows
-          path: paquet/RHEMA-Test-Windows.zip
+          name: ERP-WORKFLOW-Test-Windows
+          path: paquet/ERP-WORKFLOW-Test-Windows.zip
           retention-days: 30
 
   essai-windows:
@@ -36,10 +36,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: RHEMA-Test-Windows
+          name: ERP-WORKFLOW-Test-Windows
       - name: Décompression du paquet
         shell: pwsh
-        run: Expand-Archive RHEMA-Test-Windows.zip -DestinationPath C:\rhema
+        run: Expand-Archive ERP-WORKFLOW-Test-Windows.zip -DestinationPath C:\erp
 
       - name: "MariaDB, comme XAMPP (root sans mot de passe)"
         shell: pwsh
@@ -60,7 +60,7 @@ jobs:
       - name: Démarrage par le lanceur et tests de l'API sur MySQL (Windows)
         shell: pwsh
         run: |
-          $p = 'C:\rhema\RHEMA-Test-Windows'
+          $p = 'C:\erp\ERP-WORKFLOW-Test-Windows'
           Start-Process -FilePath "$p\node\node.exe" -ArgumentList "$p\app\lanceur.mjs",'--sans-navigateur' -WorkingDirectory $p -RedirectStandardOutput C:\lanceur.log -RedirectStandardError C:\lanceur.err
           $ok = $false
           for ($i = 0; $i -lt 60; $i++) { try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health).StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep 2 }
@@ -82,22 +82,22 @@ jobs:
           $rc2 = $LASTEXITCODE
           $tail2 = (($out2 -split "`n") | Select-Object -Last 6) -join '%0A'
           if ($rc2 -ne 0) { Write-Output "::error title=Tests des droits Windows::$tail2"; throw 'Tests des droits en échec.' }
-          $tables = & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM rhema_test; SELECT COUNT(*) AS comptes FROM rhema_test.users;" | Out-String
+          $tables = & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM erp_workflow_test; SELECT COUNT(*) AS comptes FROM erp_workflow_test.users;" | Out-String
           Write-Output "::notice title=Windows + MariaDB::API : $((($out -split "`n") | Select-String 'vérifications réussies').ToString().Trim()) | Droits : $((($out2 -split "`n") | Select-String 'réussies').ToString().Trim())%0A$($tables -replace "`r?`n", '%0A')"
 
       - name: Réinitialisation par reinitialiser.bat
         shell: pwsh
         run: |
           Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
-          $p = 'C:\rhema\RHEMA-Test-Windows'
+          $p = 'C:\erp\ERP-WORKFLOW-Test-Windows'
           cmd /c "(echo EFFACER& echo.) | `"$p\reinitialiser.bat`""
-          $n = & "$env:MDB_BIN\mariadb.exe" -uroot -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='rhema_test'"
-          if ($n.Trim() -ne '0') { Write-Output "::error title=Réinitialisation::La base rhema_test existe encore."; throw 'La base de test existe encore.' }
-          Write-Output "::notice title=Réinitialisation::Base rhema_test effacée par reinitialiser.bat."
+          $n = & "$env:MDB_BIN\mariadb.exe" -uroot -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='erp_workflow_test'"
+          if ($n.Trim() -ne '0') { Write-Output "::error title=Réinitialisation::La base erp_workflow_test existe encore."; throw 'La base de test existe encore.' }
+          Write-Output "::notice title=Réinitialisation::Base erp_workflow_test effacée par reinitialiser.bat."
 
 
   # Le paquet validé est aussi déposé sur la branche « paquet-windows » (téléchargeable depuis GitHub :
-  # Code -> branche paquet-windows -> RHEMA-Test-Windows.zip -> Download raw file).
+  # Code -> branche paquet-windows -> ERP-WORKFLOW-Test-Windows.zip -> Download raw file).
   publication:
     needs: essai-windows
     runs-on: ubuntu-latest
@@ -106,11 +106,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: RHEMA-Test-Windows
+          name: ERP-WORKFLOW-Test-Windows
       - name: Dépôt sur la branche paquet-windows
         run: |
-          mkdir depot && mv RHEMA-Test-Windows.zip depot/ && cd depot
-          printf 'Paquet RHEMA Business « test sans Docker » (Windows + XAMPP).\nConstruit depuis %s, essayé sur Windows avec MariaDB.\n' "$GITHUB_SHA" > LISEZ-MOI.txt
+          mkdir depot && mv ERP-WORKFLOW-Test-Windows.zip depot/ && cd depot
+          printf 'Paquet ERP-WORKFLOW « test sans Docker » (Windows + XAMPP).\nConstruit depuis %s, essayé sur Windows avec MariaDB.\n' "$GITHUB_SHA" > LISEZ-MOI.txt
           git init -q -b paquet-windows
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"

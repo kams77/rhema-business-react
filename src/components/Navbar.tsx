@@ -18,7 +18,7 @@ import {
   X
 } from 'lucide-react';
 import { getRoleBadgeClass, isSecurityStaff } from '../utils/rbac';
-import { DEMO_MODE } from '../config';
+import { DEMO_MODE, APP_NAME, orgInitials } from '../config';
 
 interface NavbarProps {
   organizations?: Organization[];
@@ -113,14 +113,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <img src={activeOrg.logo} alt={activeOrg.name} className="w-full h-full object-contain rounded-lg" />
             ) : (
               <div className="w-full h-full bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center rounded-lg font-black text-white text-xs">
-                RB
+                {orgInitials(activeOrg.name)}
               </div>
             )}
           </button>
 
           <div className="min-w-0">
             <div className="hidden sm:flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">Plateforme Hiérarchique</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 whitespace-nowrap">{APP_NAME}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono border border-emerald-500/30 font-semibold">
                 Laravel Eloquent Ready
               </span>

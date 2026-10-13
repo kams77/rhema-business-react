@@ -1,4 +1,4 @@
-// server/index.mjs — démarrage du serveur RHEMA Business.
+// server/index.mjs — démarrage du serveur ERP-WORKFLOW.
 //
 // Variables d'environnement :
 //   PORT            Port HTTP (défaut 8080)
@@ -45,16 +45,16 @@ async function createDb() {
   return createMysqlDb({
     host: env.DB_HOST || 'localhost',
     port: Number(env.DB_PORT || 3306),
-    user: env.DB_USER || 'rhema',
+    user: env.DB_USER || 'erp_workflow',
     password: env.DB_PASSWORD || '',
-    database: env.DB_NAME || 'rhema',
+    database: env.DB_NAME || 'erp_workflow',
   });
 }
 
 // Refuse de démarrer avec les valeurs d'exemple du fichier docker-compose.yml.
 const placeholders = ['DB_PASSWORD', 'SETUP_CODE'].filter(k => String(env[k] || '').includes('CHANGEZ_MOI'));
 if (placeholders.length) {
-  console.error(`[rhema] Modifiez d'abord ${placeholders.join(' et ')} dans docker-compose.yml (valeurs « CHANGEZ_MOI »).`);
+  console.error(`[erp-workflow] Modifiez d'abord ${placeholders.join(' et ')} dans docker-compose.yml (valeurs « CHANGEZ_MOI »).`);
   process.exit(1);
 }
 
@@ -69,14 +69,14 @@ if ((await db.countUsers()) === 0 && config.setupCode.length < 8 && db.kind !== 
 const server = http.createServer(createApp({ db, config }));
 server.requestTimeout = 120_000;
 server.listen(config.port, () => {
-  console.log(`[rhema] Serveur prêt sur le port ${config.port} (stockage : ${db.kind}, application : ${config.distDir})`);
+  console.log(`[erp-workflow] Serveur prêt sur le port ${config.port} (stockage : ${db.kind}, application : ${config.distDir})`);
 });
 
 // Nettoyage des sessions expirées toutes les heures.
 setInterval(() => db.purgeSessions(Date.now() - SESSION_MAX_MS).catch(() => {}), 60 * 60 * 1000).unref();
 
 const shutdown = async signal => {
-  console.log(`[rhema] Arrêt (${signal})…`);
+  console.log(`[erp-workflow] Arrêt (${signal})…`);
   server.close();
   await db.close().catch(() => {});
   process.exit(0);

@@ -1,19 +1,19 @@
-# Guide de déploiement — RHEMA Business sur Synology DS923+ (DSM 7.4.1-90080)
+# Guide de déploiement — ERP-WORKFLOW sur Synology DS923+ (DSM 7.4.1-90080)
 
 Ce guide installe sur le NAS, en un seul projet **Container Manager** :
 
 - **la base de données MariaDB 11.4**, où sont enregistrées toutes les données ;
-- **le serveur RHEMA Business** (Node.js 22), qui vérifie les connexions et les droits et sert l'application.
+- **le serveur ERP-WORKFLOW** (Node.js 22), qui vérifie les connexions et les droits et sert l'application.
 
 Tous les collaborateurs partagent alors les mêmes données. On accède à l'application **uniquement en
 HTTPS**, à travers le **proxy inversé** de DSM : le serveur n'écoute que sur le NAS lui-même
 (`127.0.0.1:8080`) et n'est jamais exposé directement au réseau.
 
 ```
- Postes / téléphones ──HTTPS 443──▶ Proxy inversé DSM ──HTTP localhost:8080──▶ rhema-app ──3306──▶ rhema-db
+ Postes / téléphones ──HTTPS 443──▶ Proxy inversé DSM ──HTTP localhost:8080──▶ erp-workflow-app ──3306──▶ erp-workflow-db
                                      (certificat)                               (conteneur)          (conteneur)
                                                                                                        │
-                                                                          dossier /docker/rhema/mysql ◀┘
+                                                                          dossier /docker/erp-workflow/mysql ◀┘
 ```
 
 Durée : environ 45 minutes (dont 5 à 15 minutes de construction automatique).
@@ -58,13 +58,13 @@ Durée : environ 45 minutes (dont 5 à 15 minutes de construction automatique).
 
 1. Sur GitHub, ouvrez `https://github.com/kams77/rhema-business-react` → bouton vert **Code** →
    **Download ZIP** (branche `main`, après fusion de la demande de modification de sécurité).
-2. Dans DSM, ouvrez **File Station** → dossier partagé `docker` → créez le dossier **`rhema`**.
-3. Envoyez le ZIP dans `docker/rhema`, puis clic droit → **Extraire** → **Extraire ici**.
-4. Vérifiez que `docker-compose.yml` se trouve **directement** dans `docker/rhema` (si un sous-dossier
+2. Dans DSM, ouvrez **File Station** → dossier partagé `docker` → créez le dossier **`erp-workflow`**.
+3. Envoyez le ZIP dans `docker/erp-workflow`, puis clic droit → **Extraire** → **Extraire ici**.
+4. Vérifiez que `docker-compose.yml` se trouve **directement** dans `docker/erp-workflow` (si un sous-dossier
    `rhema-business-react-main` a été créé, déplacez son contenu d'un niveau puis supprimez-le).
 5. Supprimez le ZIP.
 
-**Permissions** : *File Station* → clic droit sur `docker/rhema` → *Propriétés* → *Autorisation* :
+**Permissions** : *File Station* → clic droit sur `docker/erp-workflow` → *Propriétés* → *Autorisation* :
 seuls les administrateurs doivent y avoir accès (retirez le groupe `users` s'il apparaît).
 
 ## 5. Choisir les secrets (obligatoire)
@@ -84,7 +84,7 @@ générer et les conserver.
 1. Sur votre ordinateur, ouvrez `deploy/synology.env.example` (dans le ZIP) avec le Bloc-notes.
 2. Remplacez les trois valeurs `CHANGEZ_MOI_…`.
 3. *Fichier → Enregistrer sous* → type **Tous les fichiers** → nom **`.env`** (avec le point).
-4. Envoyez ce fichier dans `docker/rhema` (à côté de `docker-compose.yml`).
+4. Envoyez ce fichier dans `docker/erp-workflow` (à côté de `docker-compose.yml`).
 
 **Autre méthode** : remplacez les valeurs `CHANGEZ_MOI_…` directement dans `docker-compose.yml`
 (étape 6, éditeur de Container Manager). `DB_PASSWORD` apparaît deux fois : mettez la même valeur.
@@ -95,8 +95,8 @@ une erreur de configuration se voit donc immédiatement dans le journal.
 ## 6. Créer le projet dans Container Manager
 
 1. **Container Manager** → **Projet** → **Créer**.
-2. **Nom du projet** : `rhema`.
-3. **Chemin** : cliquez sur *Définir le chemin* → `docker/rhema`.
+2. **Nom du projet** : `erp-workflow`.
+3. **Chemin** : cliquez sur *Définir le chemin* → `docker/erp-workflow`.
 4. **Source** : *Utiliser le fichier docker-compose.yml existant* (le contenu s'affiche ; vous pouvez
    le relire ou y saisir les secrets).
 5. *Suivant* → écran *Paramètres du portail Web* : **ne cochez rien** (le portail Web Station n'est pas
@@ -104,10 +104,10 @@ une erreur de configuration se voit donc immédiatement dans le journal.
 6. *Résumé* → cochez *Démarrer le projet une fois créé* → **Terminé**.
 
 La première construction télécharge les images et compile l'application : **5 à 15 minutes** sur un
-DS923+. Suivez l'avancement dans la fenêtre de construction, puis dans *Projet → rhema → Journal*.
+DS923+. Suivez l'avancement dans la fenêtre de construction, puis dans *Projet → erp-workflow → Journal*.
 
-À la fin, *Container Manager → Conteneur* affiche **`rhema-db`** et **`rhema-app`** en état
-**En cours d'exécution** (voyant vert) ; `rhema-app` passe à *sain* (healthy) après environ 40 secondes.
+À la fin, *Container Manager → Conteneur* affiche **`erp-workflow-db`** et **`erp-workflow-app`** en état
+**En cours d'exécution** (voyant vert) ; `erp-workflow-app` passe à *sain* (healthy) après environ 40 secondes.
 
 > Le projet utilise un réseau interne à adresse fixe (`172.29.77.0/24`). Si Container Manager signale
 > que ce sous-réseau est déjà utilisé, remplacez-le dans `docker-compose.yml` (deux endroits :
@@ -121,7 +121,7 @@ L'application exige HTTPS (cookie de session sécurisé, chiffrement du navigate
 ### A. Réseau interne seulement
 
 1. *Panneau de configuration → Portail de connexion → Avancé → **Proxy inversé** → Créer*.
-2. **Nom de la règle** : `RHEMA Business`.
+2. **Nom de la règle** : `ERP-WORKFLOW`.
 3. **Source** : protocole **HTTPS**, nom d'hôte = **l'adresse IP du NAS** (ex. `192.168.1.20`),
    port **8443**, cochez *Activer HSTS*.
 4. **Destination** : protocole **HTTP**, nom d'hôte **`localhost`**, port **`8080`**.
@@ -139,20 +139,20 @@ L'application exige HTTPS (cookie de session sécurisé, chiffrement du navigate
 ### B. Nom de domaine et certificat Let's Encrypt (recommandé)
 
 1. **Nom de domaine** : *Panneau de configuration → Accès externe → DDNS → Ajouter* → fournisseur
-   *Synology* → par exemple `rhema-entreprise.synology.me`.
+   *Synology* → par exemple `erp-entreprise.synology.me`.
 2. **Certificat** : *Panneau de configuration → Sécurité → Certificat → Ajouter → Ajouter un nouveau
-   certificat → Obtenir un certificat de Let's Encrypt* → domaine `rhema-entreprise.synology.me`.
+   certificat → Obtenir un certificat de Let's Encrypt* → domaine `erp-entreprise.synology.me`.
    Let's Encrypt doit joindre le NAS sur le **port 80** pendant l'opération (redirection temporaire sur
    la box, à refermer ensuite si vous n'exposez pas le service).
-3. **Proxy inversé** : comme en A, mais source = nom d'hôte **`rhema-entreprise.synology.me`**,
+3. **Proxy inversé** : comme en A, mais source = nom d'hôte **`erp-entreprise.synology.me`**,
    port **443**.
 4. *Sécurité → Certificat → **Paramètres*** : associez le certificat Let's Encrypt à la règle
-   « RHEMA Business ».
-5. L'application est accessible sur `https://rhema-entreprise.synology.me`.
+   « ERP-WORKFLOW ».
+5. L'application est accessible sur `https://erp-entreprise.synology.me`.
 
 ## 8. Premier démarrage de l'application
 
-1. Ouvrez l'adresse HTTPS de l'étape 7. L'écran **« Installation du serveur RHEMA Business »** s'affiche.
+1. Ouvrez l'adresse HTTPS de l'étape 7. L'écran **« Installation du serveur ERP-WORKFLOW »** s'affiche.
 2. Saisissez le **code d'installation** (`SETUP_CODE`).
 3. **Créer mon organisation** : l'assistant enregistre l'entreprise (RCCM, Id. Nat, N° impôt),
    l'organigramme et les comptes. À la dernière étape, notez les identifiants et mots de passe provisoires
@@ -191,14 +191,14 @@ Mettez en place **trois protections complémentaires** :
    Tâche planifiée → Script défini par l'utilisateur* — utilisateur **root**, tous les jours à 02:00 :
 
    ```bash
-   mkdir -p /volume1/docker/rhema/sauvegardes
-   chmod 700 /volume1/docker/rhema/sauvegardes
-   docker exec rhema-db sh -c 'mariadb-dump -u root -p"$MARIADB_ROOT_PASSWORD" --single-transaction --routines rhema' \
-     | gzip > /volume1/docker/rhema/sauvegardes/rhema-$(date +%F).sql.gz
-   find /volume1/docker/rhema/sauvegardes -name '*.sql.gz' -mtime +30 -delete
+   mkdir -p /volume1/docker/erp-workflow/sauvegardes
+   chmod 700 /volume1/docker/erp-workflow/sauvegardes
+   docker exec erp-workflow-db sh -c 'mariadb-dump -u root -p"$MARIADB_ROOT_PASSWORD" --single-transaction --routines erp_workflow' \
+     | gzip > /volume1/docker/erp-workflow/sauvegardes/erp-workflow-$(date +%F).sql.gz
+   find /volume1/docker/erp-workflow/sauvegardes -name '*.sql.gz' -mtime +30 -delete
    ```
 
-3. **Hyper Backup** (Centre de paquets) : tâche quotidienne du dossier `docker/rhema` (avec
+3. **Hyper Backup** (Centre de paquets) : tâche quotidienne du dossier `docker/erp-workflow` (avec
    `sauvegardes`) vers un disque USB, un autre NAS ou Synology C2, avec **chiffrement côté client**
    activé et rotation des versions.
 
@@ -208,8 +208,8 @@ En complément, **Snapshot Replication** : instantanés quotidiens du dossier pa
 **Restaurer une copie `.sql.gz`** (en dernier recours, projet démarré) :
 
 ```bash
-gunzip -c /volume1/docker/rhema/sauvegardes/rhema-AAAA-MM-JJ.sql.gz \
-  | docker exec -i rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema'
+gunzip -c /volume1/docker/erp-workflow/sauvegardes/erp-workflow-AAAA-MM-JJ.sql.gz \
+  | docker exec -i erp-workflow-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" erp_workflow'
 ```
 
 Testez une restauration au moins une fois par trimestre.
@@ -217,10 +217,10 @@ Testez une restauration au moins une fois par trimestre.
 ## 11. Mettre à jour l'application
 
 1. Exportez une sauvegarde (section 10.1).
-2. Téléchargez le nouveau ZIP depuis GitHub et remplacez les fichiers de `docker/rhema`, **sauf** les
+2. Téléchargez le nouveau ZIP depuis GitHub et remplacez les fichiers de `docker/erp-workflow`, **sauf** les
    dossiers `mysql` et `sauvegardes` et le fichier `.env`.
    (Si vos secrets sont dans `docker-compose.yml`, reportez-les dans le nouveau fichier.)
-3. *Container Manager → Projet → rhema* → **Arrêter** → *Action* → **Construire** → **Démarrer**.
+3. *Container Manager → Projet → erp-workflow* → **Arrêter** → *Action* → **Construire** → **Démarrer**.
 
 Les données de la base sont conservées. Après une mise à jour de sécurité, les empreintes de mots de
 passe sont renforcées automatiquement à la connexion suivante de chaque utilisateur.
@@ -229,24 +229,24 @@ passe sont renforcées automatiquement à la connexion suivante de chaque utilis
 
 | Symptôme | Cause probable / solution |
 |---|---|
-| `rhema-db` s'arrête aussitôt | Valeurs `CHANGEZ_MOI` encore présentes (voir son *Journal*), ou fichier `.env` mal nommé (`.env.txt`). |
-| `rhema-app` redémarre en boucle | Mot de passe de base différent entre `db` et `app`, `SETUP_CODE` trop court (moins de 8 caractères), ou valeurs `CHANGEZ_MOI`. |
-| Mot de passe de base changé après le premier démarrage | MariaDB garde l'ancien. Si la base est encore vide : arrêtez le projet, supprimez `docker/rhema/mysql`, redémarrez. |
+| `erp-workflow-db` s'arrête aussitôt | Valeurs `CHANGEZ_MOI` encore présentes (voir son *Journal*), ou fichier `.env` mal nommé (`.env.txt`). |
+| `erp-workflow-app` redémarre en boucle | Mot de passe de base différent entre `db` et `app`, `SETUP_CODE` trop court (moins de 8 caractères), ou valeurs `CHANGEZ_MOI`. |
+| Mot de passe de base changé après le premier démarrage | MariaDB garde l'ancien. Si la base est encore vide : arrêtez le projet, supprimez `docker/erp-workflow/mysql`, redémarrez. |
 | « Ce site est inaccessible » | Règle de proxy inversé absente ou port bloqué par le pare-feu (section 9). |
-| Erreur 502 du proxy | `rhema-app` n'est pas démarré ou n'est pas encore *sain* : attendez une minute, consultez son journal. |
+| Erreur 502 du proxy | `erp-workflow-app` n'est pas démarré ou n'est pas encore *sain* : attendez une minute, consultez son journal. |
 | La connexion ne tient pas (retour à l'écran de connexion) | Accès en `http://` au lieu de `https://` : le cookie de session n'est envoyé qu'en HTTPS. |
 | « Trop de tentatives depuis ce poste » pour tout le monde | Les en-têtes `X-Forwarded-For` ne sont pas transmis ou le sous-réseau ne correspond pas à `TRUSTED_PROXIES` (sections 6 et 7). |
 | « Code d'installation incorrect » | Doit être identique à `SETUP_CODE`. Après 10 essais, attendez 15 minutes. |
 | Un compte est verrouillé | Le DG ou le responsable le réactive dans *Gestion & CRUD Agents* (bouton *Mot de passe* : mot de passe provisoire et déblocage). |
 | Le DG est bloqué | Blocage **temporaire de 15 minutes** : attendez, puis reconnectez-vous. |
 
-Journaux : *Container Manager → Conteneur → rhema-app → Détails → Journal*.
+Journaux : *Container Manager → Conteneur → erp-workflow-app → Détails → Journal*.
 
 **Débloquer un compte DG immédiatement** (connexion SSH au NAS avec un compte administrateur ; remplacez
 l'email) :
 
 ```bash
-sudo docker exec rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema -e \
+sudo docker exec erp-workflow-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" erp_workflow -e \
   "UPDATE users SET status=\"actif\", failed_attempts=0, profile=JSON_REMOVE(profile, \"$.lockedUntil\") WHERE login_email=\"dg@votre-entreprise.cd\""'
 ```
 
@@ -258,7 +258,7 @@ Désactivez SSH ensuite (*Panneau de configuration → Terminal et SNMP*).
 - [ ] Compte `admin` désactivé ; double authentification sur tous les comptes administrateurs.
 - [ ] Blocage automatique activé ; pare-feu avec règle finale « Refuser tout ».
 - [ ] Secrets `DB_PASSWORD`, `DB_ROOT_PASSWORD`, `SETUP_CODE` uniques, longs, conservés dans un gestionnaire de mots de passe.
-- [ ] Dossier `docker/rhema` accessible aux seuls administrateurs.
+- [ ] Dossier `docker/erp-workflow` accessible aux seuls administrateurs.
 - [ ] Accès **uniquement en HTTPS** via le proxy inversé ; aucun port 8080 / 3306 ouvert.
 - [ ] Accès extérieur par VPN, ou seulement le port 443 ouvert sur la box.
 - [ ] Copie quotidienne de la base + Hyper Backup chiffré + instantanés ; restauration testée.
@@ -273,7 +273,7 @@ Désactivez SSH ensuite (*Panneau de configuration → Terminal et SNMP*).
 Possible mais non recommandé (le conteneur MariaDB est isolé et sauvegardé avec le projet).
 
 1. Installez **MariaDB 10** (port **3307**) depuis le Centre de paquets.
-2. Créez une base `rhema` et un utilisateur `rhema` ayant tous les droits sur cette seule base, autorisé
+2. Créez une base `erp_workflow` et un utilisateur `erp_workflow` ayant tous les droits sur cette seule base, autorisé
    depuis le sous-réseau du projet (`172.29.77.%`).
 3. Dans `docker-compose.yml` : supprimez le service `db` et le bloc `depends_on` de `app` ; réglez
    `DB_HOST` sur l'adresse IP du NAS et `DB_PORT` sur `3307`.

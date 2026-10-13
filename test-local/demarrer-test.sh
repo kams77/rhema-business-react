@@ -1,10 +1,10 @@
 #!/bin/sh
-# RHEMA Business - démarrage du kit de test (Mac / Linux, Docker Desktop).
+# ERP-WORKFLOW - démarrage du kit de test (Mac / Linux, Docker Desktop).
 #   Terminal :  sh demarrer-test.sh
 cd "$(dirname "$0")" || exit 1
 
 echo ""
-echo "=== RHEMA Business : kit de test avec MySQL ==="
+echo "=== ERP-WORKFLOW : kit de test avec MySQL ==="
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -57,7 +57,7 @@ echo "  Application         : http://localhost:$APP_PORT"
 echo "  Code d'installation : $(val SETUP_CODE)   (demandé une seule fois, au premier accès)"
 echo ""
 echo "  phpMyAdmin (MySQL)  : http://localhost:$PMA_PORT"
-echo "      utilisateur     : rhema"
+echo "      utilisateur     : erp_workflow"
 echo "      mot de passe    : $(val DB_PASSWORD)"
 echo ""
 echo "Pour arrêter : sh arreter-test.sh   |   Pour tout effacer : sh reinitialiser-test.sh"

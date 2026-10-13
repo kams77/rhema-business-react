@@ -1,7 +1,7 @@
 ﻿RHEMA BUSINESS - TEST SANS DOCKER (WINDOWS, AVEC MYSQL)
 =======================================================
 
-Ce dossier contient l'application RHEMA Business prête à lancer, avec son propre
+Ce dossier contient l'application ERP-WORKFLOW prête à lancer, avec son propre
 Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdmin).
 
 1. INSTALLER XAMPP (une seule fois)
@@ -19,7 +19,7 @@ Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdm
    - Double-cliquez sur demarrer.bat.
      (Si Windows affiche « Windows a protégé votre ordinateur » :
       « Informations complémentaires » puis « Exécuter quand même ».)
-   - La première fois, la base « rhema_test » est créée automatiquement.
+   - La première fois, la base « erp_workflow_test » est créée automatiquement.
    - La fenêtre affiche le CODE D'INSTALLATION puis ouvre le navigateur sur
      http://localhost:8080
    - LAISSEZ CETTE FENÊTRE OUVERTE pendant le test (la fermer arrête l'application).
@@ -34,7 +34,7 @@ Node.js. Il n'y a rien à installer à part XAMPP (qui fournit MySQL et phpMyAdm
 
 5. VOIR LES DONNÉES DANS MYSQL
    - http://localhost/phpmyadmin (Apache démarré dans XAMPP)
-   - Base « rhema_test » : tables users, app_data, audit_logs, sessions.
+   - Base « erp_workflow_test » : tables users, app_data, audit_logs, sessions.
    - Consultez sans modifier : passez toujours par l'application.
 
 6. ARRÊTER, REPRENDRE, EFFACER

@@ -1,4 +1,4 @@
-﻿# RHEMA Business - reinitialisation du kit de test (EFFACE toutes les donnees de test).
+﻿# ERP-WORKFLOW - reinitialisation du kit de test (EFFACE toutes les donnees de test).
 Set-Location -LiteralPath $PSScriptRoot
 Write-Host ''
 Write-Host 'ATTENTION : cette opération efface définitivement la base MySQL de test' -ForegroundColor Yellow

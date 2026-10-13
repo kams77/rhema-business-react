@@ -1,4 +1,4 @@
-# RHEMA Business — Portail Entreprise & Gestion Hiérarchique
+# ERP-WORKFLOW — Portail Entreprise & Gestion Hiérarchique
 
 Application web de gestion d'entreprise pour la RD Congo : organigramme hiérarchique,
 circuits documentaires, paie conforme (USD / CDF), logistique VSAT & solaire,
@@ -35,7 +35,7 @@ TypeScript, compilation et image Docker.
 | Espace employé         | Tableau de bord personnel, tâches, documents, contrats                   |
 | Hiérarchie             | Départements → directions → divisions → services, délégations de visa    |
 | Invitations            | Accès inter-entités par matricule et clé à 10 chiffres                   |
-| Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel RHEMA   |
+| Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel         |
 | Logistique             | Bons de commande, livraisons, factures, hubs provinciaux, stocks, S/N    |
 | Import en masse        | Employés, contrats et historiques de paie par CSV                        |
 | Sécurité & audit       | Alertes d'intrusion, verrouillage, journal horodaté exportable (PDF/CSV) |
@@ -165,7 +165,7 @@ Guide pas à pas (installation locale, Cloudflare Pages, Netlify, Docker) :
 En bref : `npm run build` produit un site statique dans `dist/`. Hébergement recommandé :
 **Cloudflare Pages** (gratuit, HTTPS, en-têtes de sécurité de `public/_headers` appliqués).
 Définissez `VITE_DEMO_MODE=false` **avant** la compilation pour une mise en production.
-Pour un serveur interne : `docker build -t rhema-business .` puis `docker run -d -p 8080:80 rhema-business`.
+Pour un serveur interne : `docker build -t erp-workflow .` puis `docker run -d -p 8080:80 erp-workflow`.
 
 ---
 

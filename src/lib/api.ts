@@ -1,4 +1,4 @@
-// src/lib/api.ts — appels au serveur RHEMA Business (mode VITE_BACKEND=api).
+// src/lib/api.ts — appels au serveur ERP-WORKFLOW (mode VITE_BACKEND=api).
 import type { User } from '../types';
 
 export const SESSION_EXPIRED_EVENT = 'rhema:session-expired';

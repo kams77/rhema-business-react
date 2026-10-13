@@ -194,5 +194,11 @@ let last;
 for (let i = 0; i < 11; i++) last = await anon('POST', '/api/setup', { setupCode: `essai-${i}` });
 assert(last.status === 429, 'installation : essais répétés du code bloqués');
 
+// --- Sauvegardes : nouveau nom, et l'ancien (« rhema-business ») toujours accepté -------
+r = await boss('GET', '/api/data/export');
+assert(r.status === 200 && r.json.app === 'erp-workflow', 'sauvegarde au nom ERP-WORKFLOW');
+r = await boss('POST', '/api/data/import', { ...r.json, app: 'rhema-business' });
+assert(r.status === 200, 'ancienne sauvegarde (rhema-business) toujours restaurable');
+
 server.close();
 console.log(`\n${passed} vérifications de sécurité réussies.`);

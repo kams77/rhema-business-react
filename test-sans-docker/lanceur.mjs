@@ -1,4 +1,4 @@
-// test-sans-docker/lanceur.mjs — démarre RHEMA Business SANS Docker, avec le MySQL / MariaDB
+// test-sans-docker/lanceur.mjs — démarre ERP-WORKFLOW SANS Docker, avec le MySQL / MariaDB
 // déjà installé sur l'ordinateur (XAMPP, Laragon, WampServer…).
 //
 //   demarrer.bat                 : prépare la base (la première fois) puis démarre l'application
@@ -37,7 +37,7 @@ function secret(n) {
 function lireConfiguration() {
   if (!fs.existsSync(CONF)) {
     const lignes = [
-      '# RHEMA Business - réglages du test sans Docker.',
+      '# ERP-WORKFLOW - réglages du test sans Docker.',
       '# Modifiez ce fichier avec le Bloc-notes, puis relancez demarrer.bat.',
       '',
       '# Serveur MySQL / MariaDB déjà installé (XAMPP : utilisateur root, mot de passe vide).',
@@ -46,9 +46,9 @@ function lireConfiguration() {
       'MYSQL_ADMIN=root',
       'MYSQL_ADMIN_MOT_DE_PASSE=',
       '',
-      '# Base créée automatiquement pour RHEMA Business (ne touche à aucune autre base).',
-      'BASE=rhema_test',
-      'BASE_UTILISATEUR=rhema',
+      '# Base créée automatiquement pour ERP-WORKFLOW (ne touche à aucune autre base).',
+      'BASE=erp_workflow_test',
+      'BASE_UTILISATEUR=erp_workflow',
       `BASE_MOT_DE_PASSE=${secret(24)}`,
       '',
       '# Application : adresse http://localhost:PORT',
@@ -118,7 +118,7 @@ async function preparerBase(conf) {
 }
 
 async function reinitialiser(conf) {
-  titre('RHEMA Business : réinitialisation de la base de test');
+  titre('ERP-WORKFLOW : réinitialisation de la base de test');
   console.log(`ATTENTION : la base « ${conf.BASE} » va être effacée définitivement`);
   console.log('(organisation, agents, documents, paie...). Les autres bases ne sont pas touchées.');
   console.log('Fermez d\'abord la fenêtre de l\'application si elle est ouverte.\n');
@@ -154,7 +154,7 @@ async function attendreServeur(url) {
 const conf = lireConfiguration();
 if (REINITIALISER) await reinitialiser(conf);
 
-titre('RHEMA Business : test sans Docker (MySQL)');
+titre('ERP-WORKFLOW : test sans Docker (MySQL)');
 await preparerBase(conf);
 
 Object.assign(process.env, {

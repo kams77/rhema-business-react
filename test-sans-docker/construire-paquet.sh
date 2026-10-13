@@ -1,10 +1,10 @@
 #!/bin/sh
-# Construit le paquet « RHEMA-Test-Windows.zip » (test sans Docker).
+# Construit le paquet « ERP-WORKFLOW-Test-Windows.zip » (test sans Docker).
 # Prérequis : application compilée en mode serveur dans dist/ (VITE_BACKEND=api npm run build).
-# Usage : sh test-sans-docker/construire-paquet.sh   -> paquet/RHEMA-Test-Windows.zip
+# Usage : sh test-sans-docker/construire-paquet.sh   -> paquet/ERP-WORKFLOW-Test-Windows.zip
 set -e
 NODE_VERSION=${NODE_VERSION:-22.11.0}
-OUT=paquet/RHEMA-Test-Windows
+OUT=paquet/ERP-WORKFLOW-Test-Windows
 test -f dist/index.html || { echo "dist/ introuvable : compilez d'abord l'application (VITE_BACKEND=api npm run build)."; exit 1; }
 
 rm -rf paquet
@@ -22,5 +22,5 @@ cp -r dist "$OUT/app/dist"
 curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-x64.zip" -o /tmp/node-win.zip
 unzip -j -q /tmp/node-win.zip "node-v$NODE_VERSION-win-x64/node.exe" "node-v$NODE_VERSION-win-x64/LICENSE" -d "$OUT/node"
 
-( cd paquet && zip -q -r RHEMA-Test-Windows.zip RHEMA-Test-Windows )
-ls -la paquet/RHEMA-Test-Windows.zip
+( cd paquet && zip -q -r ERP-WORKFLOW-Test-Windows.zip ERP-WORKFLOW-Test-Windows )
+ls -la paquet/ERP-WORKFLOW-Test-Windows.zip

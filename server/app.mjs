@@ -1,4 +1,4 @@
-// server/app.mjs — API RHEMA Business + service des fichiers de l'application.
+// server/app.mjs — API ERP-WORKFLOW + service des fichiers de l'application.
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -1007,8 +1007,8 @@ export function createApp({ db, config }) {
       data.users = (await db.listUsers()).map(u => ({ ...toClientUser(u), passwordHash: u.passwordHash }));
       data.auditLogs = await db.listAuditLogs(AUDIT_LIMIT);
       await audit(s.user, 'Export de sauvegarde', 'admin', 'Téléchargement d\'une sauvegarde complète depuis le serveur.');
-      return sendJson(req, res, 200, { app: 'rhema-business', version: 1, exportedAt: new Date().toISOString(), data }, {
-        'Content-Disposition': `attachment; filename="rhema-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
+      return sendJson(req, res, 200, { app: 'erp-workflow', version: 1, exportedAt: new Date().toISOString(), data }, {
+        'Content-Disposition': `attachment; filename="erp-workflow-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
       });
     }
 
@@ -1016,8 +1016,9 @@ export function createApp({ db, config }) {
       const s = await requireSession(req);
       requireDG(s);
       const backup = await readJson(req);
-      if (!backup || backup.app !== 'rhema-business' || typeof backup.data !== 'object') {
-        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde RHEMA Business.');
+      // L'ancien nom (« rhema-business ») reste accepté pour les sauvegardes existantes.
+      if (!backup || !['erp-workflow', 'rhema-business'].includes(backup.app) || typeof backup.data !== 'object') {
+        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde ERP-WORKFLOW.');
       }
       const users = await prepareUsers(backup.data.users);
       if (!users.some(u => u.id === s.user.id || u.email.toLowerCase() === s.user.email.toLowerCase())) {

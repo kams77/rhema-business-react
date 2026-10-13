@@ -46,7 +46,7 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({ isOpen, canMan
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `rhema-sauvegarde-serveur-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `erp-workflow-sauvegarde-serveur-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         setInfo('Sauvegarde du serveur téléchargée. Conservez ce fichier en lieu sûr : il contient toutes les données de l\'entreprise.');

@@ -15,7 +15,7 @@ import {
   ArrowRight,
   AlertTriangle
 } from 'lucide-react';
-import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import { APP_NAME, DEMO_MODE, DEMO_PASSWORD, orgInitials } from '../config';
 import {
   MAX_FAILED_ATTEMPTS,
   MIN_PASSWORD_LENGTH,
@@ -221,7 +221,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
       <header className="px-6 py-4 border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 p-0.5 shadow-lg flex items-center justify-center font-black text-white text-base">
-            RB
+            {organization.logo
+              ? <img src={organization.logo} alt="" className="w-full h-full object-contain rounded-lg bg-white" />
+              : orgInitials(organization.name)}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -605,7 +607,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Pied de page officiel */}
       <footer className="px-6 py-3 border-t border-slate-800/80 bg-slate-950/80 text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div>
-          © {new Date().getFullYear()} <strong>{organization.name}</strong>
+          © {new Date().getFullYear()} <strong>{organization.name}</strong> · {APP_NAME}
         </div>
         <div className="flex items-center gap-3 font-mono">
           {(organization.rccm || organization.registrationNumber) && <span>RCCM : {organization.rccm || organization.registrationNumber}</span>}

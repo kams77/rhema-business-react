@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { isEntityInUserScope, isEntityDescendantOf } from '../utils/rbac';
 import { canWriteEntity, canDeleteEntity } from '../../shared/access.mjs';
+import { orgInitials } from '../config';
 
 interface HierarchyViewProps {
   organization: Organization;
@@ -231,7 +232,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-700 flex items-center justify-center p-1.5 shadow-md shrink-0">
             <div className="w-full h-full bg-gradient-to-tr from-indigo-600 to-blue-500 rounded-xl flex items-center justify-center font-black text-white text-base">
-              RB
+              {orgInitials(organization.name)}
             </div>
           </div>
           <div>
