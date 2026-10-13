@@ -38,7 +38,8 @@ import {
   Calendar,
   AlertCircle
 } from 'lucide-react';
-import { getRoleBadgeClass, titleHasAny, HR_TITLE_TERMS } from '../utils/rbac';
+import { getRoleBadgeClass, titleHasAny, HR_TITLE_TERMS, entityPlacement } from '../utils/rbac';
+import { csvRow } from '../utils/exportUtils';
 
 interface BulkImportViewProps {
   currentUser: User;
@@ -72,6 +73,8 @@ interface ParsedEmployeeRow {
   compteBancaire: string;
   modePaiement: 'virement' | 'mobile_money' | 'cheque' | 'especes';
   dependentsCount: number;
+  /** Date d'entrée (AAAA-MM-JJ), vide si non fournie. */
+  dateEntree: string;
   isValid: boolean;
   errors: string[];
 }
@@ -141,12 +144,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
   // GABARITS CSV TÉLÉCHARGEABLES
   // =========================================================================
   const downloadEmployeeTemplate = () => {
-    const header = "matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge\n";
+    const header = "matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge,date_entree\n";
     const sample = [
-      "MAT-2026-101,Kalombo,Dieudonné,d.kalombo@rhemabusiness.com,+243 81 222 3344,agent,Technicien Faisceaux Hertziens,Service Déploiement VSAT,CDI,1200,USD,01-83-CNSS-991,Rawbank Kinshasa,01002-39201928019-88,virement,3",
-      "MAT-2026-102,Mwamba,Nathalie,n.mwamba@rhemabusiness.com,+243 82 333 4455,agent,Comptable Auxiliaire,Service Comptabilité & Trésorerie,CDI,950,USD,01-83-CNSS-992,Equity BCDC,00012-92019201920-12,virement,1",
-      "MAT-2026-103,Mutombo,Gabriel,g.mutombo@rhemabusiness.com,+243 99 444 5566,chef_service,Superviseur NOC Réseau,Service Support & Supervision,CDI,1600,USD,01-83-CNSS-993,Rawbank Kinshasa,01002-44910294819-22,virement,4",
-      "MAT-2026-104,Bikangi,Christian,c.bikangi@rhemabusiness.com,+243 85 555 6677,agent,Développeur Logiciel Intégration,Service Support & Supervision,CDD,800,USD,01-83-CNSS-994,Rawbank Kinshasa,01002-88291049281-99,virement,0"
+      "MAT-2026-101,Kalombo,Dieudonné,d.kalombo@exemple.cd,+243 81 222 3344,agent,Technicien Faisceaux Hertziens,Service Déploiement VSAT,CDI,1200,USD,01-83-CNSS-991,Rawbank Kinshasa,01002-39201928019-88,virement,3,2024-03-01",
+      "MAT-2026-102,Mwamba,Nathalie,n.mwamba@exemple.cd,+243 82 333 4455,agent,Comptable Auxiliaire,Service Comptabilité & Trésorerie,CDI,950,USD,01-83-CNSS-992,Equity BCDC,00012-92019201920-12,virement,1,2025-01-15",
+      "MAT-2026-103,Mutombo,Gabriel,g.mutombo@exemple.cd,+243 99 444 5566,chef_service,Superviseur NOC Réseau,Service Support & Supervision,CDI,1600,USD,01-83-CNSS-993,Rawbank Kinshasa,01002-44910294819-22,virement,4,2022-09-05",
+      "MAT-2026-104,Bikangi,Christian,c.bikangi@exemple.cd,+243 85 555 6677,agent,Développeur Logiciel Intégration,Service Support & Supervision,CDD,800,USD,01-83-CNSS-994,Rawbank Kinshasa,01002-88291049281-99,virement,0,2026-02-01"
     ].join("\n");
 
     const blob = new Blob([header + sample], { type: 'text/csv;charset=utf-8;' });
@@ -191,12 +194,31 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     // Détection séparateur (, ou ;)
     const sep = lines[0].includes(';') ? ';' : ',';
-    const headers = lines[0].split(sep).map(h => h.toLowerCase().replace(/["']/g, '').trim());
+    // Découpage CSV : champs entre guillemets (virgules et apostrophes conservées, « "" » = guillemet).
+    const splitCsv = (line: string): string[] => {
+      const out: string[] = [];
+      let cur = '';
+      let quoted = false;
+      for (let k = 0; k < line.length; k++) {
+        const ch = line[k];
+        if (quoted) {
+          if (ch === '"' && line[k + 1] === '"') { cur += '"'; k++; }
+          else if (ch === '"') quoted = false;
+          else cur += ch;
+        } else if (ch === '"') quoted = true;
+        else if (ch === sep) { out.push(cur.trim()); cur = ''; }
+        else cur += ch;
+      }
+      out.push(cur.trim());
+      // Apostrophe ajoutée par nos exports pour neutraliser les formules : retirée à l'import.
+      return out.map(v => (/^'[=+\-@]/.test(v) ? v.slice(1) : v));
+    };
+    const headers = splitCsv(lines[0]).map(h => h.toLowerCase().replace(/^\uFEFF/, '').trim());
 
     const result: ParsedEmployeeRow[] = [];
 
     for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(sep).map(v => v.replace(/["']/g, '').trim());
+      const values = splitCsv(lines[i]);
       if (values.length < 3) continue;
 
       const getVal = (possibleKeys: string[]): string => {
@@ -207,11 +229,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         return '';
       };
 
-      const matricule = getVal(['matricule', 'id', 'mat', 'code']) || `MAT-2026-${Math.floor(100 + Math.random() * 900)}`;
-      const nom = getVal(['nom', 'lastname', 'name']) || 'Collaborateur';
+      // Aucune valeur inventée : une donnée absente reste vide (ou rend la ligne invalide si elle est obligatoire).
+      const matricule = getVal(['matricule', 'id', 'mat', 'code']);
+      const nom = getVal(['nom', 'lastname', 'name']);
       const prenom = getVal(['prenom', 'firstname']) || '';
-      const email = getVal(['email', 'mail']) || `${nom.toLowerCase().replace(/\s/g, '')}@rhemabusiness.com`;
-      const telephone = getVal(['telephone', 'phone', 'tel']) || '+243 81 279 1228';
+      const email = getVal(['email', 'mail']).toLowerCase();
+      const telephone = getVal(['telephone', 'phone', 'tel']);
       const rawRole = getVal(['role', 'grade', 'statut']).toLowerCase();
       
       let role: UserRole = 'agent';
@@ -222,8 +245,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       else if (rawRole.includes('chef_division') || titleHasAny(rawRole, ['division'])) role = 'chef_division';
       else if (rawRole.includes('chef_service') || titleHasAny(rawRole, ['service', 'chef service'])) role = 'chef_service';
 
-      const roleTitle = getVal(['intitule_poste', 'poste', 'fonction', 'title']) || 'Agent Spécialiste';
-      const nomEntite = getVal(['nom_entite', 'entite', 'service', 'departement']) || 'Service Opérationnel VSAT';
+      const roleTitle = getVal(['intitule_poste', 'poste', 'fonction', 'title']);
+      const nomEntite = getVal(['nom_entite', 'entite', 'service', 'departement']);
       
       const rawContract = getVal(['type_contrat', 'contrat']).toUpperCase();
       let typeContrat: ParsedEmployeeRow['typeContrat'] = 'CDI';
@@ -232,12 +255,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       else if (rawContract.includes('CONSULT')) typeContrat = 'Consultant';
       else if (rawContract.includes('JOURN')) typeContrat = 'Journalier';
 
-      const salaireBase = parseFloat(getVal(['salaire_base', 'salaire', 'base', 'salary']).replace(/[^0-9.]/g, '')) || 800;
+      const salaireBase = parseFloat(getVal(['salaire_base', 'salaire', 'base', 'salary']).replace(/\s/g, '').replace(',', '.').replace(/[^0-9.]/g, '')) || 0;
       const rawDevise = getVal(['devise', 'currency']).toUpperCase();
       const devise: 'USD' | 'CDF' = rawDevise.includes('CDF') ? 'CDF' : 'USD';
-      const cnssNumero = getVal(['cnss_numero', 'cnss']) || `01-83-CNSS-${Math.floor(1000 + Math.random() * 9000)}`;
-      const banque = getVal(['banque', 'bank']) || 'Rawbank Kinshasa';
-      const compteBancaire = getVal(['compte_bancaire', 'compte', 'account']) || '01002-39201928019-88';
+      const cnssNumero = getVal(['cnss_numero', 'cnss']);
+      const banque = getVal(['banque', 'bank']);
+      const compteBancaire = getVal(['compte_bancaire', 'compte', 'account']);
       
       const rawMode = getVal(['mode_paiement', 'paiement']).toLowerCase();
       let modePaiement: ParsedEmployeeRow['modePaiement'] = 'virement';
@@ -246,12 +269,23 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
       else if (rawMode.includes('espece')) modePaiement = 'especes';
 
       const dependentsCount = parseInt(getVal(['personnes_charge', 'enfants', 'charges'])) || 0;
+      // Date d'entrée (AAAA-MM-JJ ou JJ/MM/AAAA), facultative.
+      const rawDate = getVal(['date_entree', 'date_embauche', 'date_debut']);
+      const fr = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(rawDate);
+      const dateEntree = fr ? `${fr[3]}-${fr[2]}-${fr[1]}` : (/^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '');
 
       // Validation
       const errors: string[] = [];
       if (!nom) errors.push("Nom obligatoire");
-      if (!email.includes('@')) errors.push("Email invalide");
-      if (salaireBase <= 0) errors.push("Salaire de base nul ou négatif");
+      if (!matricule) errors.push("Matricule obligatoire");
+      if (!/^\S+@\S+\.\S+$/.test(email)) errors.push(email ? "Email invalide" : "Email obligatoire (identifiant de connexion)");
+      if (!roleTitle) errors.push("Intitulé du poste obligatoire");
+      if (salaireBase <= 0) errors.push("Salaire de base manquant, nul ou négatif");
+      if (role === 'dg') errors.push("Le rôle DG ne s'importe pas : il est attribué par la Direction Générale");
+      if (!nomEntite) errors.push("Entité (nom_entite) obligatoire");
+      else if (!findEntity(nomEntite)) errors.push(`Entité « ${nomEntite} » introuvable dans l'organigramme (créez-la d'abord)`);
+      if (result.some(r => r.email === email && email)) errors.push("Email en double dans le fichier");
+      if (result.some(r => r.matricule && r.matricule.toLowerCase() === matricule.toLowerCase())) errors.push("Matricule en double dans le fichier");
       if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
         errors.push("Email déjà existant dans l'ERP");
       }
@@ -277,6 +311,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         compteBancaire,
         modePaiement,
         dependentsCount,
+        dateEntree,
         isValid: errors.length === 0,
         errors
       });
@@ -284,6 +319,16 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     setParsedEmployees(result);
   };
+
+  /** Entité désignée dans le fichier : nom ou code exact (sans tenir compte des majuscules), sinon nom partiel unique. */
+  function findEntity(label: string): HierarchicalEntity | undefined {
+    const v = label.trim().toLowerCase();
+    if (!v) return undefined;
+    const exact = entities.find(e => e.name.trim().toLowerCase() === v || e.code.trim().toLowerCase() === v);
+    if (exact) return exact;
+    const partial = entities.filter(e => e.name.toLowerCase().includes(v));
+    return partial.length === 1 ? partial[0] : undefined;
+  }
 
   // Exécution de l'import des employés
   const handleExecuteEmployeeImport = () => {
@@ -298,11 +343,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
     valids.forEach(row => {
       const userId = `usr-csv-${Date.now()}-${row.index}-${Math.random().toString(36).substring(2, 6)}`;
       
-      // Recherche entité concordante ou service par défaut
-      const matchedEntity = entities.find(e => 
-        e.name.toLowerCase().includes(row.nomEntite.toLowerCase()) ||
-        row.nomEntite.toLowerCase().includes(e.name.toLowerCase())
-      ) || entities[0];
+      // Entité vérifiée à l'analyse du fichier (ligne invalide si introuvable).
+      const matchedEntity = findEntity(row.nomEntite);
 
       const fullUserName = row.prenom ? `${row.nom} ${row.prenom}` : row.nom;
 
@@ -317,14 +359,12 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         role: row.role,
         roleTitle: row.roleTitle,
         organizationId: currentOrg.id,
-        departmentName: matchedEntity?.name || 'Département Opérations',
-        departementId: matchedEntity?.level === 'departement' ? matchedEntity.id : matchedEntity?.parentId,
-        serviceId: matchedEntity?.level === 'service' ? matchedEntity.id : undefined,
+        ...entityPlacement(matchedEntity?.id, entities),
         status: 'actif',
         failedAccessAttempts: 0,
         phone: row.telephone,
         canCreateSubAgents: row.role !== 'agent',
-        canApproveServiceDocuments: row.role !== 'agent'
+        canApproveServiceDocuments: false
       };
 
       const newContract: EmployeeContract = {
@@ -333,7 +373,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
         employeeCode: row.matricule,
         matricule: row.matricule,
         contractType: row.typeContrat,
-        startDate: new Date().toISOString().slice(0, 10),
+        startDate: row.dateEntree || new Date().toISOString().slice(0, 10),
         baseSalary: row.salaireBase,
         salaryCurrency: row.devise,
         categoryPro: row.role === 'dg' ? 'Cadre Dirigeant' : row.role === 'chef_service' ? 'Agent de Maîtrise' : 'Exécution',
@@ -362,9 +402,8 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
 
     if (!DEMO_MODE) {
       // Fichier à remettre aux collaborateurs puis à détruire : c'est la seule fois où les mots de passe sont visibles.
-      const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const csv = ['Nom;Email;Matricule;Mot de passe provisoire']
-        .concat(credentials.map(c => [c.name, c.email, c.matricule, c.password].map(esc).join(';')))
+        .concat(credentials.map(c => csvRow([c.name, c.email, c.matricule, c.password])))
         .join('\n');
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -843,7 +882,7 @@ export const BulkImportView: React.FC<BulkImportViewProps> = ({
                   setEmployeeRawCSV(e.target.value);
                   parseEmployeesCSV(e.target.value);
                 }}
-                placeholder="matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge"
+                placeholder="matricule,nom,prenom,email,telephone,role,intitule_poste,nom_entite,type_contrat,salaire_base,devise,cnss_numero,banque,compte_bancaire,mode_paiement,personnes_charge,date_entree"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"
               />
             </div>

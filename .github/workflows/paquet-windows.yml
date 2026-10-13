@@ -1,0 +1,118 @@
+# Paquet « test sans Docker » pour Windows (XAMPP / MySQL) : construction puis essai réel sur Windows.
+name: Paquet Windows sans Docker
+
+on:
+  push:
+    branches: [main, 'securite/**', 'amelioration/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paquet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compilation de l'application (mode serveur)
+        run: |
+          npm install --no-audit --no-fund
+          VITE_BACKEND=api VITE_DEMO_MODE=false npm run build
+      - name: Construction du paquet
+        run: sh test-sans-docker/construire-paquet.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ERP-WORKFLOW-Test-Windows
+          path: paquet/ERP-WORKFLOW-Test-Windows.zip
+          retention-days: 30
+
+  essai-windows:
+    needs: paquet
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ERP-WORKFLOW-Test-Windows
+      - name: Décompression du paquet
+        shell: pwsh
+        run: Expand-Archive ERP-WORKFLOW-Test-Windows.zip -DestinationPath C:\erp
+
+      - name: "MariaDB, comme XAMPP (root sans mot de passe)"
+        shell: pwsh
+        run: |
+          $v = '10.11.9'
+          Invoke-WebRequest "https://archive.mariadb.org/mariadb-$v/winx64-packages/mariadb-$v-winx64.zip" -OutFile C:\mdb.zip
+          Expand-Archive C:\mdb.zip -DestinationPath C:\mdb
+          $b = "C:\mdb\mariadb-$v-winx64\bin"
+          $init = if (Test-Path "$b\mariadb-install-db.exe") { "$b\mariadb-install-db.exe" } else { "$b\mysql_install_db.exe" }
+          & $init --datadir=C:\mdbdata
+          $srv = if (Test-Path "$b\mariadbd.exe") { "$b\mariadbd.exe" } else { "$b\mysqld.exe" }
+          Start-Process -FilePath $srv -ArgumentList '--datadir=C:\mdbdata','--port=3306' -WindowStyle Hidden
+          for ($i = 0; $i -lt 60; $i++) { if ((Test-NetConnection 127.0.0.1 -Port 3306 -WarningAction SilentlyContinue).TcpTestSucceeded) { break }; Start-Sleep 2 }
+          "MDB_BIN=$b" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Démarrage et tests dans la MÊME étape : sous Windows, les programmes lancés par une étape
+      # sont arrêtés à la fin de celle-ci.
+      - name: Démarrage par le lanceur et tests de l'API sur MySQL (Windows)
+        shell: pwsh
+        run: |
+          $p = 'C:\erp\ERP-WORKFLOW-Test-Windows'
+          Start-Process -FilePath "$p\node\node.exe" -ArgumentList "$p\app\lanceur.mjs",'--sans-navigateur' -WorkingDirectory $p -RedirectStandardOutput C:\lanceur.log -RedirectStandardError C:\lanceur.err
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) { try { if ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health).StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep 2 }
+          $log = ((Get-Content C:\lanceur.log, C:\lanceur.err -ErrorAction SilentlyContinue) | Select-Object -Last 20) -join '%0A'
+          if (-not $ok) { Write-Output "::error title=Journal du lanceur::$log"; throw 'Le serveur ne répond pas.' }
+          $setup = (Select-String -Path "$p\configuration.txt" -Pattern '^CODE_INSTALLATION=(.*)$').Matches[0].Groups[1].Value
+          $env:BASE_URL = 'http://127.0.0.1:8080'
+          $env:SETUP_CODE = $setup
+          $out = & "$p\node\node.exe" server\tests\api.test.mjs 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          $out
+          $tail = (($out -split "`n") | Select-Object -Last 12) -join '%0A'
+          if ($rc -ne 0) {
+            Write-Output "::error title=Tests API Windows::$tail"
+            Write-Output "::error title=Journal du lanceur::$log"
+            throw 'Tests API en échec.'
+          }
+          $out2 = & "$p\node\node.exe" server\tests\permissions.test.mjs 2>&1 | Out-String
+          $rc2 = $LASTEXITCODE
+          $tail2 = (($out2 -split "`n") | Select-Object -Last 6) -join '%0A'
+          if ($rc2 -ne 0) { Write-Output "::error title=Tests des droits Windows::$tail2"; throw 'Tests des droits en échec.' }
+          $tables = & "$env:MDB_BIN\mariadb.exe" -uroot -e "SHOW TABLES FROM erp_workflow_test; SELECT COUNT(*) AS comptes FROM erp_workflow_test.users;" | Out-String
+          Write-Output "::notice title=Windows + MariaDB::API : $((($out -split "`n") | Select-String 'vérifications réussies').ToString().Trim()) | Droits : $((($out2 -split "`n") | Select-String 'réussies').ToString().Trim())%0A$($tables -replace "`r?`n", '%0A')"
+
+      - name: Réinitialisation par reinitialiser.bat
+        shell: pwsh
+        run: |
+          Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+          $p = 'C:\erp\ERP-WORKFLOW-Test-Windows'
+          cmd /c "(echo EFFACER& echo.) | `"$p\reinitialiser.bat`""
+          $n = & "$env:MDB_BIN\mariadb.exe" -uroot -N -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='erp_workflow_test'"
+          if ($n.Trim() -ne '0') { Write-Output "::error title=Réinitialisation::La base erp_workflow_test existe encore."; throw 'La base de test existe encore.' }
+          Write-Output "::notice title=Réinitialisation::Base erp_workflow_test effacée par reinitialiser.bat."
+
+
+  # Le paquet validé est aussi déposé sur la branche « paquet-windows » (téléchargeable depuis GitHub :
+  # Code -> branche paquet-windows -> ERP-WORKFLOW-Test-Windows.zip -> Download raw file).
+  publication:
+    needs: essai-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ERP-WORKFLOW-Test-Windows
+      - name: Dépôt sur la branche paquet-windows
+        run: |
+          mkdir depot && mv ERP-WORKFLOW-Test-Windows.zip depot/ && cd depot
+          printf 'Paquet ERP-WORKFLOW « test sans Docker » (Windows + XAMPP).\nConstruit depuis %s, essayé sur Windows avec MariaDB.\n' "$GITHUB_SHA" > LISEZ-MOI.txt
+          git init -q -b paquet-windows
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add . && git commit -q -m "Paquet Windows sans Docker ($GITHUB_SHA)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" paquet-windows

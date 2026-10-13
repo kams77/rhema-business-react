@@ -100,6 +100,26 @@ export interface Organization {
   createdAt: string;
   /** Coordonnées bancaires officielles (renseignées par le DG), imprimées sur les factures. */
   bankAccounts?: OrganizationBankAccount[];
+  /** Identité visuelle des documents : en-tête, pied de page, slogan, couleur. */
+  branding?: OrganizationBranding;
+}
+
+/**
+ * Identité visuelle imprimée sur les documents officiels et les PDF.
+ * Les images sont des « data URL » PNG ou JPEG ré-encodées dans le navigateur
+ * (aucun lien externe : rien n'est chargé depuis un autre site).
+ */
+export interface OrganizationBranding {
+  /** Slogan ou activité, affiché sous le nom dans l'en-tête automatique. */
+  slogan?: string;
+  /** Couleur principale (#RRGGBB) du bandeau d'en-tête. */
+  color?: string;
+  /** Papier à en-tête complet (image bannière) : remplace l'en-tête automatique. */
+  headerImage?: string;
+  /** Pied de page complet (image bannière). */
+  footerImage?: string;
+  /** Texte du pied de page (adresse, contacts, mentions légales…), 3 lignes au plus. */
+  footerText?: string;
 }
 
 export interface OrganizationBankAccount {

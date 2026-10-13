@@ -1,10 +1,26 @@
 @import "tailwindcss";
 
+/* Polices auto-hébergées (licence SIL OFL, voir public/fonts) : aucune requête vers un service tiers. */
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/fonts/PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ========================================================================== */
-/* Thème RHEMA Business                                                        */
+/* Thème ERP-WORKFLOW                                                        */
 /* ========================================================================== */
 @theme {
-  /* Polices chargées dans index.html */
+  /* Polices auto-hébergées (@font-face ci-dessus) */
   --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -121,5 +137,35 @@
   body {
     background: #fff !important;
     color: #000 !important;
+  }
+
+  /* Document officiel ouvert : seule la feuille (en-tête, contenu, pied de page) est imprimée. */
+  body:has(.print-sheet) *:not(:has(.print-sheet)):not(.print-sheet):not(.print-sheet *) {
+    display: none !important;
+  }
+  body:has(.print-sheet) *:has(.print-sheet) {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+    backdrop-filter: none !important;
+  }
+  body:has(.print-sheet) .print-sheet {
+    max-width: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

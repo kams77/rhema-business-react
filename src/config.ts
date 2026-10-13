@@ -5,7 +5,7 @@
  * Où sont enregistrées les données.
  *
  * - `local` (défaut) : dans le navigateur de chaque poste (aucun serveur nécessaire).
- * - `api`            : sur le serveur RHEMA (dossier server/) avec MariaDB / MySQL.
+ * - `api`            : sur le serveur ERP-WORKFLOW (dossier server/) avec MariaDB / MySQL.
  *                      Tous les utilisateurs partagent les mêmes données.
  *
  * Fichier .env : VITE_BACKEND=api
@@ -23,6 +23,18 @@ export const API_MODE: boolean = import.meta.env.VITE_BACKEND === 'api';
  * Pour passer en production sans serveur : VITE_DEMO_MODE=false
  */
 export const DEMO_MODE: boolean = !API_MODE && import.meta.env.VITE_DEMO_MODE !== 'false';
+
+/** Nom de l'application (titres, écrans d'installation et de connexion). */
+export const APP_NAME = 'ERP-WORKFLOW';
+
+/** Initiales d'une organisation (pastille quand aucun logo n'est défini). */
+export const orgInitials = (name?: string): string =>
+  (name || APP_NAME)
+    .split(/[\s\-_.]+/)
+    .filter(w => w && !/^(sarl|sa|sas|rdc|sprl|asbl|de|du|des|et|la|le|les)$/i.test(w))
+    .slice(0, 2)
+    .map(w => w[0].toUpperCase())
+    .join('') || 'EW';
 
 /** Mot de passe des comptes de démonstration (affiché uniquement en mode démo). */
 export const DEMO_PASSWORD = 'rhema2026';

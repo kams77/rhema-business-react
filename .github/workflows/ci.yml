@@ -29,6 +29,12 @@ jobs:
       - name: Tests des empreintes SHA-256
         run: npx --yes esbuild src/lib/__tests__/integrity.test.ts --bundle --platform=node --format=esm --outfile=/tmp/integrity.test.mjs --log-level=error && node /tmp/integrity.test.mjs
 
+      - name: Tests des en-têtes et pieds de page PDF (logo, papier à en-tête)
+        run: |
+          npx --yes esbuild src/lib/__tests__/pdf-branding.test.ts --bundle --platform=node --format=esm --define:import.meta.env={} --external:jspdf --outfile=node_modules/.tmp/pdf-branding.test.mjs --log-level=error
+          node node_modules/.tmp/pdf-branding.test.mjs > /tmp/pdf.txt 2>&1 || { cat /tmp/pdf.txt; echo "::error::$(grep -v '^ *at ' /tmp/pdf.txt | tail -12 | tr '\n' ' ' | cut -c1-1500)"; exit 1; }
+          cat /tmp/pdf.txt
+
       - name: Tests du circuit de validation (documents, tâches, droits)
         run: node shared/__tests__/workflow.test.mjs
 
@@ -74,16 +80,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Construction de l'image Docker
-        run: docker build -t rhema-business .
+        run: docker build -t erp-workflow .
 
       - name: Vérification du fichier docker-compose
         run: docker compose config -q
 
       - name: Démarrage et contrôle du site
         run: |
-          docker run -d -p 8080:80 --name rhema rhema-business
+          docker run -d -p 8080:80 --name erp-workflow erp-workflow
           sleep 3
-          docker exec rhema nginx -t
+          docker exec erp-workflow nginx -t
           curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
           headers=$(curl -fsSI http://localhost:8080/)
           echo "$headers"
@@ -112,6 +118,9 @@ jobs:
 
       - name: Tests de la chaîne d'audit
         run: node server/tests/audit-chain.test.mjs
+
+      - name: Tests de sécurité et de confidentialité
+        run: node server/tests/security.test.mjs
 
       - name: Démarrage de la pile complète (application + MariaDB)
         env:
@@ -149,10 +158,10 @@ jobs:
       - name: Commandes du guide Synology (sauvegarde, restauration, déblocage)
         run: |
           set -e
-          docker exec rhema-db sh -c 'mariadb-dump -u root -p"$MARIADB_ROOT_PASSWORD" --single-transaction rhema' | gzip > sauvegarde.sql.gz
+          docker exec erp-workflow-db sh -c 'mariadb-dump -u root -p"$MARIADB_ROOT_PASSWORD" --single-transaction erp_workflow' | gzip > sauvegarde.sql.gz
           gunzip -c sauvegarde.sql.gz | grep -q 'CREATE TABLE `users`'
-          gunzip -c sauvegarde.sql.gz | docker exec -i rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema'
-          docker exec rhema-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" rhema -e \
+          gunzip -c sauvegarde.sql.gz | docker exec -i erp-workflow-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" erp_workflow'
+          docker exec erp-workflow-db sh -c 'mariadb -u root -p"$MARIADB_ROOT_PASSWORD" erp_workflow -e \
             "UPDATE users SET status=\"actif\", failed_attempts=0, profile=JSON_REMOVE(profile, \"$.lockedUntil\") WHERE login_email=\"dg@test.cd\""'
           # Le DG, bloqué 15 minutes par les tests, doit pouvoir se reconnecter immédiatement.
           code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
@@ -161,10 +170,39 @@ jobs:
           curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
           echo "Sauvegarde, restauration et déblocage : OK"
 
+      - name: Arrêt de la pile Synology (libère les ports pour le kit de test)
+        env:
+          DB_PASSWORD: ci-base-${{ github.run_id }}
+          DB_ROOT_PASSWORD: ci-root-${{ github.run_id }}
+          SETUP_CODE: ci-installation
+        run: docker compose down -v
+
+      - name: Kit de test sur ordinateur (MySQL + phpMyAdmin)
+        run: |
+          set -e
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          code=$(sed -n 's/^SETUP_CODE=//p' test-local/.env)
+          BASE_URL=http://localhost:8080 SETUP_CODE="$code" node server/tests/api.test.mjs
+          # Les données sont bien dans les tables MySQL.
+          docker exec erp-workflow-test-db sh -c 'mariadb -u erp_workflow -p"$MARIADB_PASSWORD" erp_workflow -N -e "SELECT COUNT(*) FROM users"' | grep -qv '^0$'
+          docker exec erp-workflow-test-db sh -c 'mariadb -u erp_workflow -p"$MARIADB_PASSWORD" erp_workflow -e "SHOW TABLES"'
+          # phpMyAdmin répond.
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8081/ && break; sleep 2; done
+          curl -fsS http://localhost:8081/ | grep -qi phpmyadmin
+          # Arrêt puis reprise : les données sont conservées.
+          sh test-local/arreter-test.sh
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
+          # Réinitialisation : base vide.
+          echo EFFACER | sh test-local/reinitialiser-test.sh
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":false'
+          echo "Kit de test : OK"
+
       - name: Refus des mots de passe d'exemple
         run: |
           set +e
-          docker run --rm -e DB_PASSWORD=CHANGEZ_MOI -e SETUP_CODE=x rhema-business-serveur:latest
+          docker run --rm -e DB_PASSWORD=CHANGEZ_MOI -e SETUP_CODE=x erp-workflow-serveur:latest
           test $? -eq 1 && echo "Démarrage refusé comme prévu."
 
       - name: Journaux en cas d'échec

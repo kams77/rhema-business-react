@@ -21,6 +21,7 @@ import {
   isStepHolder,
   holdsPosition,
   canWriteDocument,
+  isPayrollStaff,
 } from './access.mjs';
 
 // ---------------------------------------------------------------------------
@@ -427,54 +428,149 @@ export function workflowSummary(doc) {
 
 const CONTENT_FIELDS = ['title', 'description', 'subtype', 'category', 'amount', 'currency', 'targetEntityId', 'authorId'];
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const FINAL_DOC = ['signe', 'approuve'];
+const isPayslip = d => !!d && (d.isConfidentialPayslip === true || d.subtype === 'bulletin_de_paie');
+const docChangedKeys = (a, b) => Object.keys({ ...(a || {}), ...(b || {}) }).filter(k => !same(a ? a[k] : undefined, b ? b[k] : undefined));
+
+/** Empreinte de la structure d'un circuit (qui valide, à quel poste, dans quel ordre). */
+const chainShape = steps => (steps || []).map(s => [s.kind, s.approverRole, s.entityId || '', s.approverUserId || ''].join('|')).join(';');
+
+/**
+ * Le circuit soumis est-il exactement celui que prévoit l'organigramme pour cet émetteur ?
+ * (empêche un émetteur de choisir lui-même ses valideurs). Sans annuaire, le contrôle est sauté.
+ * @param {any} doc @param {any} author @param {any[]} entities @param {any[]} [users]
+ */
+export function documentChainMatches(doc, author, entities, users) {
+  if (!Array.isArray(users) || users.length === 0) return true;
+  const steps = (doc && doc.workflow && doc.workflow.steps) || [];
+  return chainShape(steps) === chainShape(buildDocumentChain(doc, author, entities, users));
+}
+
+/** La signature électronique est-elle bien au nom de celui qui enregistre ? */
+// Nom exact, éventuellement suivi de la fonction entre parenthèses (« Jean » ne peut pas signer « Jean Mukendi »).
+const signatureOf = (u, sig) => {
+  if (!sig) return true;
+  const name = String(u.name || '').trim();
+  const by = typeof sig.signedBy === 'string' ? sig.signedBy.trim() : '';
+  return !!name && (by === name || by.startsWith(`${name} (`));
+};
+
+/**
+ * Ancien document sans circuit : validation unique par un responsable habilité
+ * (même règle que l'écran, src/utils/rbac.ts → canUserApproveDocument).
+ * @param {any} u @param {any} doc @param {any[]} entities
+ */
+export function canApproveLegacyDocument(u, doc, entities) {
+  if (!u || !doc || doc.workflow || doc.status !== 'en_revue') return false;
+  if (u.role === 'dg') return true;
+  if (doc.authorId === u.id) return false;
+  if (u.role === 'agent') {
+    return u.canApproveServiceDocuments === true && (!doc.targetEntityId || doc.targetEntityId === u.serviceId);
+  }
+  return !doc.targetEntityId || isEntityInUserScope(u, doc.targetEntityId, entities);
+}
 
 /**
  * Le serveur n'accepte une modification de document que si elle respecte le circuit :
+ * - l'émetteur est celui qui enregistre (personne ne publie au nom d'un autre) ;
+ * - un document naît en brouillon ou soumis à SON circuit (calculé depuis l'organigramme),
+ *   jamais déjà validé ou signé — sauf l'émetteur seul au sommet de son circuit ;
  * - contenu modifiable seulement par l'émetteur, en brouillon ou après rejet (ou par le DG) ;
  * - chaque étape qui change d'état doit être celle EN COURS, validée par son titulaire (identifiant de la session) ;
- * - un document n'est « signé » / « approuvé » que si toutes ses étapes le sont.
- * @param {any} u @param {any} before @param {any} after @param {any[]} entities
+ * - la signature électronique est au nom du signataire, à la dernière étape seulement ;
+ * - un document n'est « signé » / « approuvé » que si toutes ses étapes le sont ;
+ * - bulletins de paie : réservés à la Direction / RH habilitée.
+ * @param {any} u @param {any} before @param {any} after @param {any[]} entities @param {any[]} [users] annuaire (contrôle du circuit)
  */
-export function canWriteDocumentChange(u, before, after, entities) {
+export function canWriteDocumentChange(u, before, after, entities, users) {
   if (!u || !after) return false;
-  if (!canWriteDocument(u, after, entities) && !(before && canActOnDocument(u, before))) return false;
-  const stepsAfter = (after.workflow && after.workflow.steps) || [];
-  const finalOk = !['signe', 'approuve'].includes(after.status) || !after.workflow || (stepsAfter.length > 0 && stepsAfter.every(s => s.status === 'approuve'));
-  if (!finalOk) return false;
-
-  if (!before) {
-    // Création : rien ne peut arriver déjà validé par quelqu'un d'autre.
-    return u.role === 'dg' || stepsAfter.every(s => s.status === 'en_attente' || s.actorId === u.id);
+  if (u.role === 'dg') {
+    const steps = (after.workflow && after.workflow.steps) || [];
+    return !FINAL_DOC.includes(after.status) || !after.workflow || (steps.length > 0 && steps.every(s => s.status === 'approuve'));
   }
-  if (u.role === 'dg') return true;
-  if (!before.workflow) return true; // ancien document, sans circuit : règle de périmètre ci-dessus
+  if (isPayslip(after) || isPayslip(before)) return isPayrollStaff(u);
+  if (before && docChangedKeys(before, after).length === 0) return true;
+
+  const stepsAfter = (after.workflow && after.workflow.steps) || [];
+  const allApproved = stepsAfter.length > 0 && stepsAfter.every(s => s.status === 'approuve');
+  if (FINAL_DOC.includes(after.status) && !allApproved) return false;
+  const pendingOnly = stepsAfter.every(s => s.status === 'en_attente');
+
+  // --- Création ------------------------------------------------------------
+  if (!before) {
+    if (after.authorId !== u.id || !canWriteDocument(u, after, entities)) return false;
+    if (after.status === 'brouillon') return !after.electronicSignature && pendingOnly;
+    if (after.status === 'en_revue') {
+      return !after.electronicSignature && !!after.workflow && stepsAfter.length > 0 && pendingOnly &&
+        documentChainMatches(after, u, entities, users);
+    }
+    if (FINAL_DOC.includes(after.status)) {
+      // L'émetteur est au sommet de son circuit : il signe seul son document.
+      return stepsAfter.length === 1 && stepsAfter[0].approverUserId === u.id && stepsAfter[0].actorId === u.id &&
+        documentChainMatches(after, u, entities, users) && signatureOf(u, after.electronicSignature);
+    }
+    return false;
+  }
 
   const isAuthor = before.authorId === u.id;
   const editable = before.status === 'brouillon' || before.status === 'rejete';
+  if (after.authorId !== before.authorId) return false;
+  const changed = docChangedKeys(before, after);
+
+  // --- Ancien document, sans circuit ---------------------------------------
+  if (!before.workflow) {
+    if (!after.workflow) {
+      // Seul l'émetteur retouche son brouillon ; rien ne devient validé ou signé sans circuit.
+      return isAuthor && editable && same(before.status, after.status) && !changed.includes('electronicSignature');
+    }
+    if (isAuthor && editable) {
+      // Mise en circuit par l'émetteur.
+      return after.status === 'en_revue' && pendingOnly && stepsAfter.length > 0 && !after.electronicSignature &&
+        documentChainMatches(after, u, entities, users);
+    }
+    // Validation unique par un responsable habilité.
+    if (!canApproveLegacyDocument(u, before, entities)) return false;
+    if (!changed.every(k => ['workflow', 'status', 'electronicSignature'].includes(k))) return false;
+    if (stepsAfter.length !== 1 || stepsAfter[0].approverUserId !== u.id || stepsAfter[0].actorId !== u.id) return false;
+    if (stepsAfter[0].status === 'rejete') return after.status === 'rejete' && !changed.includes('electronicSignature');
+    return stepsAfter[0].status === 'approuve' && FINAL_DOC.includes(after.status) && signatureOf(u, after.electronicSignature);
+  }
+
+  // --- Document avec circuit -----------------------------------------------
+  if (!canWriteDocument(u, after, entities) && !canActOnDocument(u, before)) return false;
   const contentChanged = CONTENT_FIELDS.some(f => !same(before[f], after[f]));
   if (contentChanged && !(isAuthor && editable)) return false;
+  // Hors de l'émetteur qui corrige son brouillon, seuls le circuit, le statut et la signature peuvent bouger.
+  if (!(isAuthor && editable) && !changed.every(k => ['workflow', 'status', 'electronicSignature'].includes(k))) return false;
+  if (isAuthor && editable && changed.includes('electronicSignature')) return false;
 
   const bw = before.workflow;
   const aw = after.workflow;
   if (!aw) return false;
-  // Nouveau cycle (soumission / renvoi après correction) : seulement l'émetteur.
+  // Nouveau cycle (soumission / renvoi après correction) : seulement l'émetteur, sur SON circuit.
   if ((aw.cycle || 1) !== (bw.cycle || 1) || (!bw.submittedAt && aw.submittedAt)) {
-    return isAuthor && editable && after.status === 'en_revue' && stepsAfter.every(s => s.status === 'en_attente');
+    return isAuthor && editable && after.status === 'en_revue' && pendingOnly && stepsAfter.length > 0 &&
+      documentChainMatches(after, u, entities, users);
   }
   // Même cycle : au plus UNE étape change, celle en cours, par son titulaire.
   const stepsBefore = bw.steps || [];
   if (stepsBefore.length !== stepsAfter.length) return false;
-  const changed = stepsAfter.filter((s, i) => !same(s, stepsBefore[i]));
-  if (changed.length === 0) return same(before.status, after.status) || (isAuthor && before.status === 'brouillon' && after.status === 'brouillon');
-  if (changed.length > 1) return false;
+  const changedSteps = stepsAfter.filter((s, i) => !same(s, stepsBefore[i]));
+  if (changedSteps.length === 0) {
+    return !changed.includes('electronicSignature') &&
+      (same(before.status, after.status) || (isAuthor && before.status === 'brouillon' && after.status === 'brouillon'));
+  }
+  if (changedSteps.length > 1) return false;
   const cur = currentStep(bw);
-  const s = changed[0];
+  const s = changedSteps[0];
   if (!cur || s.id !== cur.id || s.actorId !== u.id) return false;
   if (!canActOnDocument(u, before)) return false;
-  if (s.status === 'rejete') return after.status === 'rejete';
+  // Seuls l'état de l'étape et la trace du valideur changent (pas le poste attendu).
+  if (s.approverRole !== cur.approverRole || s.entityId !== cur.entityId || s.approverUserId !== cur.approverUserId || s.kind !== cur.kind) return false;
+  if (s.status === 'rejete') return after.status === 'rejete' && !changed.includes('electronicSignature');
   if (s.status !== 'approuve') return false;
-  const allDone = stepsAfter.every(x => x.status === 'approuve');
-  return allDone ? ['signe', 'approuve'].includes(after.status) : after.status === 'en_revue';
+  if (changed.includes('electronicSignature') && !(allApproved && s.kind === 'signature' && signatureOf(u, after.electronicSignature))) return false;
+  return allApproved ? FINAL_DOC.includes(after.status) : after.status === 'en_revue';
 }
 
 /** Suppression : brouillon de l'émetteur, ou DG. */
@@ -575,17 +671,55 @@ export function buildTaskApprovalChain(t, entities, users) {
 
 const TASK_EXECUTION_FIELDS = new Set(['steps', 'comments', 'spentHours', 'status', 'history', 'updatedAt', 'approval', 'blockedReason', 'progress']);
 const TASK_VALIDATION_FIELDS = new Set(['approval', 'status', 'history', 'comments', 'updatedAt', 'signature', 'completedAt', 'lastRejection']);
+const FINAL_TASK = ['validee_terminee', 'termine'];
+
+/**
+ * Le circuit de validation d'une tâche n'avance que par son valideur, à son tour ;
+ * une tâche n'est « validée » que si toutes ses étapes le sont. Vaut aussi pour le créateur
+ * et le responsable de la tâche (ils pilotent la tâche, ils ne valident pas à la place des autres).
+ */
+function taskApprovalIntact(u, before, after) {
+  const bAp = before && before.approval;
+  const aAp = after.approval;
+  const as = (aAp && aAp.steps) || [];
+  if (aAp && !same(aAp, bAp)) {
+    const newCycle = !bAp || (aAp.cycle || 0) !== (bAp.cycle || 0);
+    if (newCycle) {
+      if (!as.every(s => s.status === 'en_attente')) return false;
+      // Personne ne valide son propre travail : un exécutant ou contributeur n'est jamais valideur nommé.
+      const doers = new Set((after.assignedIntervenants || [])
+        .filter(i => i && (i.roleType === 'executant' || i.roleType === 'contributeur')).map(i => i.userId));
+      if (as.some(s => s.approverUserId && doers.has(s.approverUserId))) return false;
+    } else {
+      const bs = bAp.steps || [];
+      if (as.length !== bs.length) return false;
+      const changed = as.filter((s, i) => !same(s, bs[i]));
+      if (changed.length > 0) {
+        const cur = currentStep(bAp);
+        if (changed.length !== 1 || !cur || changed[0].id !== cur.id || changed[0].actorId !== u.id || !canValidateTaskNow(u, before)) return false;
+      }
+    }
+  }
+  const wasFinal = !!before && FINAL_TASK.includes(before.status);
+  if (FINAL_TASK.includes(after.status) && !wasFinal) {
+    return as.length > 0 && as.every(s => s.status === 'approuve');
+  }
+  if (wasFinal && !same(before.signature, after.signature)) return false;
+  return true;
+}
 
 /**
  * Contrôle serveur d'une modification de tâche.
  * @param {any} u @param {any} before @param {any} after @param {any[]} entities
+ * @param {any[]} [users] annuaire (contrôle du circuit soumis par un exécutant)
  */
-export function canWriteTaskChange(u, before, after, entities) {
+export function canWriteTaskChange(u, before, after, entities, users) {
   if (!u || !after) return false;
+  if (u.role === 'dg') return true;
   if (!before) {
     // Création : un responsable dans son périmètre ; un agent seulement pour lui-même, dans son service.
-    if (u.role === 'dg') return true;
     if (after.creatorId !== u.id) return false;
+    if (!taskApprovalIntact(u, undefined, after)) return false;
     if (u.role === 'agent') {
       // Un agent ne charge personne d'autre d'exécuter : il peut seulement nommer qui suit / valide.
       const others = (after.assignedIntervenants || []).filter(i => i.userId !== u.id && (i.roleType === 'executant' || i.roleType === 'contributeur'));
@@ -593,9 +727,19 @@ export function canWriteTaskChange(u, before, after, entities) {
     }
     return !after.assignedEntityId || isEntityInUserScope(u, after.assignedEntityId, entities) || !!after.source;
   }
-  if (canEditTask(u, before, entities)) return true;
   const changedKeys = Object.keys({ ...before, ...after }).filter(k => !same(before[k], after[k]));
   if (changedKeys.length === 0) return true;
+  if (after.creatorId !== before.creatorId) return false;
+  if (!taskApprovalIntact(u, before, after)) return false;
+  // Qui exécute la tâche (même s'il l'a créée) ne compose pas lui-même son circuit de validation :
+  // un nouveau circuit doit être celui que prévoit la tâche (ses valideurs, sinon la hiérarchie).
+  const aAp = after.approval;
+  const newCycle = !!aAp && !same(aAp, before.approval) && (!before.approval || (aAp.cycle || 0) !== (before.approval.cycle || 0));
+  if (newCycle && ['executant', 'contributeur'].includes(taskRoleOf(u, before) || '') && Array.isArray(users) && users.length > 0 &&
+      chainShape(aAp.steps) !== chainShape(buildTaskApprovalChain(after, entities, users))) {
+    return false;
+  }
+  if (canEditTask(u, before, entities)) return true;
   // Valideur à son tour.
   if (canValidateTaskNow(u, before) && changedKeys.every(k => TASK_VALIDATION_FIELDS.has(k))) {
     const bs = (before.approval && before.approval.steps) || [];
@@ -608,8 +752,13 @@ export function canWriteTaskChange(u, before, after, entities) {
   if (canExecuteTask(u, before) && changedKeys.every(k => TASK_EXECUTION_FIELDS.has(k))) {
     if (after.status !== before.status && !['a_faire', 'en_cours', 'en_attente_approbation', 'bloquee'].includes(after.status)) return false;
     if (after.approval && !same(after.approval, before.approval)) {
-      // Soumission : nouveau circuit entièrement « en attente ».
-      return after.status === 'en_attente_approbation' && (after.approval.steps || []).every(s => s.status === 'en_attente');
+      // Soumission : nouveau circuit entièrement « en attente », et c'est celui que prévoit la tâche
+      // (ses valideurs, sinon la hiérarchie de l'entité) : l'exécutant ne choisit pas qui le valide.
+      if (after.status !== 'en_attente_approbation' || !(after.approval.steps || []).every(s => s.status === 'en_attente')) return false;
+      if (Array.isArray(users) && users.length > 0) {
+        return chainShape(after.approval.steps) === chainShape(buildTaskApprovalChain(after, entities, users));
+      }
+      return true;
     }
     return true;
   }

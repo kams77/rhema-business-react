@@ -18,14 +18,20 @@ import {
   AlertTriangle,
   Layers,
   Crown,
-  Briefcase
+  Briefcase,
+  KeyRound,
+  Copy,
+  Pencil
 } from 'lucide-react';
+import { API_MODE } from '../config';
+import { api } from '../lib/api';
 import { 
   getRoleBadgeClass, 
   isUserVisibleToUser, 
   canUserManageAgent, 
   getEntitiesInUserScope,
-  getRoleRank 
+  getRoleRank,
+  entityPlacement
 } from '../utils/rbac';
 
 interface AgentCrudViewProps {
@@ -34,6 +40,8 @@ interface AgentCrudViewProps {
   entities: HierarchicalEntity[];
   organization?: Organization;
   onCreateUser: (newUser: Omit<User, 'id' | 'failedAccessAttempts'>) => void;
+  /** Modification de la fiche d'un collaborateur (nom, poste, rang, affectation…). */
+  onUpdateUser?: (userId: string, changes: Partial<User>) => void;
   onRevokeUser: (userId: string) => void;
   onToggleUserStatus: (userId: string) => void;
   onToggleDelegation?: (userId: string) => void;
@@ -45,12 +53,29 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   entities,
   organization,
   onCreateUser,
+  onUpdateUser,
   onRevokeUser,
   onToggleUserStatus,
   onToggleDelegation,
 }) => {
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
+  // Réinitialisation d'un mot de passe oublié (mode serveur) : le mot de passe provisoire n'est affiché qu'une fois.
+  const [resetInfo, setResetInfo] = useState<{ name: string; password?: string; error?: string } | null>(null);
+  const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+
+  const handleResetPassword = async (user: User) => {
+    if (!window.confirm(`Réinitialiser le mot de passe de ${user.name} ?\n\nSes sessions ouvertes seront fermées et un mot de passe provisoire vous sera affiché une seule fois.`)) return;
+    setResetBusyId(user.id);
+    try {
+      const r = await api.resetPassword(user.id);
+      setResetInfo({ name: user.name, password: r.temporaryPassword });
+    } catch (err) {
+      setResetInfo({ name: user.name, error: err instanceof Error ? err.message : 'Réinitialisation impossible.' });
+    } finally {
+      setResetBusyId(null);
+    }
+  };
 
   // Entités dans le périmètre autorisé de l'utilisateur connecté
   const scopedEntities = getEntitiesInUserScope(currentUser, entities);
@@ -61,9 +86,43 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   const [matricule, setMatricule] = useState(`MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
   const [role, setRole] = useState<UserRole>('agent');
   const [roleTitle, setRoleTitle] = useState('Agent Opérationnel');
-  const [phone, setPhone] = useState('+243 81 279 1228');
+  const [phone, setPhone] = useState('');
   const [entityId, setEntityId] = useState(scopedEntities[0]?.id || '');
   const [canApproveServiceDocuments, setCanApproveServiceDocuments] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const newMatricule = () => `MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+
+  const placementFor = (targetId: string) => entityPlacement(targetId, entities);
+
+  const openCreate = () => {
+    setEditingId(null);
+    setFormError(null);
+    setName('');
+    setEmail('');
+    setPhone('');
+    setMatricule(newMatricule());
+    setRole('agent');
+    setRoleTitle('Agent Opérationnel');
+    setCanApproveServiceDocuments(false);
+    setEntityId(scopedEntities[0]?.id || '');
+    setShowModal(true);
+  };
+
+  const openEdit = (u: User) => {
+    setEditingId(u.id);
+    setFormError(null);
+    setName(u.name);
+    setEmail(u.email);
+    setPhone(u.phone || '');
+    setMatricule(u.matricule || u.employeeCode || '');
+    setRole(u.role);
+    setRoleTitle(u.roleTitle);
+    setCanApproveServiceDocuments(!!u.canApproveServiceDocuments);
+    setEntityId(u.serviceId || u.divisionId || u.directionId || u.departementId || '');
+    setShowModal(true);
+  };
 
   // 1. Filtrage selon les RÈGLES STRICTES DE CONFIDENTIALITÉ (1 à 6)
   // - DG : voit tout le personnel de l'entreprise
@@ -97,31 +156,36 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
+    const mail = email.trim().toLowerCase();
+    const mat = matricule.trim();
+    if (users.some(u => u.id !== editingId && u.email.toLowerCase() === mail)) {
+      setFormError(`L'email ${mail} est déjà utilisé par un autre compte.`);
+      return;
+    }
+    if (mat && users.some(u => u.id !== editingId && (u.matricule || '').toUpperCase() === mat.toUpperCase())) {
+      setFormError(`Le matricule ${mat} est déjà attribué.`);
+      return;
+    }
 
-    const targetEnt = entities.find(e => e.id === entityId);
-
-    onCreateUser({
+    const fields = {
       name: name.trim(),
-      email: email.trim().toLowerCase(),
-      matricule,
-      employeeCode: matricule,
+      email: mail,
+      matricule: mat,
+      employeeCode: mat,
       role,
-      roleTitle,
-      organizationId: organization?.id || 'org-1',
-      serviceId: targetEnt?.level === 'service' ? targetEnt.id : undefined,
-      divisionId: targetEnt?.level === 'division' ? targetEnt.id : undefined,
-      directionId: targetEnt?.level === 'direction' ? targetEnt.id : undefined,
-      departementId: targetEnt?.level === 'departement' ? targetEnt.id : undefined,
-      departmentName: targetEnt?.name || 'Service Opérationnel',
-      status: 'actif',
-      phone,
+      roleTitle: roleTitle.trim(),
+      ...placementFor(entityId),
+      phone: phone.trim(),
       canCreateSubAgents: role !== 'agent',
       canApproveServiceDocuments: role === 'agent' ? canApproveServiceDocuments : true,
-    });
+    };
 
-    setName('');
-    setEmail('');
-    setMatricule(`MAT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+    if (editingId) {
+      onUpdateUser?.(editingId, fields);
+    } else {
+      onCreateUser({ ...fields, organizationId: organization?.id || 'org-1', status: 'actif' });
+    }
+    setEditingId(null);
     setShowModal(false);
   };
 
@@ -144,10 +208,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
 
         {canRecruit && (
           <button
-            onClick={() => {
-              if (scopedEntities.length > 0) setEntityId(scopedEntities[0].id);
-              setShowModal(true);
-            }}
+            onClick={openCreate}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition active:scale-95"
           >
             <UserPlus className="w-4 h-4" />
@@ -269,7 +330,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   </p>
                   <p className="flex items-center gap-2">
                     <Phone className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                    <span>{user.phone || '+243 81 279 1228'}</span>
+                    <span>{user.phone || '—'}</span>
                   </p>
                 </div>
 
@@ -327,6 +388,26 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                     )}
                   </button>
 
+                  {onUpdateUser && (
+                    <button
+                      onClick={() => openEdit(user)}
+                      className="flex items-center gap-1.5 text-slate-300 hover:text-white transition"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Modifier
+                    </button>
+                  )}
+
+                  {API_MODE && (
+                    <button
+                      onClick={() => void handleResetPassword(user)}
+                      disabled={resetBusyId === user.id}
+                      title="Mot de passe oublié : générer un mot de passe provisoire"
+                      className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 transition disabled:opacity-50"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" /> {resetBusyId === user.id ? 'Patientez…' : 'Mot de passe'}
+                    </button>
+                  )}
+
                   <button
                     onClick={() => onRevokeUser(user.id)}
                     className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition"
@@ -340,13 +421,59 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
         })}
       </div>
 
+      {/* Mot de passe provisoire (affiché une seule fois) */}
+      {resetInfo && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-sky-400" /> Mot de passe de {resetInfo.name}
+              </h3>
+              <button onClick={() => setResetInfo(null)} className="text-slate-400 hover:text-white" aria-label="Fermer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {resetInfo.error ? (
+              <p className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-xl p-3">{resetInfo.error}</p>
+            ) : (
+              <>
+                <p className="text-sm text-slate-300">
+                  Mot de passe provisoire à transmettre <strong>en main propre</strong> (jamais par un groupe de discussion) :
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-center text-lg font-mono font-bold tracking-wider text-emerald-300 bg-slate-950 border border-slate-700 rounded-xl py-3 select-all">
+                    {resetInfo.password}
+                  </code>
+                  <button
+                    onClick={() => void navigator.clipboard?.writeText(resetInfo.password || '')}
+                    className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
+                    title="Copier"
+                    aria-label="Copier le mot de passe provisoire"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Il ne sera plus affiché. À sa prochaine connexion, {resetInfo.name} devra choisir son propre mot de passe.
+                  Le compte est débloqué et ses autres sessions sont fermées.
+                </p>
+              </>
+            )}
+            <button onClick={() => setResetInfo(null)} className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm">
+              J'ai noté le mot de passe
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 5. MODALE CRÉATION / ENRÔLEMENT COLLABORATEUR DANS LE PÉRIMÈTRE */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-blue-400" /> Enrôler un Nouveau Collaborateur
+                {editingId ? <Pencil className="w-5 h-5 text-blue-400" /> : <UserPlus className="w-5 h-5 text-blue-400" />}
+                {editingId ? `Modifier la fiche de ${name || 'ce collaborateur'}` : 'Enrôler un Nouveau Collaborateur'}
               </h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -372,7 +499,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   <input
                     type="email"
                     required
-                    placeholder="p.kabeya@rhemabusiness.com"
+                    placeholder="p.kabeya@entreprise.cd"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
@@ -440,6 +567,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   onChange={e => setEntityId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                 >
+                  {currentUser.role === 'dg' && <option value="">Direction Générale (aucune entité)</option>}
                   {scopedEntities.map(ent => (
                     <option key={ent.id} value={ent.id}>
                       {ent.name} ({ent.level.toUpperCase()})
@@ -467,6 +595,8 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                 </div>
               )}
 
+              {formError && <p role="alert" className="text-[11px] text-red-400 font-semibold">{formError}</p>}
+
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
@@ -479,7 +609,7 @@ export const AgentCrudView: React.FC<AgentCrudViewProps> = ({
                   type="submit"
                   className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-600/30"
                 >
-                  Enrôler l'agent
+                  {editingId ? 'Enregistrer' : "Enrôler l'agent"}
                 </button>
               </div>
             </form>

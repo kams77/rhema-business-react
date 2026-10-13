@@ -1,6 +1,8 @@
 // src/utils/exportUtils.ts
 import { jsPDF } from 'jspdf';
 import type { AuditLog, Organization, EmployeeContract, User, PayrollRunPeriod, DocumentItem } from '../types';
+import type { BrandSource } from './branding';
+import { drawPdfFooters, drawPdfHeader, pdfFooterReserve } from './pdfBranding';
 
 /** Ligne détaillée d'un bulletin (gain, retenue ou charge patronale). */
 export interface PayslipExportLine {
@@ -56,6 +58,27 @@ export interface PayslipExportData {
 const orNA = (v?: string) => (v && v.trim() ? v : 'Non renseigné');
 
 /**
+ * Cellule CSV sûre : guillemets doublés et neutralisation des formules.
+ * Un texte saisi par un utilisateur et commençant par = + - @ (ou une tabulation) serait exécuté
+ * comme une formule par Excel / LibreOffice à l'ouverture du fichier (injection de formule) :
+ * on le préfixe d'une apostrophe. Les nombres restent des nombres.
+ */
+export function csvCell(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  let s = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/** Ligne CSV (séparateur « ; » par défaut, celui d'Excel en français). */
+export const csvRow = (cells: unknown[], sep = ';') => cells.map(csvCell).join(sep);
+
+/** Télécharge un fichier CSV (UTF-8 avec BOM) à partir de ses lignes. */
+export function downloadCsv(lines: string[], filename: string) {
+  downloadBlob(lines.join('\r\n'), filename);
+}
+
+/**
  * Téléchargement helper pour fichiers texte / CSV avec encodage UTF-8 BOM
  * Garantit l'affichage correct des caractères accentués dans Excel & LibreOffice
  */
@@ -75,30 +98,23 @@ function downloadBlob(content: string, filename: string, mimeType = 'text/csv;ch
 // 1. EXPORT DES JOURNAUX D'AUDIT (CSV & PDF)
 // ============================================================================
 
+/** Espace fine insécable (séparateur de milliers français) absente des polices PDF standard : espace simple. */
+const pdfNumber = (text: string) => text.replace(/[\u202f\u00a0]/g, ' ');
+
 export function exportAuditLogsToCSV(logs: AuditLog[], filename?: string) {
   const headers = ['ID', 'Horodatage', 'Opérateur', 'Rôle', 'Action', 'Catégorie', 'Détails', 'Adresse IP', 'Empreinte Cryptographique SHA-256'];
-  const rows = logs.map(l => [
-    `"${l.id}"`,
-    `"${l.timestamp}"`,
-    `"${l.userName.replace(/"/g, '""')}"`,
-    `"${l.userRole.replace(/"/g, '""')}"`,
-    `"${l.action.replace(/"/g, '""')}"`,
-    `"${l.category}"`,
-    `"${l.details.replace(/"/g, '""')}"`,
-    `"${l.ip}"`,
-    `"${l.hash}"`
-  ]);
-
-  const csv = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\r\n');
-  const targetName = filename || `journal_audit_rhema_${new Date().toISOString().slice(0, 10)}.csv`;
-  downloadBlob(csv, targetName);
+  const rows = logs.map(l => csvRow([l.id, l.timestamp, l.userName, l.userRole, l.action, l.category, l.details, l.ip, l.hash]));
+  const targetName = filename || `journal_audit_${new Date().toISOString().slice(0, 10)}.csv`;
+  downloadCsv([csvRow(headers), ...rows], targetName);
 }
 
 export function exportAuditLogsToPDF(
   logs: AuditLog[],
-  orgName = 'RHEMA BUSINESS RDC',
+  organization: BrandSource | string = 'Organisation',
   filename?: string
 ) {
+  const org: BrandSource = typeof organization === 'string' ? { name: organization } : organization;
+  const orgName = org.name;
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
@@ -108,23 +124,16 @@ export function exportAuditLogsToPDF(
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
-  let currentY = 16;
+  const footerLine = `Document certifié inaltérable • ${orgName} • Archivage légal SHA-256`;
+  const bottomLimit = pageHeight - pdfFooterReserve(doc, org, footerLine) - 8;
 
-  // En-tête officiel
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.rect(margin, currentY, pageWidth - margin * 2, 22, 'F');
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text(orgName.toUpperCase() + ' - JOURNAL D\'AUDIT (EMPREINTES SHA-256 CHAÎNÉES)', margin + 6, currentY + 9);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(203, 213, 225); // slate-300
-  doc.text(`Extrait du journal d\'audit • Généré le ${new Date().toLocaleString('fr-FR')} • Événements archivés : ${logs.length}`, margin + 6, currentY + 16);
-
-  currentY += 28;
+  // En-tête officiel de l'organisation
+  let currentY = drawPdfHeader(doc, org, {
+    y: 12,
+    margin,
+    subtitle: 'Journal d\'audit (empreintes SHA-256 chaînées)',
+    details: `Extrait du journal d'audit • Généré le ${new Date().toLocaleString('fr-FR')} • Événements archivés : ${logs.length}`,
+  });
 
   // Table header
   const colX = {
@@ -155,9 +164,9 @@ export function exportAuditLogsToPDF(
 
   logs.forEach((log, index) => {
     // Check if new page is needed
-    if (currentY > pageHeight - 20) {
+    if (currentY > bottomLimit) {
       doc.addPage();
-      currentY = 16;
+      currentY = 14;
       drawTableHeader();
     }
 
@@ -195,7 +204,7 @@ export function exportAuditLogsToPDF(
       doc.setFont('helvetica', 'bold');
     } else {
       doc.setTextColor(15, 23, 42);
-      doc.setFont('helvetica', 'medium');
+      doc.setFont('helvetica', 'normal');
     }
     doc.text(doc.splitTextToSize(log.action, 50)[0] || '', colX.action + 2, currentY + 5);
 
@@ -213,17 +222,10 @@ export function exportAuditLogsToPDF(
     currentY += 8;
   });
 
-  // Footer on last page
-  currentY = Math.min(currentY + 4, pageHeight - 12);
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, currentY, pageWidth - margin, currentY);
+  // Pied de page de l'organisation sur chaque page
+  drawPdfFooters(doc, org, { margin, extraLine: footerLine });
 
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
-  doc.text(`Document certifié inaltérable • République Démocratique du Congo • ${orgName} • Archivage Légal SHA-256`, margin, currentY + 4);
-
-  const targetName = filename || `journal_audit_immuable_rhema_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const targetName = filename || `journal_audit_immuable_${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(targetName);
 }
 
@@ -231,7 +233,11 @@ export function exportAuditLogsToPDF(
 // 2. EXPORT DE BULLETIN DE PAIE INDIVIDUEL (PDF CERTIFIÉ CONFORME RDC & CSV)
 // ============================================================================
 
-export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, filename?: string) {
+export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, filename?: string, organization?: BrandSource) {
+  // En-tête et pied de page : ceux de l'organisation (logo, papier à en-tête), sinon ses mentions légales.
+  const org: BrandSource = organization || {
+    name: data.orgName, rccm: data.rccm, idNat: data.idNat, numImpot: data.numImpot, headquarters: data.headquarters,
+  };
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -241,33 +247,12 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
-  let currentY = 14;
-
-  // Header band
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(margin, currentY, pageWidth - margin * 2, 24, 2, 2, 'F');
-
-  // Logo / badge RB
-  doc.setFillColor(isSpecimen ? 234 : 79, isSpecimen ? 88 : 70, isSpecimen ? 12 : 229); // amber if specimen, indigo if official
-  doc.roundedRect(margin + 5, currentY + 4, 16, 16, 1.5, 1.5, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(isSpecimen ? 'SP' : 'RB', margin + 9, currentY + 14.5);
-
-  // Entreprise
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text(data.orgName.toUpperCase(), margin + 25, currentY + 10);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(203, 213, 225);
-  doc.text(orNA(data.headquarters), margin + 25, currentY + 15);
-  doc.text(`RCCM: ${orNA(data.rccm)} | ID.NAT: ${orNA(data.idNat)} | N° IMPÔT: ${orNA(data.numImpot)}`, margin + 25, currentY + 19.5);
-
-  currentY += 28;
+  let currentY = drawPdfHeader(doc, org, {
+    y: 12,
+    margin,
+    subtitle: isSpecimen ? 'Bulletin de paie — spécimen' : 'Bulletin de paie',
+    details: `${orNA(data.headquarters)} • RCCM : ${orNA(data.rccm)} | ID.NAT : ${orNA(data.idNat)} | N° IMPÔT : ${orNA(data.numImpot)}`,
+  });
 
   // Title Box
   if (isSpecimen) {
@@ -377,7 +362,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 
   currentY += 8;
 
-  const fmt = (num: number) => num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (num: number) => pdfNumber(num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
   // Lignes détaillées du moteur de paie (taux réellement appliqués) ; ancien format en secours.
   const tableRows = data.earnings && data.deductions
@@ -556,21 +541,13 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
     }
   }
 
-  // Footer officiel
-  const footerY = doc.internal.pageSize.getHeight() - 10;
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, footerY - 2, pageWidth - margin, footerY - 2);
-
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(6.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text(
-    isSpecimen 
-      ? `${data.orgName} • SPÉCIMEN • Document de test sans valeur` 
-      : `${data.orgName} • Bulletin de paie • Calculé selon les paramètres de paie de l'organisation`, 
-    margin, 
-    footerY + 2
-  );
+  // Pied de page de l'organisation
+  drawPdfFooters(doc, org, {
+    margin,
+    extraLine: isSpecimen
+      ? 'SPÉCIMEN • Document de test sans valeur'
+      : 'Bulletin de paie • Calculé selon les paramètres de paie de l\'organisation',
+  });
 
   const defaultSuffix = isSpecimen ? 'SPECIMEN' : 'OFFICIEL';
   const targetName = filename || `bulletin_${defaultSuffix}_${data.matricule}_${data.period.replace(/\s+/g, '_')}.pdf`;
@@ -578,8 +555,7 @@ export function exportPayslipToPDF(data: PayslipExportData, isSpecimen = false, 
 }
 
 export function exportPayslipToCSV(data: PayslipExportData, filename?: string) {
-  const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const row = (...cells: unknown[]) => cells.map(q).join(';');
+  const row = (...cells: unknown[]) => csvRow(cells);
   const lines = [
     row('ORGANISATION', data.orgName),
     row('RCCM', orNA(data.rccm)),
@@ -637,7 +613,7 @@ export interface PayrollBookRow {
 }
 
 export function exportPayrollRunToCSV(run: PayrollRunPeriod, rows: PayrollBookRow[], filename?: string) {
-  const q = (v: unknown) => (typeof v === 'number' ? String(v) : `"${String(v ?? '').replace(/"/g, '""')}"`);
+  const q = csvCell;
   const headers = [
     'Période', 'Matricule', 'Nom & Postnom', 'Fonction', 'Type Contrat', 'Devise', 'Salaire Base',
     'Ancienneté', 'Primes & indemnités', 'Heures sup.', 'Salaire Brut', 'Cotisations salariales',
@@ -660,19 +636,14 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 12;
-  let currentY = 14;
-
-  doc.setFillColor(15, 23, 42);
-  doc.rect(margin, currentY, pageWidth - margin * 2, 22, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text(`${org.name.toUpperCase()} - LIVRE DE PAIE (${run.month})`, margin + 6, currentY + 9);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(203, 213, 225);
-  doc.text(`Statut : ${run.status.toUpperCase()} • Effectif : ${rows.length} • Calculé selon les paramètres de paie de l'organisation`, margin + 6, currentY + 16);
-  currentY += 28;
+  const footerLine = `Livre de paie • Période ${run.month} • Édité le ${new Date().toLocaleDateString('fr-FR')}`;
+  const bottomLimit = pageHeight - pdfFooterReserve(doc, org, footerLine) - 8;
+  let currentY = drawPdfHeader(doc, org, {
+    y: 12,
+    margin,
+    subtitle: `Livre de paie (${run.month})`,
+    details: `Statut : ${run.status.toUpperCase()} • Effectif : ${rows.length} • Calculé selon les paramètres de paie de l'organisation`,
+  });
 
   const drawHeader = () => {
     doc.setFillColor(30, 41, 59);
@@ -692,9 +663,9 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
   };
   drawHeader();
 
-  const f = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  const f = (n: number) => pdfNumber(n.toLocaleString('fr-FR', { maximumFractionDigits: 2 }));
   rows.forEach(({ contract: c, user, payslip: p }, idx) => {
-    if (currentY > pageHeight - 20) {
+    if (currentY > bottomLimit) {
       doc.addPage();
       currentY = 14;
       drawHeader();
@@ -731,13 +702,7 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
     currentY += 8;
   });
 
-  currentY = Math.min(currentY + 6, pageHeight - 14);
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, currentY, pageWidth - margin, currentY);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`${org.name} • Période ${run.month} • Édité le ${new Date().toLocaleDateString('fr-FR')}`, margin, currentY + 4.5);
+  drawPdfFooters(doc, org, { margin, extraLine: footerLine });
   doc.save(filename || `livre_paie_${run.month}.pdf`);
 }
 
@@ -745,25 +710,25 @@ export function exportPayrollRunToPDF(run: PayrollRunPeriod, rows: PayrollBookRo
 // 4. EXPORT DES DOCUMENTS OFFICIELS D'ENTREPRISE (PDF & CSV)
 // ============================================================================
 
-export function exportOfficialDocumentToCSV(docItem: DocumentItem, orgName = 'RHEMA BUSINESS RDC') {
+export function exportOfficialDocumentToCSV(docItem: DocumentItem, orgName = 'Organisation') {
   const lines = [
-    `ORGANISATION;${orgName}`,
-    `TITRE DOCUMENT;${docItem.title}`,
-    `NUMÉRO DE RÉFÉRENCE;${docItem.referenceNumber}`,
-    `CATÉGORIE;${docItem.category}`,
-    `SOUS-TYPE;${docItem.subtype}`,
-    `AUTEUR;${docItem.authorName} (${docItem.authorEntity})`,
-    `DATE DE CRÉATION;${docItem.createdAt}`,
-    `STATUT;${docItem.status}`,
-    `MONTANT ASSOCIÉ;${docItem.amount ? `${docItem.amount} ${docItem.currency || 'USD'}` : 'N/A'}`,
-    `DESCRIPTION;${docItem.description || ''}`,
-    `SIGNATAIRE ÉLECTRONIQUE;${docItem.electronicSignature?.signedBy || 'En attente'}`,
-    `HORODATAGE SIGNATURE;${docItem.electronicSignature?.signedAt || 'N/A'}`,
-    `EMPREINTE SHA-256;${docItem.electronicSignature?.certificateHash || 'Non signé'}`
-  ];
+    ['ORGANISATION', orgName],
+    ['TITRE DOCUMENT', docItem.title],
+    ['NUMÉRO DE RÉFÉRENCE', docItem.referenceNumber],
+    ['CATÉGORIE', docItem.category],
+    ['SOUS-TYPE', docItem.subtype],
+    ['AUTEUR', `${docItem.authorName} (${docItem.authorEntity})`],
+    ['DATE DE CRÉATION', docItem.createdAt],
+    ['STATUT', docItem.status],
+    ['MONTANT ASSOCIÉ', docItem.amount ? `${docItem.amount} ${docItem.currency || 'USD'}` : 'N/A'],
+    ['DESCRIPTION', docItem.description || ''],
+    ['SIGNATAIRE ÉLECTRONIQUE', docItem.electronicSignature?.signedBy || 'En attente'],
+    ['HORODATAGE SIGNATURE', docItem.electronicSignature?.signedAt || 'N/A'],
+    ['EMPREINTE SHA-256', docItem.electronicSignature?.certificateHash || 'Non signé'],
+  ].map(cells => csvRow(cells));
 
-  const targetName = `${docItem.referenceNumber}_archivage.csv`;
-  downloadBlob(lines.join('\r\n'), targetName);
+  const targetName = `${docItem.referenceNumber}_archivage.csv`.replace(/[\\/:*?"<>|]+/g, '_');
+  downloadCsv(lines, targetName);
 }
 
 export function exportOfficialDocumentToPDF(
@@ -779,31 +744,8 @@ export function exportOfficialDocumentToPDF(
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
-  let currentY = 16;
-
-  // Header band
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(margin, currentY, pageWidth - margin * 2, 24, 2, 2, 'F');
-
-  doc.setFillColor(79, 70, 229);
-  doc.roundedRect(margin + 5, currentY + 4, 16, 16, 1.5, 1.5, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('RB', margin + 9, currentY + 14.5);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text(org.name.toUpperCase(), margin + 25, currentY + 10);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(203, 213, 225);
-  doc.text('Document Officiel Numérique • République Démocratique du Congo', margin + 25, currentY + 15);
-  doc.text(`RCCM: ${orNA(org.rccm || org.registrationNumber)} | ID.NAT: ${orNA(org.idNat)} | N° IMPÔT: ${orNA(org.numImpot)}`, margin + 25, currentY + 19.5);
-
-  currentY += 30;
+  let currentY = drawPdfHeader(doc, org, { y: 12, margin, subtitle: 'Document officiel' });
+  currentY += 2;
 
   // Title Box
   doc.setFillColor(241, 245, 249);
@@ -829,7 +771,7 @@ export function exportOfficialDocumentToPDF(
     { k: 'Auteur / Émetteur :', v: `${docItem.authorName} (${docItem.authorEntity})` },
     { k: 'Date de Création :', v: docItem.createdAt },
     { k: 'Statut du Document :', v: docItem.status.toUpperCase() },
-    ...(docItem.amount ? [{ k: 'Montant Financier :', v: `${docItem.amount.toLocaleString()} ${docItem.currency || 'USD'}` }] : [])
+    ...(docItem.amount ? [{ k: 'Montant Financier :', v: `${pdfNumber(docItem.amount.toLocaleString('fr-FR'))} ${docItem.currency || 'USD'}` }] : [])
   ];
 
   meta.forEach((m, idx) => {
@@ -883,8 +825,8 @@ export function exportOfficialDocumentToPDF(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Signé par : ${docItem.electronicSignature?.signedBy || 'Direction Générale (Dr. Amadou Diallo)'}`, margin + 6, currentY + 12);
-  doc.text(`Horodatage certifié : ${docItem.electronicSignature?.signedAt || new Date().toLocaleString('fr-FR')}`, margin + 6, currentY + 17);
+  doc.text(`Signé par : ${docItem.electronicSignature?.signedBy || 'En attente de signature'}`, margin + 6, currentY + 12);
+  doc.text(`Horodatage certifié : ${docItem.electronicSignature?.signedAt || 'Non signé'}`, margin + 6, currentY + 17);
 
   doc.setFont('courier', 'bold');
   doc.setTextColor(79, 70, 229);
@@ -899,15 +841,8 @@ export function exportOfficialDocumentToPDF(
     }
   }
 
-  // Footer
-  const footerY = doc.internal.pageSize.getHeight() - 10;
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, footerY - 2, pageWidth - margin, footerY - 2);
-
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7);
-  doc.setTextColor(148, 163, 184);
-  doc.text(`Copie certifiée conforme • ${org.name} • Archivage électronique probant RDC`, margin, footerY + 2);
+  // Pied de page de l'organisation
+  drawPdfFooters(doc, org, { margin, extraLine: `Copie certifiée conforme • Réf. ${docItem.referenceNumber}` });
 
   const targetName = filename || `${docItem.referenceNumber}_officiel.pdf`;
   doc.save(targetName);
@@ -942,33 +877,8 @@ export function exportApprovalSlipToPDF(
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
-  let currentY = 14;
-
-  // Header band
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(margin, currentY, pageWidth - margin * 2, 24, 2, 2, 'F');
-
-  // Badge
-  doc.setFillColor(99, 102, 241); // indigo-500
-  doc.roundedRect(margin + 5, currentY + 4, 16, 16, 1.5, 1.5, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('VISA', margin + 7.5, currentY + 14.5);
-
-  // Entreprise
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text(org.name.toUpperCase(), margin + 25, currentY + 10);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(203, 213, 225);
-  doc.text('Portail Entreprise • Circuit de Visa & Approbations Hiérarchiques Multi-Niveaux', margin + 25, currentY + 15);
-  doc.text(`RCCM: ${orNA(org.rccm || org.registrationNumber)} | ID.NAT: ${orNA(org.idNat)} | ${orNA(org.headquarters)}`, margin + 25, currentY + 19.5);
-
-  currentY += 30;
+  let currentY = drawPdfHeader(doc, org, { y: 12, margin, subtitle: 'Circuit de visa & approbations hiérarchiques' });
+  currentY += 2;
 
   // Title Box
   doc.setFillColor(241, 245, 249);
@@ -1106,15 +1016,8 @@ export function exportApprovalSlipToPDF(
     currentY + 23
   );
 
-  // Footer
-  const footerY = doc.internal.pageSize.getHeight() - 10;
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, footerY - 2, pageWidth - margin, footerY - 2);
-
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7);
-  doc.setTextColor(148, 163, 184);
-  doc.text(`RHEMA BUSINESS • Registre officiel des workflows et visas d'approbation d'entreprise • RDC`, margin, footerY + 2);
+  // Pied de page de l'organisation
+  drawPdfFooters(doc, org, { margin, extraLine: 'Registre officiel des circuits de visa et d\'approbation' });
 
   const targetName = filename || `bordereau_visa_${task.id}.pdf`;
   doc.save(targetName);

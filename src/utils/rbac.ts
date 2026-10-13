@@ -75,6 +75,34 @@ export function isEntityDescendantOf(
 }
 
 /**
+ * Affectation complète d'un compte à partir d'une entité : l'entité choisie ET toutes celles
+ * au-dessus (service, division, direction, département). Sans cela, un agent d'un service ne
+ * verrait pas les documents adressés à son département. Entité vide = Direction Générale.
+ */
+export function entityPlacement(
+  entityId: string | undefined,
+  entities: HierarchicalEntity[]
+): Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> {
+  const out: Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> = {
+    departementId: undefined, directionId: undefined, divisionId: undefined, serviceId: undefined,
+    departmentName: 'Direction Générale',
+  };
+  const byId = new Map(entities.map(e => [e.id, e]));
+  let cur = entityId ? byId.get(entityId) : undefined;
+  if (cur) out.departmentName = cur.name;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.level === 'service' && !out.serviceId) out.serviceId = cur.id;
+    if (cur.level === 'division' && !out.divisionId) out.divisionId = cur.id;
+    if (cur.level === 'direction' && !out.directionId) out.directionId = cur.id;
+    if (cur.level === 'departement' && !out.departementId) out.departementId = cur.id;
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return out;
+}
+
+/**
  * RÈGLE STRICTE 1 & 2 & 3 & 4 & 5 :
  * Périmètre de visibilité et d'autorité hiérarchique :
  * 1. Le DG voit TOUT et peut TOUT faire.

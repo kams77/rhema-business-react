@@ -7,7 +7,6 @@ import {
   Share2, 
   Lock, 
   CheckCircle2, 
-  Globe2, 
   ShieldCheck, 
   FileText,
   Download,
@@ -18,6 +17,7 @@ import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../uti
 import { canUserApproveDocument } from '../utils/rbac';
 import { currentStep } from '../lib/workflow';
 import { ElectronicSignatureModal, type SignatureData } from './ElectronicSignatureModal';
+import { DocumentLetterhead, DocumentPageFooter } from './branding/Letterhead';
 
 interface RhemaOfficialDocumentProps {
   document: DocumentItem;
@@ -157,42 +157,24 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
 
         {/* FEUILLE DE PAPIER BLANCHE OFFICIELLE (EXACTE À LA CAPTURE 2) */}
         <div className="flex-1 min-h-0 p-4 sm:p-8 overflow-y-auto bg-slate-950/90 flex justify-center items-start">
-          <div className="bg-white text-slate-900 rounded-2xl p-6 sm:p-8 md:p-10 shadow-2xl max-w-3xl w-full border border-slate-200 flex flex-col font-sans relative my-auto shrink-0">
+          <div className="print-sheet bg-white text-slate-900 rounded-2xl p-6 sm:p-8 md:p-10 shadow-2xl max-w-3xl w-full border border-slate-200 flex flex-col font-sans relative my-auto shrink-0">
             
-            {/* Filigrane d'authenticité */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] select-none text-9xl font-black text-slate-900 rotate-[-25deg]">
-              RHEMA BUSINESS
+            {/* Filigrane d'authenticité : nom de l'organisation émettrice */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] select-none text-7xl font-black text-slate-900 rotate-[-25deg] overflow-hidden text-center leading-none">
+              {organization.name}
             </div>
 
             <div>
-              {/* EN-TÊTE OFFICIEL */}
-              <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b pb-6 mb-5">
-                <div>
-                  {/* Logo Officiel RHEMA BUSINESS (avec Globe et Bandeau Rouge) */}
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-12 h-12 rounded-full border-2 border-red-600 flex items-center justify-center p-1 bg-white shadow-sm shrink-0">
-                      <div className="w-full h-full rounded-full border border-blue-600 flex items-center justify-center bg-blue-50">
-                        <Globe2 className="w-6 h-6 text-blue-600" />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xl font-black tracking-tight text-blue-950 flex items-center gap-1">
-                        <span className="text-red-600">RHEMA</span>
-                        <span className="text-blue-900">BUSINESS</span>
-                      </div>
-                      <div className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider inline-block">
-                        YOUR VSAT TECHNOLOGY PARTNER
-                      </div>
-                    </div>
-                  </div>
+              {/* EN-TÊTE OFFICIEL DE L'ORGANISATION (papier à en-tête ou en-tête automatique) */}
+              <DocumentLetterhead organization={organization} />
 
-                  <div className="text-[11px] text-slate-600 space-y-0.5 mt-2">
-                    <p>Prestataire : <strong>{organization.name}</strong></p>
-                    <p>Adresse : {organization.headquarters || 'Non renseigné'}</p>
-                    <p>RCCM : {organization.rccm || organization.registrationNumber || 'Non renseigné'}</p>
-                    <p>Id. Nat : {organization.idNat || 'Non renseigné'}</p>
-                    <p>Numéro Impôt : {organization.numImpot || 'Non renseigné'}</p>
-                  </div>
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b pb-5 mb-5">
+                <div className="text-[11px] text-slate-600 space-y-0.5">
+                  <p>Émetteur : <strong>{organization.name}</strong></p>
+                  <p>Adresse : {organization.headquarters || 'Non renseigné'}</p>
+                  <p>RCCM : {organization.rccm || organization.registrationNumber || 'Non renseigné'}</p>
+                  <p>Id. Nat : {organization.idNat || 'Non renseigné'}</p>
+                  <p>Numéro Impôt : {organization.numImpot || 'Non renseigné'}</p>
                 </div>
 
                 {/* Bloc Référence et Enregistrement */}
@@ -232,7 +214,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                   <div className="text-right">
                     <span className="text-[10px] font-bold text-slate-500 uppercase block">Statut de validation</span>
                     <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 uppercase">
-                      {document.status === 'signe' ? 'APPROUVÉ & SIGNÉ' : 'APPROUVÉ'}
+                      {({ brouillon: 'BROUILLON', en_revue: 'EN COURS DE VALIDATION', approuve: 'APPROUVÉ', signe: 'APPROUVÉ & SIGNÉ', rejete: 'REJETÉ' } as const)[docState.status] || 'APPROUVÉ'}
                     </span>
                   </div>
                 </div>
@@ -330,13 +312,15 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
               </div>
             </div>
 
+            {/* PIED DE PAGE OFFICIEL DE L'ORGANISATION */}
+            <DocumentPageFooter organization={organization} />
           </div>
         </div>
 
         {/* PIED DE MODAL AVEC BOUTON DE SIGNATURE */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-3.5 border-t border-slate-800 bg-slate-950">
           <p className="text-[11px] text-slate-400">
-            Ce document intègre obligatoirement l'en-tête et le pied de page RHEMA BUSINESS pour toute diffusion officielle.
+            Ce document porte l'en-tête et le pied de page officiels de {organization.name} (modifiables par le DG dans « Identité & Logo »).
           </p>
 
           <div className="flex items-center gap-2">
@@ -379,18 +363,5 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
         />
       )}
     </div>
-  );
-};
-
-export const RhemaDocumentFooter: React.FC<{ organization: Organization }> = ({ organization }) => {
-  return (
-    <footer className="pt-4 border-t-2 border-slate-100 text-[10px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
-      <div>
-        <span className="font-bold text-slate-800">{organization.name}</span> • RCCM : {organization.rccm || organization.registrationNumber || 'Non renseigné'} • Id. Nat : {organization.idNat || 'Non renseigné'}
-      </div>
-      <div>
-        {[organization.headquarters, organization.email].filter(Boolean).join(' • ')}
-      </div>
-    </footer>
   );
 };

@@ -1,4 +1,4 @@
-// Tests de l'API RHEMA Business.
+// Tests de l'API ERP-WORKFLOW.
 // Usage : BASE_URL=http://localhost:8080 SETUP_CODE=xxx node server/tests/api.test.mjs
 // Le serveur doit être vide (jamais initialisé).
 const BASE = process.env.BASE_URL || 'http://localhost:8080';

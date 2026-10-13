@@ -1,5 +1,6 @@
 // src/components/DepartmentTasksProgressChart.tsx
 import React, { useState, useMemo } from 'react';
+import { DEMO_MODE } from '../config';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -41,7 +42,7 @@ interface DepartmentTasksProgressChartProps {
   className?: string;
 }
 
-// Couleurs harmonisées avec la charte Rhema Business
+// Couleurs harmonisées avec la charte ERP-WORKFLOW
 const DEPT_COLORS = {
   operations: {
     stroke: '#0284c7', // Sky 600
@@ -344,6 +345,12 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
 
   return (
     <div className={`bg-white rounded-2xl border border-sky-200 shadow-sm p-5 space-y-5 ${className}`}>
+      {!DEMO_MODE && (
+        <p role="note" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          Graphique d'illustration : ces courbes et cette liste sont des exemples et ne proviennent pas encore de vos tâches.
+          Vos chiffres réels sont dans « Tâches & Approbations ».
+        </p>
+      )}
       {/* En-tête du composant */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-sky-100">
         <div className="space-y-1">

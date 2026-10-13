@@ -1,0 +1,94 @@
+# ERP-WORKFLOW — kit de TEST sur un ordinateur (Windows, Mac ou Linux avec Docker Desktop).
+#
+#   Ne lancez pas ce fichier à la main : utilisez « demarrer-test » (Windows : demarrer-test.bat,
+#   Mac / Linux : demarrer-test.sh), qui crée d'abord les mots de passe dans le fichier .env.
+#
+#   Application : http://localhost:8080   (port APP_PORT du fichier .env)
+#   phpMyAdmin  : http://localhost:8081   (port PMA_PORT) — pour voir les tables MySQL
+#
+# Les trois services n'écoutent que sur l'ordinateur lui-même (127.0.0.1) : personne d'autre
+# sur le réseau ne peut s'y connecter. Pour une installation partagée, utilisez le Synology
+# (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
+
+name: erp-workflow-test
+
+services:
+  # Base de données MySQL (MariaDB 11.4, 100 % compatible MySQL — la même que sur le Synology).
+  db:
+    image: mariadb:11.4
+    container_name: erp-workflow-test-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: erp_workflow
+      MARIADB_USER: erp_workflow
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Lancez demarrer-test pour créer le fichier .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Lancez demarrer-test pour créer le fichier .env}
+      TZ: Africa/Kinshasa
+    command:
+      - mariadbd
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-allowed-packet=64M
+    volumes:
+      # Volume Docker : les données survivent à l'arrêt et au redémarrage de l'ordinateur.
+      # Seul « reinitialiser-test » les efface.
+      - erp-workflow-test-donnees:/var/lib/mysql
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  # Serveur ERP-WORKFLOW (API + application), construit depuis le code du dossier parent.
+  app:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: erp-workflow-serveur:test
+    container_name: erp-workflow-test-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: erp_workflow
+      DB_USER: erp_workflow
+      DB_PASSWORD: ${DB_PASSWORD}
+      SETUP_CODE: ${SETUP_CODE:?Lancez demarrer-test pour créer le fichier .env}
+      # Accès direct en http://localhost (sans proxy) : cookie sans l'attribut « Secure ».
+      TRUST_PROXY: "false"
+      COOKIE_SECURE: "false"
+      TZ: Africa/Kinshasa
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+
+  # phpMyAdmin : consulter les tables MySQL dans le navigateur
+  # (identifiant « erp_workflow », mot de passe = DB_PASSWORD du fichier .env).
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: erp-workflow-test-phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+      TZ: Africa/Kinshasa
+    ports:
+      - "127.0.0.1:${PMA_PORT:-8081}:80"
+
+volumes:
+  erp-workflow-test-donnees:

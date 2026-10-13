@@ -4,7 +4,10 @@ import { promisify } from 'node:util';
 
 const pbkdf2 = promisify(crypto.pbkdf2);
 const PREFIX = 'pbkdf2-sha256';
-const ITERATIONS = 150_000;
+// Recommandation OWASP (2023) pour PBKDF2-HMAC-SHA256 : 600 000 itérations.
+// Les empreintes plus anciennes (150 000) restent valides et sont renforcées à la connexion suivante.
+export const ITERATIONS = 600_000;
+const MAX_ITERATIONS = 5_000_000;
 
 export const MAX_FAILED_ATTEMPTS = 5;
 export const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -24,9 +27,18 @@ export async function hashPassword(password) {
 export async function verifyPassword(password, stored) {
   if (typeof password !== 'string' || !isPasswordHash(stored)) return false;
   const [, iter, saltB64, hashB64] = stored.split('$');
-  const expected = Buffer.from(hashB64, 'base64');
-  const computed = await pbkdf2(password, Buffer.from(saltB64, 'base64'), Number(iter), expected.length, 'sha256');
+  const iterations = Number(iter);
+  // Une empreinte importée (sauvegarde) ne doit pas pouvoir bloquer le serveur par un coût démesuré.
+  if (!Number.isInteger(iterations) || iterations < 1000 || iterations > MAX_ITERATIONS) return false;
+  const expected = Buffer.from(hashB64 || '', 'base64');
+  if (expected.length < 16) return false;
+  const computed = await pbkdf2(password, Buffer.from(saltB64 || '', 'base64'), iterations, expected.length, 'sha256');
   return expected.length === computed.length && crypto.timingSafeEqual(expected, computed);
+}
+
+/** Vrai si l'empreinte utilise moins d'itérations que la valeur actuelle (à renforcer). */
+export function needsRehash(stored) {
+  return isPasswordHash(stored) && Number(stored.split('$')[1]) < ITERATIONS;
 }
 
 /** Empreinte factice : permet de faire le même calcul quand le compte n'existe pas (pas de fuite par la durée). */

@@ -1489,7 +1489,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Émission Invitation Inter-Entités',
       category: 'security',
-      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
+      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé à 10 chiffres (••••••••${invitation.authKey10Digits.slice(-2)}). Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
     });
   };
 
@@ -1499,7 +1499,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Connexion Inter-Entités par Clé Unique',
       category: 'auth',
-      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${invitation.authKey10Digits}.`,
+      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via sa clé à 10 chiffres.`,
     });
   };
 
@@ -1726,6 +1726,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   action: 'Création Entité Hiérarchique',
                   category: 'hierarchy',
                   details: `Ajout de l'entité ${entWithId.name} (${entWithId.level.toUpperCase()})`,
+                });
+              }}
+              onUpdateEntity={(id, changes) => {
+                const before = entities.find(e => e.id === id);
+                setEntities(prev => prev.map(e => (e.id === id ? { ...e, ...changes } : e)));
+                // Le nom de l'entité figure aussi sur la fiche des agents qui y sont affectés.
+                if (before && changes.name && changes.name !== before.name) {
+                  setUsers(prev => prev.map(u => (u.departmentName === before.name &&
+                    [u.serviceId, u.divisionId, u.directionId, u.departementId].includes(id) ? { ...u, departmentName: changes.name } : u)));
+                }
+                addAuditLog({
+                  action: 'Modification Entité',
+                  category: 'hierarchy',
+                  details: `Entité ${before?.name ?? id} modifiée${changes.name && before && changes.name !== before.name ? ` (nouveau nom : ${changes.name})` : ''}.`,
                 });
               }}
               onDeleteEntity={id => {
@@ -1968,6 +1982,17 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   0
                 );
               }}
+              onUpdateUser={(id, changes) => {
+                const target = users.find(u => u.id === id);
+                if (!target) return;
+                setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...changes } : u)));
+                addAuditLog({
+                  action: 'Modification Fiche Collaborateur',
+                  category: 'admin',
+                  details: `Fiche de ${target.name} modifiée (poste : ${changes.roleTitle ?? target.roleTitle}, affectation : ${changes.departmentName ?? target.departmentName ?? 'Direction Générale'}).`,
+                });
+                showToast('success', `Fiche de ${changes.name ?? target.name} enregistrée.`);
+              }}
               onRevokeUser={id => {
                 const target = users.find(u => u.id === id);
                 if (target?.id === currentUser.id) {
@@ -2007,7 +2032,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           )}
 
           {currentTab === 'audit' && (
-            <AuditView logs={logs} organizationName={currentOrg?.name} />
+            <AuditView logs={logs} organizationName={currentOrg?.name} organization={currentOrg} />
           )}
 
           {currentTab === 'laravel' && (

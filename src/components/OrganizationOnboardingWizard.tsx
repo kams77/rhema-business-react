@@ -24,9 +24,14 @@ import {
   X,
   Lock,
   Eye,
-  EyeOff
+  EyeOff,
+  Image as ImageIcon
 } from 'lucide-react';
 import { getRoleBadgeClass, getRoleTitleFr } from '../utils/rbac';
+import { BrandingFields, type BrandingValue } from './branding/BrandingFields';
+import { sanitizeBranding } from '../../shared/branding.mjs';
+
+type WizardStep = 1 | 2 | 3 | 4 | 5;
 
 interface OrganizationOnboardingWizardProps {
   isOpen: boolean;
@@ -43,7 +48,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
   onClose,
   onCompleteOnboarding,
 }) => {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<WizardStep>(1);
   const [copiedLogins, setCopiedLogins] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -63,11 +68,18 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
     bankName: '',
     bankAccount: '',
     description: 'Télécoms, VSAT, Réseaux et Intégration Technologique en RD Congo.',
-    dgName: 'Junior Monya',
-    dgEmail: 'dg@rhemabusiness.com',
+    dgName: DEMO_MODE ? 'Junior Monya' : '',
+    dgEmail: DEMO_MODE ? 'dg@rhemabusiness.com' : '',
     dgMatricule: 'MAT-2026-001',
     dgPassword: initialPassword(),
   });
+
+  // Étape 2 : identité visuelle (logo, papier à en-tête, pied de page).
+  const [brand, setBrand] = useState<BrandingValue>({ branding: {} });
+
+  // Étape 3 : organigramme vide (saisie de vos propres entités et agents ensuite) ou modèle d'exemple.
+  const [useModel, setUseModel] = useState<boolean>(DEMO_MODE);
+  const [stepError, setStepError] = useState<string | null>(null);
 
   // Étape 2 : Préconfiguration de l'Arborescence Hiérarchique
   const [departments, setDepartments] = useState([
@@ -201,8 +213,26 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
 
   if (!isOpen) return null;
 
+  // Comptes créés : le modèle d'exemple complet, ou seulement le compte DG.
+  const agents = useModel ? agentsList : agentsList.filter(a => a.role === 'dg');
+
+  /** Contrôle de l'étape 1 avant de continuer (null = tout est correct). */
+  const stepOneError = (): string | null => {
+    if (!orgForm.name.trim()) return 'Indiquez la dénomination sociale de l\'entreprise.';
+    if (!orgForm.dgName.trim()) return 'Indiquez le nom du Directeur Général.';
+    if (!/^\S+@\S+\.\S+$/.test(orgForm.dgEmail.trim())) return 'Indiquez un email valide pour le compte DG (il sert d\'identifiant).';
+    if (orgForm.dgPassword.length < 8) return 'Le mot de passe du DG doit contenir au moins 8 caractères.';
+    return null;
+  };
+
+  const goNext = () => {
+    const err = step === 1 ? stepOneError() : null;
+    setStepError(err);
+    if (!err) setStep((step + 1) as WizardStep);
+  };
+
   const copyAllCredentials = () => {
-    const text = agentsList.map(a => 
+    const text = agents.map(a => 
       `• ${a.name} (${getRoleTitleFr(a.role)})\n  Matricule : ${a.matricule} | Email / Login : ${a.email} | Mot de passe : ${a.role === 'dg' ? orgForm.dgPassword : a.password} | Périmètre : ${a.entityName}`
     ).join('\n\n');
 
@@ -241,9 +271,11 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       hasServices: true,
       description: orgForm.description,
       createdAt: new Date().toISOString().slice(0, 10),
+      logo: brand.logo,
+      branding: sanitizeBranding(brand.branding),
     };
 
-    const finalEntities: HierarchicalEntity[] = [
+    const modelEntities: HierarchicalEntity[] = [
       ...departments.map(d => ({
         ...d,
         organizationId: orgId,
@@ -291,8 +323,10 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
       }
     ];
 
+    const finalEntities: HierarchicalEntity[] = useModel ? modelEntities : [];
+
     // Le compte DG reprend l'identité saisie à l'étape 1 (nom, email, matricule, mot de passe).
-    const finalUsers: User[] = agentsList.map(a => ({
+    const finalUsers: User[] = agents.map(a => ({
       id: a.id,
       name: a.role === 'dg' ? orgForm.dgName.trim() || a.name : a.name,
       email: a.role === 'dg' ? orgForm.dgEmail.trim() || a.email : a.email,
@@ -337,7 +371,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white">Assistant Déploiement & Première Utilisation</h2>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-bold border border-indigo-500/30">
-                  Étape {step} / 4
+                  Étape {step} / 5
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -354,19 +388,22 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
           </button>
         </div>
 
-        {/* Barre de progression des 4 étapes */}
-        <div className="grid grid-cols-4 border-b border-slate-800 text-xs font-semibold text-center bg-slate-950/40">
+        {/* Barre de progression des 5 étapes */}
+        <div className="grid grid-cols-5 border-b border-slate-800 text-[11px] sm:text-xs font-semibold text-center bg-slate-950/40">
           <div className={`p-3 border-r border-slate-800 transition ${step === 1 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
             1. Organisation & Légal
           </div>
           <div className={`p-3 border-r border-slate-800 transition ${step === 2 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            2. Arborescence & Postes
+            2. Logo, En-tête & Pied
           </div>
           <div className={`p-3 border-r border-slate-800 transition ${step === 3 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            3. Logins Obligatoires Agents
+            3. Arborescence & Postes
           </div>
-          <div className={`p-3 transition ${step === 4 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
-            4. Déploiement & Connexion
+          <div className={`p-3 border-r border-slate-800 transition ${step === 4 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
+            4. Logins des Agents
+          </div>
+          <div className={`p-3 transition ${step === 5 ? 'bg-indigo-600/20 text-indigo-300 font-bold border-b-2 border-b-indigo-500' : 'text-slate-500'}`}>
+            5. Déploiement & Connexion
           </div>
         </div>
 
@@ -472,6 +509,28 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     placeholder="Avenue Bangala, Kinshasa - RD CONGO"
                   />
                 </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Email officiel de l'entreprise</label>
+                  <input
+                    type="email"
+                    value={orgForm.email}
+                    onChange={e => setOrgForm({ ...orgForm, email: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
+                    placeholder="contact@votre-entreprise.cd"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Téléphone</label>
+                  <input
+                    type="tel"
+                    value={orgForm.phone}
+                    onChange={e => setOrgForm({ ...orgForm, phone: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white font-mono"
+                    placeholder="+243 …"
+                  />
+                </div>
               </div>
 
               {/* Compte Directeur Général */}
@@ -523,19 +582,82 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             </div>
           )}
 
-          {/* ÉTAPE 2 : ARBORESCENCE & DÉPARTEMENTS */}
+          {/* ÉTAPE 2 : IDENTITÉ VISUELLE (LOGO, EN-TÊTE, PIED DE PAGE) */}
           {step === 2 && (
+            <div className="space-y-4">
+              <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-4 text-xs text-indigo-200 flex items-start gap-3">
+                <ImageIcon className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-white text-sm">Logo, papier à en-tête et pied de page</h4>
+                  <p className="mt-1 leading-relaxed text-indigo-200/90">
+                    Joignez le logo et, si vous en avez, l'en-tête et le pied de page officiels de l'entreprise : ils seront imprimés sur les documents, bordereaux et exports PDF. Tout est facultatif et modifiable plus tard par le DG (« Identité & Logo »).
+                  </p>
+                </div>
+              </div>
+              <BrandingFields
+                value={brand}
+                onChange={setBrand}
+                identity={{
+                  name: orgForm.name || 'Votre entreprise',
+                  headquarters: orgForm.headquarters,
+                  rccm: orgForm.rccm,
+                  idNat: orgForm.idNat,
+                  numImpot: orgForm.numImpot,
+                  email: orgForm.email,
+                  phone: orgForm.phone,
+                }}
+              />
+            </div>
+          )}
+
+          {/* ÉTAPE 3 : ARBORESCENCE & DÉPARTEMENTS */}
+          {step === 3 && (
             <div className="space-y-4">
               <div className="bg-sky-950/40 border border-sky-500/30 rounded-2xl p-4 text-xs text-sky-200 flex items-start gap-3">
                 <Layers className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="font-bold text-white text-sm">Hiérarchie des 4 Niveaux Organisationnels</h4>
                   <p className="mt-1 leading-relaxed text-sky-200/90">
-                    L'architecture RHEMA garantit la stricte étanchéité des responsabilités : Département ➔ Direction ➔ Division ➔ Service.
+                    L'architecture ERP-WORKFLOW garantit la stricte étanchéité des responsabilités : Département ➔ Direction ➔ Division ➔ Service.
                   </p>
                 </div>
               </div>
 
+              <div role="radiogroup" aria-label="Point de départ de l'organigramme" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!useModel}
+                  onClick={() => setUseModel(false)}
+                  className={`text-left p-4 rounded-2xl border text-xs transition ${!useModel ? 'border-indigo-500 bg-indigo-600/15 ring-1 ring-indigo-500/40' : 'border-slate-800 bg-slate-950 hover:border-slate-700'}`}
+                >
+                  <span className="font-bold text-white text-sm block">Partir d'un organigramme vide</span>
+                  <span className="text-slate-400 block mt-1">Seul le compte DG est créé. Vous saisissez ensuite vos propres départements, directions, services et agents.</span>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={useModel}
+                  onClick={() => setUseModel(true)}
+                  className={`text-left p-4 rounded-2xl border text-xs transition ${useModel ? 'border-indigo-500 bg-indigo-600/15 ring-1 ring-indigo-500/40' : 'border-slate-800 bg-slate-950 hover:border-slate-700'}`}
+                >
+                  <span className="font-bold text-white text-sm block">Utiliser le modèle d'exemple</span>
+                  <span className="text-slate-400 block mt-1">2 départements, 4 sous-entités et 7 comptes fictifs, à adapter ou supprimer ensuite.</span>
+                </button>
+              </div>
+
+              {!useModel && (
+                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+                  <h5 className="font-bold text-white">Après l'installation :</h5>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px]">
+                    <li><strong>Organigramme & Entités</strong> → « Nouvelle Entité » : vos départements, directions, divisions et services.</li>
+                    <li><strong>Gestion & CRUD Agents</strong> → « Enrôler un Collaborateur » : vos agents, avec leur rang et leur affectation.</li>
+                    <li>Ou <strong>Import Massif CSV & Paie</strong> : tous vos agents et contrats en une fois.</li>
+                  </ol>
+                </div>
+              )}
+
+              {useModel && (<>
               <div className="space-y-3">
                 {departments.map((dept, idx) => (
                   <div key={dept.id} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
@@ -572,11 +694,12 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                   <li><strong>Sous DOP</strong> : Service Déploiement VSAT & Chantiers Miniers + Service Support NOC 24/7</li>
                 </ul>
               </div>
+              </>)}
             </div>
           )}
 
-          {/* ÉTAPE 3 : OBLIGATION DE CONNECTIVITÉ DE TOUS LES AGENTS */}
-          {step === 3 && (
+          {/* ÉTAPE 4 : OBLIGATION DE CONNECTIVITÉ DE TOUS LES AGENTS */}
+          {step === 4 && (
             <div className="space-y-4">
               <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 text-xs text-emerald-200 flex items-start gap-3">
                 <Key className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
@@ -591,7 +714,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
                   <Users className="w-4 h-4 text-indigo-400" />
-                  <span>{agentsList.length} Comptes Agents Déployés avec Connectivité Active</span>
+                  <span>{agents.length} compte{agents.length > 1 ? 's' : ''} créé{agents.length > 1 ? 's' : ''}{useModel ? '' : ' (vos agents seront ajoutés après l\'installation)'}</span>
                 </div>
 
                 <button
@@ -618,7 +741,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {agentsList.map(a => (
+                    {agents.map(a => (
                       <tr key={a.id} className="hover:bg-slate-900/40 transition">
                         <td className="p-3 text-indigo-400 font-bold">{a.matricule}</td>
                         <td className="p-3 font-sans text-white font-semibold">
@@ -659,8 +782,8 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
             </div>
           )}
 
-          {/* ÉTAPE 4 : DÉPLOIEMENT & VALIDATION FINALE */}
-          {step === 4 && (
+          {/* ÉTAPE 5 : DÉPLOIEMENT & VALIDATION FINALE */}
+          {step === 5 && (
             <div className="space-y-6 text-center py-4">
               <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border-2 border-emerald-500/40 shadow-xl">
                 <CheckCircle2 className="w-8 h-8" />
@@ -682,7 +805,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
 
                 <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800">
                   <span className="text-slate-500 block text-[10px] uppercase font-bold">Agents Enrôlés</span>
-                  <span className="font-bold text-emerald-400 text-sm mt-0.5 block">{agentsList.length} Comptes Prêts</span>
+                  <span className="font-bold text-emerald-400 text-sm mt-0.5 block">{agents.length} compte{agents.length > 1 ? 's' : ''} prêt{agents.length > 1 ? 's' : ''}</span>
                   <span className="text-[11px] text-slate-400 font-mono">Accès individuels créés</span>
                 </div>
 
@@ -707,13 +830,17 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
 
         </div>
 
+        {stepError && (
+          <p role="alert" className="px-6 py-2 text-xs font-semibold text-red-400 bg-red-950/30 border-t border-red-900/40">{stepError}</p>
+        )}
+
         {/* PIED DE MODALE (NAVIGATION WIZARD) */}
         <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
           <div>
             {step > 1 && (
               <button
                 type="button"
-                onClick={() => setStep((step - 1) as any)}
+                onClick={() => { setStepError(null); setStep((step - 1) as WizardStep); }}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -731,10 +858,10 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
               Annuler
             </button>
 
-            {step < 4 ? (
+            {step < 5 ? (
               <button
                 type="button"
-                onClick={() => setStep((step + 1) as any)}
+                onClick={goNext}
                 className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-lg active:scale-95"
               >
                 <span>Continuer vers Étape {step + 1}</span>

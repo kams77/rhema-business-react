@@ -1,4 +1,4 @@
-// src/lib/api.ts — appels au serveur RHEMA Business (mode VITE_BACKEND=api).
+// src/lib/api.ts — appels au serveur ERP-WORKFLOW (mode VITE_BACKEND=api).
 import type { User } from '../types';
 
 export const SESSION_EXPIRED_EVENT = 'rhema:session-expired';
@@ -49,7 +49,7 @@ export async function apiFetch<T = any>(
 export interface PublicStatus {
   initialized: boolean;
   setupCodeRequired: boolean;
-  organization: { id: string; name: string; logo?: string; registrationNumber?: string; type?: string } | null;
+  organization: { id: string; name: string; logo?: string; registrationNumber?: string; type?: string; headquarters?: string } | null;
 }
 
 export interface LoginResponse {
@@ -73,6 +73,9 @@ export const api = {
     apiFetch<{ ok: boolean; count: number; legacy?: number; brokenAt?: number; lastHash?: string; entry?: { id: string; timestamp: string; action: string } }>('GET', '/api/audit/verify'),
   setup: (payload: { setupCode: string; users: unknown[]; data: Record<string, unknown> }) =>
     apiFetch<{ ok: boolean }>('POST', '/api/setup', payload),
+  /** Mot de passe oublié : un responsable génère un mot de passe provisoire pour un compte qu'il gère. */
+  resetPassword: (userId: string) =>
+    apiFetch<{ temporaryPassword: string }>('POST', `/api/users/${encodeURIComponent(userId)}/reset-password`, {}),
   exportBackup: () => apiFetch<any>('GET', '/api/data/export'),
   importBackup: (backup: unknown) => apiFetch<{ ok: boolean; relogin: boolean }>('POST', '/api/data/import', backup),
 };

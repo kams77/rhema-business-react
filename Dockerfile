@@ -1,6 +1,6 @@
 # Image de production : compile l'application puis la sert avec Nginx.
-#   docker build -t rhema-business .
-#   docker run -d -p 8080:80 --name rhema rhema-business
+#   docker build -t erp-workflow .
+#   docker run -d -p 8080:80 --name erp-workflow erp-workflow
 # Mode démo : ajoutez --build-arg VITE_DEMO_MODE=true au build.
 
 FROM node:22-alpine AS build
