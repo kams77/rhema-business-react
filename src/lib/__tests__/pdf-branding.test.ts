@@ -24,10 +24,13 @@ const ok = (cond: unknown, msg: string) => { assert.ok(cond, msg); passed++; con
 const OUT = process.env.PDF_OUT || '/tmp/pdf-branding';
 fs.mkdirSync(OUT, { recursive: true });
 // Dans Node, « save » écrit le PDF dans OUT au lieu de le télécharger.
-(jsPDF.prototype as any).save = function save(this: jsPDF, name: string) {
+// (jsPDF recopie les méthodes de jsPDF.API sur chaque document créé.)
+function saveToDisk(this: jsPDF, name: string) {
   fs.writeFileSync(path.join(OUT, name), Buffer.from(this.output('arraybuffer')));
   return this;
-};
+}
+(jsPDF as any).API.save = saveToDisk;
+(jsPDF.prototype as any).save = saveToDisk;
 
 const FIX = path.join(process.cwd(), 'src/lib/__tests__/fixtures');
 const dataUrl = (file: string, type: string) => `data:${type};base64,${fs.readFileSync(path.join(FIX, file)).toString('base64')}`;
