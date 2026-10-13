@@ -164,6 +164,35 @@ jobs:
           curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
           echo "Sauvegarde, restauration et déblocage : OK"
 
+      - name: Arrêt de la pile Synology (libère les ports pour le kit de test)
+        env:
+          DB_PASSWORD: ci-base-${{ github.run_id }}
+          DB_ROOT_PASSWORD: ci-root-${{ github.run_id }}
+          SETUP_CODE: ci-installation
+        run: docker compose down -v
+
+      - name: Kit de test sur ordinateur (MySQL + phpMyAdmin)
+        run: |
+          set -e
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          code=$(sed -n 's/^SETUP_CODE=//p' test-local/.env)
+          BASE_URL=http://localhost:8080 SETUP_CODE="$code" node server/tests/api.test.mjs
+          # Les données sont bien dans les tables MySQL.
+          docker exec rhema-test-db sh -c 'mariadb -u rhema -p"$MARIADB_PASSWORD" rhema -N -e "SELECT COUNT(*) FROM users"' | grep -qv '^0$'
+          docker exec rhema-test-db sh -c 'mariadb -u rhema -p"$MARIADB_PASSWORD" rhema -e "SHOW TABLES"'
+          # phpMyAdmin répond.
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8081/ && break; sleep 2; done
+          curl -fsS http://localhost:8081/ | grep -qi phpmyadmin
+          # Arrêt puis reprise : les données sont conservées.
+          sh test-local/arreter-test.sh
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":true'
+          # Réinitialisation : base vide.
+          echo EFFACER | sh test-local/reinitialiser-test.sh
+          RHEMA_NO_BROWSER=1 sh test-local/demarrer-test.sh
+          curl -fsS http://localhost:8080/api/public/status | grep -q '"initialized":false'
+          echo "Kit de test : OK"
+
       - name: Refus des mots de passe d'exemple
         run: |
           set +e

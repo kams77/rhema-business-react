@@ -60,6 +60,12 @@ Règles communes à l'application et au serveur : `shared/workflow.mjs` (tests :
 - **Logistique** : chaque bon passe par son circuit ; le stock ne bouge qu'après validation ; des tâches
   de suivi sont créées automatiquement et soumises à validation une fois l'événement constaté.
 
+## Tester sur votre ordinateur avec MySQL
+
+Dossier **[test-local/](test-local/LISEZ-MOI.md)** : application + base MySQL (MariaDB) + phpMyAdmin,
+démarrés en un double-clic (`demarrer-test.bat` sous Windows, `sh demarrer-test.sh` sur Mac / Linux)
+avec Docker Desktop. Idéal pour essayer l'application avec vos propres données avant le Synology.
+
 ## Mode démonstration et mode production
 
 Le comportement de la connexion dépend de la variable `VITE_DEMO_MODE` (fichier `.env`).

@@ -8,3 +8,5 @@ sauvegardes
 *.sql
 *.sql.gz
 *.json.bak
+**/.env
+test-local/.env
