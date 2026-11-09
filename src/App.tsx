@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
 import { invoiceBankDetails } from './lib/bank';
@@ -87,6 +87,7 @@ import type {
   LogisticsHub, 
   HubStockItem, 
   StockMovementItem,
+  StockSettings,
   EntityInvitation,
   EntityInvitationNotification
 } from './types';
@@ -101,6 +102,7 @@ import { EntityInvitationsManagerModal } from './components/invitations/EntityIn
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
 import { attendance } from './lib/attendance';
+import { availableForExit, deriveHubStocks, migrateLegacyStocks, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
 import { isRetiredHrDocument } from '../shared/access.mjs';
 import { removeValue } from './lib/storage';
 import { Navbar } from './components/Navbar';
@@ -500,10 +502,59 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   // GESTION DES 6 HUBS PROVINCIAUX & STOCKS DÉCENTRALISÉS
   const [hubs, setHubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', initialHubs);
-  const [stocks, setStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
+  // Ancien stock enregistré (avant le journal) : sert seulement à la reprise et aux emplacements.
+  const [legacyStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
   const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', initialStockMovements);
+  const [savedStockSettings, setSavedStockSettings] = usePersistentState<StockSettings | null>('logistics.settings', null);
+  const stockConfig = useMemo(() => stockSettings(savedStockSettings) as StockSettings, [savedStockSettings]);
+  const todayIso = new Date().toLocaleDateString('en-CA');
+
+  // Mode navigateur : passage au journal des stocks (le serveur le fait lui-même en mode serveur).
+  useEffect(() => {
+    if (API_MODE || (savedStockSettings && Number(savedStockSettings.ledgerVersion) >= 2)) return;
+    const r = migrateLegacyStocks(legacyStocks, stockMovements, hubs, todayIso);
+    setStockMovements(r.movements as StockMovementItem[]);
+    setLogisticsCatalog(prev => prev.map(c => (c.minAlertThreshold === undefined && r.thresholds[c.id] !== undefined ? { ...c, minAlertThreshold: r.thresholds[c.id] } : c)));
+    setSavedStockSettings({ ...(stockSettings(savedStockSettings) as StockSettings), ledgerVersion: 2 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedStockSettings]);
+
+  // Stock de chaque Site = calculé à partir du journal (entrées, sorties, transferts).
+  const stocks = useMemo(
+    () => deriveHubStocks(stockMovements, logisticsCatalog, hubs, stockConfig, legacyStocks, todayIso) as HubStockItem[],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stockMovements, logisticsCatalog, hubs, stockConfig, legacyStocks],
+  );
+  const catalogWithStock = useMemo(
+    () => logisticsCatalog.map(c => ({ ...c, stockAvailable: stocks.filter(s => s.catalogItemId === c.id).reduce((t, s) => t + Math.max(0, s.quantityAvailable), 0) })),
+    [logisticsCatalog, stocks],
+  );
+
+  const handleUpsertCatalogItem = (item: LogisticsItem) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Le catalogue est géré par les responsables de la logistique.'); return; }
+    const exists = logisticsCatalog.some(c => c.id === item.id);
+    setLogisticsCatalog(prev => (exists ? prev.map(c => (c.id === item.id ? item : c)) : [item, ...prev]));
+    addAuditLog({ action: exists ? 'Article du catalogue modifié' : 'Article ajouté au catalogue', category: 'admin', details: `${item.sku} — ${item.name} (seuil d'alerte ${item.minAlertThreshold ?? 0}).` });
+    showToast('success', exists ? 'Article mis à jour.' : 'Article ajouté au catalogue.');
+  };
+
+  const handleUpdateHub = (hub: LogisticsHub) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les sites sont gérés par les responsables de la logistique.'); return; }
+    setHubs(prev => prev.map(h => (h.id === hub.id ? hub : h)));
+    addAuditLog({ action: 'Site logistique modifié', category: 'admin', details: `${hub.code} — ${hub.name} (${hub.status}).` });
+    showToast('success', 'Site mis à jour.');
+  };
+
+  const handleUpdateStockSettings = (next: StockSettings) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les paramètres sont gérés par les responsables de la logistique.'); return; }
+    setSavedStockSettings({ ...next, ledgerVersion: 2 });
+    addAuditLog({ action: 'Paramètres des stocks modifiés', category: 'admin', details: `${next.movementTypes.filter(t => t.active).length} type(s) de mouvement actifs, alerte transit ${next.transitAlertDays} j, devise ${next.currency}.` });
+    showToast('success', 'Paramètres enregistrés.');
+  };
 
   const handleAddHub = (newHub: LogisticsHub) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les sites sont gérés par les responsables de la logistique.'); return; }
+    if (hubs.some(h => h.code.trim().toUpperCase() === newHub.code.trim().toUpperCase())) { showToast('error', `Le code de site ${newHub.code} existe déjà.`); return; }
     setHubs(prev => [newHub, ...prev]);
     addAuditLog({
       action: 'Création Hub Provincial',
@@ -869,63 +920,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   const findUser = (id?: string) => (id ? users.find(u => u.id === id) : undefined);
 
-  /** Effet d'un mouvement validé sur les stocks des hubs. */
-  const applyMovementToStock = (mvt: StockMovementItem) => {
-    mvt.items.forEach(item => {
-      if (mvt.type === 'entree_fournisseur' && mvt.destinationHubId) {
-        setStocks(prev => {
-          const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
-          if (existing) {
-            const newQty = existing.quantityAvailable + item.quantity;
-            return prev.map(s => s.id === existing.id ? {
-              ...s,
-              quantityAvailable: newQty,
-              totalValueUSD: newQty * s.unitPriceUSD,
-              serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
-              status: newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-            } : s);
-          }
-          const newStock: HubStockItem = {
-            id: newId('stk'),
-            hubId: mvt.destinationHubId!,
-            catalogItemId: item.catalogItemId,
-            sku: item.sku,
-            name: item.name,
-            category: 'vsat',
-            quantityAvailable: item.quantity,
-            quantityReserved: 0,
-            quantityInTransit: 0,
-            minAlertThreshold: 2,
-            unitPriceUSD: item.unitPriceUSD,
-            totalValueUSD: item.quantity * item.unitPriceUSD,
-            locationRack: 'Travée Réception',
-            serialNumbers: item.serialNumbers,
-            lastAuditDate: new Date().toISOString().split('T')[0],
-            status: 'normal'
-          };
-          return [newStock, ...prev];
-        });
-      } else if ((mvt.type === 'sortie_deploiement' || mvt.type === 'transfert_inter_hub') && mvt.sourceHubId) {
-        setStocks(prev => prev.map(s => {
-          if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
-            const newQty = Math.max(0, s.quantityAvailable - item.quantity);
-            return {
-              ...s,
-              quantityAvailable: newQty,
-              totalValueUSD: newQty * s.unitPriceUSD,
-              serialNumbers: s.serialNumbers.filter(sn => !item.serialNumbers.includes(sn)),
-              status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-            };
-          }
-          if (mvt.type === 'transfert_inter_hub' && s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId) {
-            return { ...s, quantityInTransit: s.quantityInTransit + item.quantity };
-          }
-          return s;
-        }));
-      }
-    });
-  };
-
   /** Mouvement entièrement validé : stock mis à jour, transfert mis en route avec sa tâche de réception. */
   const finalizeMovement = (mvt: StockMovementItem, approverName: string) => {
     const isTransfer = mvt.type === 'transfert_inter_hub';
@@ -934,9 +928,11 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       status: isTransfer ? 'en_transit' : 'valide',
       approvedByManagerName: approverName,
       approvedAt: nowShort(),
+      // Le stock du Site source baisse dès la mise en transit (date d'envoi).
+      ...(isTransfer ? { sentAt: new Date().toISOString() } : {}),
     };
+    // Le stock est recalculé à partir du journal : il suffit d'enregistrer le mouvement validé.
     setStockMovements(prev => prev.map(m => (m.id === mvt.id ? validated : m)));
-    applyMovementToStock(validated);
     if (isTransfer) {
       const hub = hubs.find(h => h.id === mvt.destinationHubId);
       const receiver = findUser(hub?.managerId) || findUser(mvt.operatorId) || currentUser;
@@ -1018,9 +1014,17 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   };
 
   const handleAddMovement = (mvt: StockMovementItem) => {
-    const subtype: DocumentItem['subtype'] = mvt.type === 'entree_fournisseur' ? 'bon_entree_stock'
-      : mvt.type === 'sortie_deploiement' ? 'bon_sortie_stock'
-      : mvt.type === 'transfert_inter_hub' ? 'ordre_transfert' : 'bon_reception';
+    const sign = movementSign(mvt, stockConfig);
+    const subtype: DocumentItem['subtype'] = mvt.type === 'transfert_inter_hub' ? 'ordre_transfert'
+      : sign > 0 ? 'bon_entree_stock' : sign < 0 ? 'bon_sortie_stock' : 'bon_reception';
+    // Une sortie ou un transfert ne peut pas dépasser le stock disponible du Site (bons au visa déduits).
+    if (sign < 0 || mvt.type === 'transfert_inter_hub') {
+      const short = mvt.items.find(i => i.quantity > availableForExit(stockMovements, stockConfig, mvt.sourceHubId, i.catalogItemId));
+      if (short) {
+        showToast('error', `Stock insuffisant au ${mvt.sourceHubName || 'site'} pour ${short.name} : ${availableForExit(stockMovements, stockConfig, mvt.sourceHubId, short.catalogItemId)} disponible(s).`);
+        return;
+      }
+    }
     const doc = publishLogisticsDocument({
       id: `doc-${mvt.id}`,
       title: `${documentType(subtype).label} : ${mvt.movementNumber}`,
@@ -1039,7 +1043,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setDocuments(prev => [doc, ...prev]);
     if (validated) finalizeMovement(stored, currentUser.name);
     addAuditLog({
-      action: `Mouvement de Stock (${mvt.type})`,
+      action: `Mouvement de stock (${movementTypeLabel(mvt, stockConfig)})`,
       category: 'document',
       details: `${mvt.movementNumber} — ${validated ? 'validé' : `soumis à ${waitingFor(currentStep(doc.workflow))}`} (${mvt.totalValueUSD.toLocaleString('fr-FR')} USD).`,
     });
@@ -1065,58 +1069,72 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     } : m));
   };
 
-  const handleReceiveTransfer = (mvtId: string) => {
+  /**
+   * Réception d'un transfert : date de réception, quantité réellement reçue par article
+   * (si elle diffère de la quantité envoyée) et réceptionnaire. Le stock du Site destination
+   * augmente de la quantité reçue ; un écart est signalé et tracé.
+   */
+  const handleReceiveTransfer = (mvtId: string, reception?: { receivedAt?: string; receivedQuantities?: Record<string, number>; receivedByName?: string; notes?: string }) => {
     const mvt = stockMovements.find(m => m.id === mvtId);
     if (!mvt || !mvt.destinationHubId) return;
     if (mvt.status !== 'en_transit') {
-      showToast('error', "Ce transfert n'est pas encore validé : il ne peut pas être réceptionné.");
+      showToast('error', "Ce transfert n'est pas en transit : il ne peut pas être réceptionné.");
       return;
     }
-
+    const destManager = hubs.find(h => h.id === mvt.destinationHubId)?.managerId;
+    if (!isLogisticsManager(currentUser) && destManager !== currentUser.id) {
+      showToast('error', 'La réception est faite par le responsable du site destination ou un responsable de la logistique.');
+      return;
+    }
+    const receivedAt = reception?.receivedAt || todayIso;
+    const sent = (mvt.sentAt || mvt.approvedAt || mvt.date || '').slice(0, 10);
+    if (sent && receivedAt < sent) {
+      showToast('error', `La date de réception ne peut pas précéder l'envoi (${sent}).`);
+      return;
+    }
+    const quantities: Record<string, number> = {};
+    for (const it of mvt.items) {
+      const q = reception?.receivedQuantities?.[it.catalogItemId];
+      if (q === undefined || q === it.quantity) continue;
+      if (!Number.isInteger(q) || q < 0 || q > it.quantity) {
+        showToast('error', `Quantité reçue invalide pour ${it.name} (entre 0 et ${it.quantity}).`);
+        return;
+      }
+      quantities[it.catalogItemId] = q;
+    }
+    const gap = mvt.items.reduce((t, it) => t + (it.quantity - (quantities[it.catalogItemId] ?? it.quantity)), 0);
+    const receiver = reception?.receivedByName?.trim() || currentUser.name;
     setStockMovements(prev => prev.map(m => m.id === mvtId ? {
       ...m,
       status: 'receptionne',
-      notes: `${m.notes} — Réceptionné et scanné conforme par ${currentUser.name}.`
+      receivedAt,
+      receivedByName: receiver,
+      ...(Object.keys(quantities).length ? { receivedQuantities: quantities } : {}),
+      notes: `${m.notes ? `${m.notes} — ` : ''}Réceptionné le ${receivedAt} par ${receiver}${gap ? ` — ÉCART : ${gap} unité(s) manquante(s)` : ' — conforme'}${reception?.notes ? ` — ${reception.notes}` : ''}.`,
     } : m));
-
-    mvt.items.forEach(item => {
-      setStocks(prev => {
-        const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
-        if (existing) {
-          const newAvail = existing.quantityAvailable + item.quantity;
-          const newTransit = Math.max(0, existing.quantityInTransit - item.quantity);
-          return prev.map(s => s.id === existing.id ? {
-            ...s,
-            quantityAvailable: newAvail,
-            quantityInTransit: newTransit,
-            totalValueUSD: newAvail * s.unitPriceUSD,
-            serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
-            status: newAvail <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-          } : s);
-        }
-        const newStock: HubStockItem = {
-          id: newId('stk'),
-          hubId: mvt.destinationHubId!,
-          catalogItemId: item.catalogItemId,
-          sku: item.sku,
-          name: item.name,
-          category: 'vsat',
-          quantityAvailable: item.quantity,
-          quantityReserved: 0,
-          quantityInTransit: 0,
-          minAlertThreshold: 2,
-          unitPriceUSD: item.unitPriceUSD,
-          totalValueUSD: item.quantity * item.unitPriceUSD,
-          locationRack: 'Travée Réception',
-          serialNumbers: item.serialNumbers,
-          lastAuditDate: new Date().toISOString().split('T')[0],
-          status: 'normal'
-        };
-        return [newStock, ...prev];
-      });
+    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Réception confirmée par ${receiver}` });
+    addAuditLog({
+      action: gap ? 'Réception de transfert avec écart' : 'Réception de transfert',
+      category: 'task',
+      details: `${mvt.movementNumber} réceptionné au ${mvt.destinationHubName} le ${receivedAt} par ${receiver}${gap ? ` : ${gap} unité(s) manquante(s)` : ' : conforme'}.`,
     });
-    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Réception confirmée par ${currentUser.name}` });
-    addAuditLog({ action: 'Réception Transfert Inter-Hubs', category: 'task', details: `${mvt.movementNumber} réceptionné au ${mvt.destinationHubName}.` });
+    showToast(gap ? 'info' : 'success', gap ? `Réception enregistrée avec un écart de ${gap} unité(s).` : 'Réception enregistrée : stock du site mis à jour.');
+  };
+
+  /** Annulation d'un transfert en transit (responsables de la logistique) : la source récupère son stock. */
+  const handleCancelTransfer = (mvtId: string, reason: string) => {
+    const mvt = stockMovements.find(m => m.id === mvtId);
+    if (!mvt || mvt.type !== 'transfert_inter_hub') return;
+    if (!isLogisticsManager(currentUser)) { showToast('error', "L'annulation d'un transfert est réservée aux responsables de la logistique."); return; }
+    if (mvt.status !== 'en_transit') { showToast('error', 'Seul un transfert en transit peut être annulé.'); return; }
+    if (!reason.trim()) { showToast('error', "Indiquez le motif de l'annulation."); return; }
+    setStockMovements(prev => prev.map(m => m.id === mvtId ? {
+      ...m, status: 'annule', cancelledAt: new Date().toISOString(), cancelledByName: currentUser.name, cancelReason: reason.trim(),
+      notes: `${m.notes ? `${m.notes} — ` : ''}Annulé par ${currentUser.name} : ${reason.trim()}.`,
+    } : m));
+    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Transfert annulé par ${currentUser.name}` });
+    addAuditLog({ action: 'Annulation de transfert', category: 'document', details: `${mvt.movementNumber} (${mvt.sourceHubName} → ${mvt.destinationHubName}) annulé : ${reason.trim()}.` });
+    showToast('success', 'Transfert annulé : le stock revient au site source.');
   };
 
   const handleCreateOrder = (order: PurchaseOrderItem) => {
@@ -1818,7 +1836,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 currentUser={currentUser}
                 organization={currentOrg}
                 entities={entities}
-                catalog={logisticsCatalog}
+                catalog={catalogWithStock}
                 orders={purchaseOrders}
                 deliveryNotes={deliveryNotes}
                 shipments={shipments}
@@ -1831,6 +1849,12 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 onAddMovement={handleAddMovement}
                 onApproveMovement={handleApproveMovement}
                 onReceiveTransfer={handleReceiveTransfer}
+                onCancelTransfer={handleCancelTransfer}
+                stockSettings={stockConfig}
+                users={users}
+                onUpsertCatalogItem={handleUpsertCatalogItem}
+                onUpdateHub={handleUpdateHub}
+                onUpdateStockSettings={handleUpdateStockSettings}
                 onCreateOrder={handleCreateOrder}
                 onApproveOrder={handleApproveOrder}
                 onCreateDeliveryNote={handleCreateDeliveryNote}

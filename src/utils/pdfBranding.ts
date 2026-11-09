@@ -64,9 +64,10 @@ export function drawPdfHeader(
 
   const header = org.branding?.headerImage;
   if (header) {
-    const { w, h } = fitImage(doc, header, width, 40);
-    if (safeAddImage(doc, header, margin, y, w, h)) {
-      y += h + 4;
+    // Papier à en-tête : toute la largeur de la page, depuis le bord supérieur.
+    const { w, h } = fitImage(doc, header, pageWidth, 50);
+    if (safeAddImage(doc, header, (pageWidth - w) / 2, 0, w, h)) {
+      y = Math.max(y, h + 5);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10.5);
       doc.setTextColor(...color);
@@ -84,9 +85,12 @@ export function drawPdfHeader(
   }
 
   // En-tête automatique : bandeau à la couleur de l'organisation.
+  // Bandeau sur toute la largeur de la page, depuis le bord supérieur.
   const dark = isDark(color);
+  y = 0;
   doc.setFillColor(...color);
-  doc.roundedRect(margin, y, width, 24, 2, 2, 'F');
+  doc.rect(0, 0, pageWidth, 28, 'F');
+  y = 2;
 
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(margin + 4, y + 3, 18, 18, 1.5, 1.5, 'F');
@@ -113,18 +117,21 @@ export function drawPdfHeader(
   doc.setFontSize(7);
   doc.setTextColor(...soft);
   doc.text(doc.splitTextToSize(opts.details || legalLine(org), width - 32)[0] || '', margin + 26, y + 19.5);
-  return y + 28;
+  return 34;
 }
 
-const FOOTER_IMAGE_MAX_H = 16;
+const FOOTER_IMAGE_MAX_H = 40;
 const LINE_H = 3.1;
+
+/** Taille de l'image de pied de page : toute la largeur de la page. */
+const footerImageSize = (doc: jsPDF, image?: string) =>
+  image ? fitImage(doc, image, doc.internal.pageSize.getWidth(), FOOTER_IMAGE_MAX_H) : null;
 
 /** Hauteur (mm) réservée en bas de chaque page au pied de page de l'organisation. */
 export function pdfFooterReserve(doc: jsPDF, org: BrandSource, extraLine?: string): number {
-  const width = doc.internal.pageSize.getWidth() - 28;
-  const image = org.branding?.footerImage ? fitImage(doc, org.branding.footerImage, width, FOOTER_IMAGE_MAX_H).h + 1.5 : 0;
+  const img = footerImageSize(doc, org.branding?.footerImage);
   const lines = footerTextLines(org, extraLine).length;
-  return 6 + image + lines * LINE_H + 3;
+  return (img ? img.h : 2.5) + lines * LINE_H + 6;
 }
 
 function footerTextLines(org: BrandSource, extraLine?: string): string[] {
@@ -132,7 +139,10 @@ function footerTextLines(org: BrandSource, extraLine?: string): string[] {
   return [...own, ...(extraLine ? [extraLine] : [])].slice(0, 4);
 }
 
-/** Dessine le pied de page de l'organisation et « Page n / N » sur toutes les pages. */
+/**
+ * Pied de page sur CHAQUE page : il occupe tout le bas de la page (image ou bandeau sur toute la
+ * largeur), avec le texte de l'organisation juste au-dessus et « Page n / N ».
+ */
 export function drawPdfFooters(doc: jsPDF, org: BrandSource, opts: { margin: number; extraLine?: string }) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -140,32 +150,41 @@ export function drawPdfFooters(doc: jsPDF, org: BrandSource, opts: { margin: num
   const width = pageWidth - margin * 2;
   const lines = footerTextLines(org, opts.extraLine);
   const image = org.branding?.footerImage;
-  const imageSize = image ? fitImage(doc, image, width, FOOTER_IMAGE_MAX_H) : null;
+  const imageSize = footerImageSize(doc, image);
   const total = doc.getNumberOfPages();
   const color = hexToRgb(brandColor(org));
+  const bottomH = imageSize ? imageSize.h : 2.5;
+  const textH = lines.length * LINE_H + 4;
 
   for (let page = 1; page <= total; page++) {
     doc.setPage(page);
-    let y = pageHeight - 5 - lines.length * LINE_H - (imageSize ? imageSize.h + 1.5 : 0);
-    doc.setDrawColor(...color);
-    doc.setLineWidth(0.3);
-    doc.line(margin, y - 1.5, pageWidth - margin, y - 1.5);
-    doc.setLineWidth(0.2);
-    if (image && imageSize) {
-      safeAddImage(doc, image, margin + (width - imageSize.w) / 2, y, imageSize.w, imageSize.h);
-      y += imageSize.h + 1.5;
+    const textTop = pageHeight - bottomH - textH;
+    // Bandeau de texte sur toute la largeur.
+    if (!image) {
+      doc.setFillColor(Math.round(255 - (255 - color[0]) * 0.06), Math.round(255 - (255 - color[1]) * 0.06), Math.round(255 - (255 - color[2]) * 0.06));
+      doc.rect(0, textTop, pageWidth, textH, 'F');
     }
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.8);
+    doc.setDrawColor(...color);
+    doc.setLineWidth(0.5);
+    doc.line(0, textTop, pageWidth, textTop);
+    doc.setLineWidth(0.2);
     lines.forEach((line, i) => {
       const isExtra = !!opts.extraLine && i === lines.length - 1;
       doc.setFont('helvetica', isExtra ? 'italic' : 'normal');
-      doc.setTextColor(isExtra ? 148 : 100, isExtra ? 163 : 116, isExtra ? 184 : 139);
-      doc.text(doc.splitTextToSize(line, width - 24)[0] || '', pageWidth / 2, y + 2.2 + i * LINE_H, { align: 'center' });
+      doc.setFontSize(6.8);
+      doc.setTextColor(isExtra ? 148 : 71, isExtra ? 163 : 85, isExtra ? 184 : 105);
+      doc.text(doc.splitTextToSize(line, width - 26)[0] || '', pageWidth / 2, textTop + 3.6 + i * LINE_H, { align: 'center' });
     });
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`Page ${page} / ${total}`, pageWidth - margin, pageHeight - 2.5, { align: 'right' });
+    doc.text(`Page ${page} / ${total}`, pageWidth - margin, textTop + 3.6, { align: 'right' });
+    // Bas de page : image sur toute la largeur, sinon filet de couleur.
+    if (image && imageSize) {
+      safeAddImage(doc, image, (pageWidth - imageSize.w) / 2, pageHeight - imageSize.h, imageSize.w, imageSize.h);
+    } else {
+      doc.setFillColor(...color);
+      doc.rect(0, pageHeight - bottomH, pageWidth, bottomH, 'F');
+    }
   }
 }

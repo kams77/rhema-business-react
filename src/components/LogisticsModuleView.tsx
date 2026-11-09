@@ -15,7 +15,8 @@ import type {
   DocumentItem,
   LogisticsHub,
   HubStockItem,
-  StockMovementItem
+  StockMovementItem,
+  StockSettings
 } from '../types';
 import { 
   Truck, 
@@ -45,7 +46,7 @@ import { PurchaseOrdersTab } from './logistics/PurchaseOrdersTab';
 import { DeliveryNotesTab } from './logistics/DeliveryNotesTab';
 import { ShipmentTrackingTab } from './logistics/ShipmentTrackingTab';
 import { InvoicesTab } from './logistics/InvoicesTab';
-import { HubsStockManagementTab } from './logistics/HubsStockManagementTab';
+import { StockHubsModule, type ReceptionInput } from './stock/StockHubsModule';
 import { HubsStockChartDashboard } from './logistics/HubsStockChartDashboard';
 import { SolarVsatCalculatorTab } from './logistics/SolarVsatCalculatorTab';
 import { UniversalSerialTrackerTab } from './logistics/UniversalSerialTrackerTab';
@@ -69,7 +70,13 @@ interface LogisticsModuleViewProps {
   onAddHub: (hub: LogisticsHub) => void;
   onAddMovement: (mvt: StockMovementItem) => void;
   onApproveMovement: (mvtId: string) => void;
-  onReceiveTransfer: (mvtId: string) => void;
+  onReceiveTransfer: (mvtId: string, reception?: ReceptionInput) => void;
+  onCancelTransfer: (mvtId: string, reason: string) => void;
+  stockSettings: StockSettings;
+  users?: User[];
+  onUpsertCatalogItem: (item: LogisticsItem) => void;
+  onUpdateHub: (hub: LogisticsHub) => void;
+  onUpdateStockSettings: (settings: StockSettings) => void;
   onCreateOrder: (order: PurchaseOrderItem) => void;
   onApproveOrder: (orderId: string) => void;
   onCreateDeliveryNote: (bl: DeliveryNoteItem) => void;
@@ -102,6 +109,12 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   onAddMovement,
   onApproveMovement,
   onReceiveTransfer,
+  onCancelTransfer,
+  stockSettings,
+  users,
+  onUpsertCatalogItem,
+  onUpdateHub,
+  onUpdateStockSettings,
   onCreateOrder,
   onApproveOrder,
   onCreateDeliveryNote,
@@ -136,6 +149,13 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
 
   // Convertit une demande de rapport technique en DocumentItem imprimable
   const handlePrintCustomDoc = (title: string, desc: string, refNum: string, amount: number) => {
+    // Un bon de stock n'est « signé » que si le circuit l'a validé ; sinon il est imprimé avec son vrai statut.
+    const mvtStatus = ['bes', 'bss', 'otih'].includes(type) ? (item as StockMovementItem).status : undefined;
+    const docStatus: DocumentItem['status'] = mvtStatus === undefined ? 'signe'
+      : ['valide', 'en_transit', 'receptionne'].includes(mvtStatus) ? 'signe'
+      : mvtStatus === 'rejete' || mvtStatus === 'annule' ? 'rejete' : 'en_revue';
+    const mvtSigner = mvtStatus !== undefined ? (item as StockMovementItem).approvedByManagerName : undefined;
+
     const docItem: DocumentItem = {
       id: `doc-log-${Date.now()}`,
       title,
@@ -161,14 +181,14 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
         signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
       },
-      electronicSignature: {
-        signedBy: currentUser.name,
-        signedAt: new Date().toISOString(),
-        role: currentUser.roleTitle,
+      electronicSignature: docStatus === 'signe' ? {
+        signedBy: mvtSigner || currentUser.name,
+        signedAt: mvtStatus !== undefined ? (item as StockMovementItem).approvedAt || new Date().toISOString() : new Date().toISOString(),
+        role: mvtSigner ? 'Visa du circuit' : currentUser.roleTitle,
         certificateHash: ''
-      }
+      } : undefined
     };
-    docItem.electronicSignature!.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
+    if (docItem.electronicSignature) docItem.electronicSignature.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
     setPrintableDoc(docItem);
     if (onLogAction) {
       onLogAction('Émission Rapport Logistique Certifié', `Document ${refNum} (${title}) imprimé.`, 'document');
@@ -218,21 +238,21 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       const mvt = item as StockMovementItem;
       title = `Bon d'Entrée en Stock : ${mvt.movementNumber}`;
       refNum = mvt.movementNumber;
-      subtype = 'bon_livraison';
+      subtype = 'bon_entree_stock';
       amount = mvt.totalValueUSD;
-      desc = `Entrée et prise en charge physique des équipements au ${mvt.destinationHubName || 'Hub Provincial'}. Réf Source: ${mvt.referenceDocumentNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
+      desc = `Entrée (${mvt.typeLabel || 'entrée'}) et prise en charge physique des équipements au ${mvt.destinationHubName || 'site'}${mvt.counterparty ? ` — fournisseur / origine : ${mvt.counterparty}` : ''}. Réf Source: ${mvt.referenceDocumentNumber}. Articles : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
     } else if (type === 'bss') {
       const mvt = item as StockMovementItem;
-      title = `Bon de Sortie & Mise en Service : ${mvt.movementNumber}`;
+      title = `Bon de Sortie de Stock : ${mvt.movementNumber}`;
       refNum = mvt.movementNumber;
-      subtype = 'bon_livraison';
+      subtype = 'bon_sortie_stock';
       amount = mvt.totalValueUSD;
-      desc = `Sortie du matériel depuis le ${mvt.sourceHubName || 'Hub'} pour déploiement direct sur site : ${mvt.destinationClientSite}. Matériels déstockés : ${mvt.items.map(i => `${i.quantity}x ${i.name} [S/N: ${i.serialNumbers.join(', ') || 'N/A'}]`).join(' ; ')}. ${mvt.notes}`;
+      desc = `Sortie du matériel depuis le ${mvt.sourceHubName || 'Hub'} (${mvt.typeLabel || 'sortie'})${mvt.counterparty || mvt.destinationClientSite ? ` — client / projet : ${mvt.counterparty || mvt.destinationClientSite}` : ''}. Matériels déstockés : ${mvt.items.map(i => `${i.quantity}x ${i.name} [S/N: ${i.serialNumbers.join(', ') || 'N/A'}]`).join(' ; ')}. ${mvt.notes}`;
     } else if (type === 'otih') {
       const mvt = item as StockMovementItem;
-      title = `Ordre de Transfert Inter-Hubs : ${mvt.movementNumber}`;
+      title = `Ordre de Transfert Inter-Sites : ${mvt.movementNumber}`;
       refNum = mvt.movementNumber;
-      subtype = 'bon_livraison';
+      subtype = 'ordre_transfert';
       amount = mvt.totalValueUSD;
       desc = `Régulation logistique inter-provinces : Expédié de ${mvt.sourceHubName} à destination de ${mvt.destinationHubName}. Convoi / Fret sous scellé. Matériels transférés : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
     }
@@ -249,7 +269,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       authorRole: currentUser.role,
       authorEntity: currentUser.departmentName || 'Service Logistique',
       createdAt: new Date().toISOString().split('T')[0],
-      status: 'signe',
+      status: docStatus,
       size: '280 KB',
       fileType: 'PDF',
       amount,
@@ -557,21 +577,25 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         />
       )}
       {activeTab === 'hubs' && (
-        <HubsStockManagementTab
+        <StockHubsModule
           currentUser={currentUser}
           organization={organization}
-          entities={entities}
+          users={users}
           catalog={catalog}
           hubs={hubs}
           stocks={stocks}
           movements={movements}
+          settings={stockSettings}
           onAddHub={onAddHub}
+          onUpdateHub={onUpdateHub}
           onAddMovement={onAddMovement}
           onApproveMovement={onApproveMovement}
           onReceiveTransfer={onReceiveTransfer}
+          onCancelTransfer={onCancelTransfer}
+          onUpsertCatalogItem={onUpsertCatalogItem}
+          onUpdateStockSettings={onUpdateStockSettings}
           onPrintDocument={(mvt, type) => handlePrintItem(mvt, type)}
           approvalState={approvalState}
-          onLogAction={onLogAction}
         />
       )}
 

@@ -132,6 +132,25 @@
 /* ========================================================================== */
 /* Impression (bulletins, bons, factures)                                      */
 /* ========================================================================== */
+/* Feuille A4 (documents officiels, rapports de site) : même format à l'écran et à l'impression. */
+.a4-sheet {
+  width: 210mm;
+  min-height: 297mm;
+}
+.a4-repeat-foot {
+  display: none;
+}
+
+/* Impression : A4 sans marge (l'en-tête et le pied de page vont jusqu'au bord) ;
+   les pages suivantes gardent une marge en haut pour le texte. */
+@page {
+  size: A4;
+  margin: 12mm 0 0 0;
+}
+@page :first {
+  margin-top: 0;
+}
+
 @media print {
   html,
   body {
@@ -163,6 +182,29 @@
     border: 0 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
+  }
+  /* Feuille A4 : le pied de page est répété en bas de chaque page, avec une réserve de même hauteur. */
+  body:has(.print-sheet) .a4-sheet {
+    width: 210mm !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  .a4-repeat-foot {
+    display: table-footer-group;
+  }
+  .a4-foot-spacer {
+    height: var(--a4-footer-h, 25mm);
+  }
+  .a4-footer-slot {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 210mm;
+  }
+
+  .a4-body table tr {
+    break-inside: avoid;
   }
   * {
     -webkit-print-color-adjust: exact;

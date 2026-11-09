@@ -5,7 +5,8 @@ import React, { useRef, useState } from 'react';
 import { ImagePlus, Trash2, Info } from 'lucide-react';
 import type { OrganizationBranding } from '../../types';
 import { IMAGE_ACCEPT, readImageFile, type ImageKind } from '../../utils/imageUpload';
-import { DEFAULT_BRAND_COLOR, DocumentLetterhead, DocumentPageFooter, type BrandSource } from './Letterhead';
+import { DEFAULT_BRAND_COLOR, type BrandSource } from './Letterhead';
+import { A4Sheet } from './A4Sheet';
 
 export interface BrandingValue {
   logo?: string;
@@ -180,16 +181,16 @@ export const BrandingFields: React.FC<BrandingFieldsProps> = ({ value, onChange,
       {/* Aperçu d'une page A4 */}
       <div className="space-y-1.5">
         <span className="text-slate-300 font-semibold block">Aperçu d'un document</span>
-        <div className="w-[238px] h-[336px] overflow-hidden rounded-lg border border-slate-700 bg-white shadow-xl" aria-label="Aperçu d'un document officiel">
-          <div className="origin-top-left scale-[0.4] w-[595px] h-[842px] p-8 flex flex-col text-slate-900">
-            <DocumentLetterhead organization={preview} />
-            <div className="text-center font-black uppercase text-base my-3">Note de service</div>
-            <div className="space-y-2 flex-1">
-              {[92, 100, 85, 97, 60, 0, 88, 95, 70].map((w, i) => (
-                <div key={i} className="h-2.5 rounded bg-slate-200" style={{ width: `${w}%`, opacity: w ? 1 : 0 }} />
-              ))}
-            </div>
-            <DocumentPageFooter organization={preview} />
+        <div className="w-[238px] h-[337px] overflow-hidden rounded-lg border border-slate-700 bg-white shadow-xl" aria-label="Aperçu d'un document officiel (page A4)">
+          <div className="origin-top-left scale-[0.3] w-[210mm]">
+            <A4Sheet organization={preview} printable={false} className="!shadow-none">
+              <div className="text-center font-black uppercase text-base my-3">Note de service</div>
+              <div className="space-y-2">
+                {[92, 100, 85, 97, 60, 0, 88, 95, 70, 0, 90, 82].map((w, i) => (
+                  <div key={i} className="h-2.5 rounded bg-slate-200" style={{ width: `${w}%`, opacity: w ? 1 : 0 }} />
+                ))}
+              </div>
+            </A4Sheet>
           </div>
         </div>
       </div>

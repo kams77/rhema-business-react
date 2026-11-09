@@ -24,6 +24,7 @@ import {
 import {
   PRIVATE_ACCOUNT_FIELDS,
   canAccessLogistics,
+  isLogisticsManager,
   canDeleteEntity,
   canManageAccount,
   canReadLogistics,
@@ -45,6 +46,7 @@ import {
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
 import { sanitizeOrgData } from '../shared/branding.mjs';
+import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings } from '../shared/stock.mjs';
 import {
   ATTENDANCE_EVENTS,
   DEFAULT_TIME_ZONE,
@@ -505,6 +507,64 @@ export function createApp({ db, config }) {
     return days;
   }
 
+  // --- stocks multi-sites : journal des mouvements (shared/stock.mjs) --------
+  const readData = async key => {
+    const d = await db.getData(key);
+    return d ? { value: JSON.parse(d.value), version: d.version } : { value: null, version: 0 };
+  };
+
+  /**
+   * Règles du journal des stocks, contrôlées par le serveur à chaque écriture :
+   * - aucun stock ne devient négatif (sorties et transferts limités au stock du Site) ;
+   * - transferts cohérents (source ≠ destination, reçu ≤ envoyé, réception après l'envoi) ;
+   * - l'annulation d'un transfert en transit est réservée aux responsables de la logistique.
+   */
+  async function checkStockWrite(user, before, after) {
+    if (!Array.isArray(after)) throw new HttpError(400, 'Liste attendue.');
+    const me = accessUser(user);
+    const prevById = new Map((Array.isArray(before) ? before : []).map(m => [m.id, m]));
+    for (const m of after) {
+      const prev = prevById.get(m.id);
+      if (m.type === TRANSFER_TYPE && m.status === 'annule' && prev?.status !== 'annule' && !isLogisticsManager(me)) {
+        throw new HttpError(403, 'L\'annulation d\'un transfert est réservée aux responsables de la logistique.');
+      }
+    }
+    const settings = (await readData('logistics.settings')).value;
+    const hubs = (await readData('logistics.hubs')).value || [];
+    const catalog = (await readData('logistics.catalog')).value || [];
+    const problems = ledgerWriteProblems(Array.isArray(before) ? before : [], after, settings, { hubs, catalog });
+    if (problems.length) throw new HttpError(422, problems.slice(0, 3).join(' '));
+  }
+
+  /**
+   * Passage au journal des stocks (une seule fois) : les stocks enregistrés deviennent un
+   * « Stock initial » par Site et les anciens mouvements sont marqués comme déjà comptés.
+   */
+  async function migrateStockLedger() {
+    const settings = await readData('logistics.settings');
+    if (settings.value && Number(settings.value.ledgerVersion) >= LEDGER_VERSION) return;
+    const stocks = (await readData('logistics.stocks')).value || [];
+    const movements = await readData('logistics.stockMovements');
+    const hubs = (await readData('logistics.hubs')).value || [];
+    const catalog = await readData('logistics.catalog');
+    if (stocks.length || (movements.value || []).length) {
+      const today = localDay(new Date(), timeZone);
+      const r = migrateLegacyStocks(stocks, movements.value || [], hubs, today);
+      await db.putData('logistics.stockMovements', JSON.stringify(r.movements), movements.version, null);
+      if (Array.isArray(catalog.value)) {
+        const next = catalog.value.map(c => (c.minAlertThreshold === undefined && r.thresholds[c.id] !== undefined ? { ...c, minAlertThreshold: r.thresholds[c.id] } : c));
+        await db.putData('logistics.catalog', JSON.stringify(next), catalog.version, null);
+      }
+      await audit(
+        { id: 'system', name: 'Système', role: 'dg', roleTitle: 'Système' },
+        'Passage au journal des stocks',
+        'admin',
+        `Stocks repris en « Stock initial » sur ${new Set(stocks.filter(x => x.quantityAvailable > 0).map(x => x.hubId)).size} site(s) ; ${(movements.value || []).length} ancien(s) mouvement(s) conservé(s) dans l'historique.`,
+      );
+    }
+    await db.putData('logistics.settings', JSON.stringify({ ...stockSettings(settings.value), ledgerVersion: LEDGER_VERSION }), settings.version, null);
+  }
+
   // --- retrait du module RH : effacement unique des anciennes données -------
   const hrRetirement = (async () => {
     let removedKeys = 0;
@@ -533,7 +593,8 @@ export function createApp({ db, config }) {
         `Effacement des données de paie (${removedKeys} module(s) : contrats, salaires, barèmes…) et de ${removedDocs} document(s) RH (bulletins, contrats de travail, déclarations, fiches de poste, feuilles de temps).`,
       );
     }
-  })().catch(err => console.error('[erp-workflow] Retrait du module RH :', err));
+    await migrateStockLedger();
+  })().catch(err => console.error('[erp-workflow] Démarrage (retrait RH / journal des stocks) :', err));
 
   const requireDG = s => {
     if (s.user.role !== 'dg') throw new HttpError(403, 'Action réservée à la Direction Générale.');
@@ -926,6 +987,7 @@ export function createApp({ db, config }) {
       const auditEntries = prepareAudit(body.data?.auditLogs);
       try {
         await db.replaceAllData(entries, users, auditEntries);
+        await migrateStockLedger().catch(err => console.error('[stocks]', err));
       } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') throw new HttpError(400, 'Deux comptes utilisent le même email.');
         throw err;
@@ -1153,6 +1215,7 @@ export function createApp({ db, config }) {
       const entries = prepareDataEntries(backup.data);
       const auditEntries = prepareAudit(backup.data.auditLogs);
       await db.replaceAllData(entries, users, auditEntries);
+      await migrateStockLedger().catch(err => console.error("[stocks]", err));
       await db.bump(USERS_VERSION_KEY);
       await audit(s.user, 'Restauration de sauvegarde', 'admin', `Restauration complète (${users.length} comptes, ${entries.length} modules).`);
       return sendJson(req, res, 200, { ok: true, relogin: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
@@ -1225,6 +1288,7 @@ export function createApp({ db, config }) {
           throw new HttpError(403, 'Vous n\'avez pas le droit de modifier ces données.');
         }
         value = stripRetiredHr(key, sanitizeOrgData(key, value));
+        if (key === 'logistics.stockMovements') await checkStockWrite(s.user, current ? JSON.parse(current.value) : [], value);
         const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
         const r = await db.putData(key, json, expected, s.user.id);

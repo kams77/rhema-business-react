@@ -17,7 +17,7 @@ import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../uti
 import { canUserApproveDocument } from '../utils/rbac';
 import { currentStep } from '../lib/workflow';
 import { ElectronicSignatureModal, type SignatureData } from './ElectronicSignatureModal';
-import { DocumentLetterhead, DocumentPageFooter } from './branding/Letterhead';
+import { A4Sheet } from './branding/A4Sheet';
 
 interface RhemaOfficialDocumentProps {
   document: DocumentItem;
@@ -90,7 +90,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
 
   return (
     <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
-      <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[95vh] overflow-hidden">
+      <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col max-h-[95vh] overflow-hidden">
         
         {/* BARRE SUPÉRIEURE (FIDÈLE À LA CAPTURE 2) */}
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800 bg-slate-950/80">
@@ -156,17 +156,18 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
         </div>
 
         {/* FEUILLE DE PAPIER BLANCHE OFFICIELLE (EXACTE À LA CAPTURE 2) */}
-        <div className="flex-1 min-h-0 p-4 sm:p-8 overflow-y-auto bg-slate-950/90 flex justify-center items-start">
-          <div className="print-sheet bg-white text-slate-900 rounded-2xl p-6 sm:p-8 md:p-10 shadow-2xl max-w-3xl w-full border border-slate-200 flex flex-col font-sans relative my-auto shrink-0">
-            
-            {/* Filigrane d'authenticité : nom de l'organisation émettrice */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] select-none text-7xl font-black text-slate-900 rotate-[-25deg] overflow-hidden text-center leading-none">
-              {organization.name}
-            </div>
-
+        <div className="flex-1 min-h-0 p-4 sm:p-8 overflow-auto bg-slate-950/90 flex justify-center items-start">
+          {/* Page A4 (210 × 297 mm), identique à l'impression : en-tête en haut, pied de page en bas. */}
+          <A4Sheet
+            organization={organization}
+            footerExtra={`Document ${document.referenceNumber}`}
+            overlay={
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] select-none text-7xl font-black text-slate-900 rotate-[-25deg] overflow-hidden text-center leading-none">
+                {organization.name}
+              </div>
+            }
+          >
             <div>
-              {/* EN-TÊTE OFFICIEL DE L'ORGANISATION (papier à en-tête ou en-tête automatique) */}
-              <DocumentLetterhead organization={organization} />
 
               <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b pb-5 mb-5">
                 <div className="text-[11px] text-slate-600 space-y-0.5">
@@ -311,10 +312,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                 )}
               </div>
             </div>
-
-            {/* PIED DE PAGE OFFICIEL DE L'ORGANISATION */}
-            <DocumentPageFooter organization={organization} />
-          </div>
+          </A4Sheet>
         </div>
 
         {/* PIED DE MODAL AVEC BOUTON DE SIGNATURE */}

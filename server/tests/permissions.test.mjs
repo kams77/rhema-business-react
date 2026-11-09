@@ -280,6 +280,36 @@ r = await boss('PUT', '/api/data/logistics.suppliers', { value: [{ id: 'sup1', n
 assert(r.status === 200, 'DG : fournisseurs enregistrés');
 r = await tech('GET', '/api/data/logistics.suppliers');
 assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancaires invisibles hors logistique');
+// Journal des stocks : jamais de stock négatif ; annulation d'un transfert réservée aux responsables.
+{
+  const us = await boss('GET', '/api/data/users');
+  r = await boss('PUT', '/api/data/users', {
+    value: us.json.value.filter(x => x.id !== 'p-mag').concat([{ ...base, id: 'p-mag', name: 'Magasinier Test', email: 'mag@perm.cd', role: 'agent', roleTitle: 'Magasinier', serviceId: 'svc-vsat', password: 'Temp-Magasin-26' }]),
+    version: us.json.version,
+  });
+  assert(r.status === 200, 'DG : compte magasinier créé');
+  const mag = client();
+  await login(mag, 'mag@perm.cd', 'Temp-Magasin-26', 'Cobalt-Riviere-Nord-77');
+  assert((await put(boss, 'logistics.hubs', [
+    { id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif' },
+    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif' },
+  ])).status === 200, 'DG : sites enregistrés');
+  assert((await put(boss, 'logistics.catalog', [{ id: 'si1', sku: 'ART-1', name: 'Article test', category: 'vsat', unitPriceUSD: 10, minAlertThreshold: 2 }])).status === 200, 'DG : catalogue enregistré');
+  const line = q => [{ catalogItemId: 'si1', sku: 'ART-1', name: 'Article test', quantity: q, unitPriceUSD: 10, serialNumbers: [] }];
+  const opening = { id: 'smv-1', movementNumber: 'MV-2026-00001', type: 'stock_initial', destinationHubId: 'sh1', items: line(10), date: '2026-01-05', status: 'valide' };
+  const cur = (await boss('GET', '/api/data/logistics.stockMovements')).json.value || [];
+  assert((await put(boss, 'logistics.stockMovements', [...cur, opening])).status === 200, 'stock : stock initial enregistré');
+  r = await put(boss, 'logistics.stockMovements', [...cur, opening, { id: 'smv-2', movementNumber: 'MV-2026-00002', type: 'sortie_vente', sourceHubId: 'sh1', items: line(15), date: '2026-01-06', status: 'valide' }]);
+  assert(r.status === 422 && /insuffisant/i.test(r.json.error), 'stock : une sortie qui rendrait le stock négatif est refusée (422)');
+  const transfer = { id: 'smv-3', movementNumber: 'TR-2026-00001', type: 'transfert_inter_hub', sourceHubId: 'sh1', destinationHubId: 'sh2', items: line(4), date: '2026-01-07', sentAt: '2026-01-07', status: 'en_transit' };
+  assert((await put(boss, 'logistics.stockMovements', [...cur, opening, transfer])).status === 200, 'stock : transfert mis en transit');
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule' }]);
+  assert(r.status === 403, 'stock : un magasinier ne peut pas annuler un transfert');
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'receptionne', receivedAt: '2026-01-06', receivedQuantities: { si1: 6 } }]);
+  assert(r.status === 422, 'stock : réception incohérente refusée (reçu > envoyé, réception avant envoi)');
+  r = await put(boss, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule', cancelledAt: '2026-01-08', cancelReason: 'Test' }]);
+  assert(r.status === 200, 'stock : un responsable logistique peut annuler un transfert');
+}
 r = await tech('PUT', '/api/data/donnee-pirate', { value: { x: 1 }, version: 0 });
 assert(r.status === 403, 'agent : ne peut pas créer de donnée inconnue');
 r = await tech('GET', '/api/data/invitations');

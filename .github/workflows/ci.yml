@@ -35,6 +35,9 @@ jobs:
       - name: Tests du circuit de validation (documents, tâches, droits)
         run: node shared/__tests__/workflow.test.mjs
 
+      - name: Tests du moteur de stock (mouvements, transferts, rapports)
+        run: node shared/__tests__/stock.test.mjs
+
       - name: Vérification TypeScript
         id: tsc
         run: |

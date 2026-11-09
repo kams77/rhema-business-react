@@ -396,8 +396,14 @@ export interface LogisticsItem {
   specs: string;
   unitPriceUSD: number;
   unit: 'piece' | 'kit' | 'metre' | 'lot' | 'rouleau';
+  /** Stock total du réseau (calculé à partir du journal des mouvements). */
   stockAvailable: number;
   defaultSupplier?: string;
+  /** Seuil d'alerte par Site : strictement en dessous, l'article passe en « stock bas ». */
+  minAlertThreshold?: number;
+  notes?: string;
+  /** Article retiré du catalogue (il reste visible dans l'historique). */
+  archived?: boolean;
 }
 
 export interface PurchaseOrderItem {
@@ -689,7 +695,7 @@ export interface LogisticsHub {
   managerEmail: string;
   storageCapacityM3: number;
   currentOccupancyRate: number; // En %
-  status: 'actif' | 'maintenance' | 'saturation';
+  status: 'actif' | 'maintenance' | 'saturation' | 'inactif';
   coverageZones: string[];
   securityLevel: string;
   createdAt: string;
@@ -714,12 +720,31 @@ export interface HubStockItem {
   status: 'normal' | 'alerte_basse' | 'rupture' | 'surstock';
 }
 
-export type StockMovementType = 
-  | 'entree_fournisseur' 
-  | 'sortie_deploiement' 
-  | 'transfert_inter_hub' 
-  | 'reception_transfert' 
-  | 'ajustement_inventaire';
+/**
+ * Type de mouvement : un type des paramètres du module (stock_initial, entree_fournisseur,
+ * sortie_vente…, voir shared/stock.mjs), « transfert_inter_hub », ou un ancien type.
+ */
+export type StockMovementType = string;
+
+/** Type de mouvement paramétrable : sens +1 (entrée) ou −1 (sortie). */
+export interface StockMovementTypeSetting {
+  id: string;
+  label: string;
+  sign: 1 | -1;
+  active: boolean;
+  builtin?: boolean;
+}
+
+/** Paramètres du module Stocks & Hubs (feuille PARAMETRES du classeur). */
+export interface StockSettings {
+  movementTypes: StockMovementTypeSetting[];
+  /** Libellé des 3 catégories d'articles. */
+  categoryLabels: Record<string, string>;
+  /** Délai (jours) au-delà duquel un transfert non reçu passe en alerte. */
+  transitAlertDays: number;
+  currency: string;
+  ledgerVersion?: number;
+}
 
 export interface StockMovementItem {
   id: string;
@@ -744,11 +769,30 @@ export interface StockMovementItem {
   operatorName: string;
   operatorRole: string;
   date: string;
-  status: 'en_attente_visa' | 'valide' | 'en_transit' | 'receptionne' | 'rejete';
+  status: 'en_attente_visa' | 'valide' | 'en_transit' | 'receptionne' | 'rejete' | 'annule';
   approvedByManagerName?: string;
   approvedAt?: string;
   electronicSealHash: string;
   notes: string;
+  /** Sens et libellé du type au moment de la saisie (+1 entrée, −1 sortie). */
+  sign?: 1 | -1;
+  typeLabel?: string;
+  /** Client, fournisseur ou projet concerné. */
+  counterparty?: string;
+  /** Mouvement antérieur au journal, déjà compris dans le stock repris. */
+  openingIncluded?: 'all' | 'source';
+  // --- Transferts ---
+  /** Mise en transit (bon validé). */
+  sentAt?: string;
+  carrier?: string;
+  shippingRef?: string;
+  receivedAt?: string;
+  receivedByName?: string;
+  /** Quantité reçue par article, si elle diffère de la quantité envoyée. */
+  receivedQuantities?: Record<string, number>;
+  cancelledAt?: string;
+  cancelledByName?: string;
+  cancelReason?: string;
 }
 
 // =============================================================
