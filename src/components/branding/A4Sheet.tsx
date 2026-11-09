@@ -96,7 +96,8 @@ export const A4Sheet: React.FC<A4SheetProps> = ({ organization, children, footer
       ref={sheet}
       className={`a4-sheet ${printable ? 'print-sheet' : ''} relative bg-white text-slate-900 shadow-2xl flex flex-col font-sans overflow-hidden shrink-0 ${className}`}
     >
-      {overlay}
+      {/* Le filigrane reste dans la feuille : rien ne doit dépasser la largeur A4, sinon le navigateur réduit la page. */}
+      {overlay && <div className="a4-overlay absolute inset-0 overflow-hidden pointer-events-none">{overlay}</div>}
       <table className="a4-flow w-full border-collapse">
         <tbody>
           <tr>

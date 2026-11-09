@@ -140,7 +140,7 @@ const MovementRow: React.FC<{ ctx: StockContext; m: StockMovementItem; itemIndex
         )}
       </td>
       <td className={td}>
-        <div className="font-semibold">{it.name}</div>
+        <div className="font-semibold min-w-[11rem]">{it.name}</div>
         <div className="text-[10.5px] text-slate-500 font-mono">{it.sku}{it.serialNumbers.length ? ` · S/N ${it.serialNumbers.slice(0, 3).join(', ')}${it.serialNumbers.length > 3 ? '…' : ''}` : ''}</div>
       </td>
       <td className={`${td} text-right font-mono font-bold ${sign > 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{sign > 0 ? '+' : '−'}{fmt(it.quantity)}</td>
@@ -212,7 +212,7 @@ const NewMovementModal: React.FC<{ ctx: StockContext; onClose: () => void }> = (
           <div>
             <label className={label}>Type de mouvement</label>
             <select value={typeId} onChange={e => setTypeId(e.target.value)} className={input} aria-label="Type de mouvement">
-              {types.map(x => <option key={x.id} value={x.id}>{x.sign > 0 ? '▲ Entrée' : '▼ Sortie'} — {x.label}</option>)}
+              {types.map(x => <option key={x.id} value={x.id}>{x.sign > 0 ? '▲' : '▼'} {x.label}</option>)}
             </select>
           </div>
           <div>

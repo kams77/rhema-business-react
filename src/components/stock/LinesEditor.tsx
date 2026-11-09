@@ -4,6 +4,8 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { LogisticsItem, StockSettings } from '../../types';
 import { categoryLabel, input, label } from './stockUi';
 
+const UNIT: Record<string, string> = { piece: 'pièce', kit: 'kit', metre: 'mètre', lot: 'lot', rouleau: 'rouleau' };
+
 export interface Line {
   itemId: string;
   quantity: string;
@@ -57,7 +59,7 @@ export const LinesEditor: React.FC<Props> = ({ lines, onChange, catalog, setting
                 ))}
               </select>
               {item && available && (
-                <p className="text-[10.5px] mt-1 text-slate-400">Disponible : <strong className="text-white font-mono">{available(item.id)}</strong> {item.unit}(s)</p>
+                <p className="text-[10.5px] mt-1 text-slate-400">Disponible : <strong className="text-white font-mono">{available(item.id)}</strong> {UNIT[item.unit] || item.unit}(s)</p>
               )}
             </div>
             <div className="col-span-4 md:col-span-2">

@@ -123,7 +123,7 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
                     <td className={`${td} font-mono font-bold whitespace-nowrap`}>{first ? m.movementNumber : ''}</td>
                     <td className={td}>{first && <span className="whitespace-nowrap">{hubName(hubs, m.sourceHubId)} <span className="text-amber-400">→</span> {hubName(hubs, m.destinationHubId)}</span>}</td>
                     <td className={td}>
-                      <div className="font-semibold">{it.name}</div>
+                      <div className="font-semibold min-w-[11rem]">{it.name}</div>
                       <div className="text-[10.5px] text-slate-500 font-mono">{it.sku}</div>
                     </td>
                     <td className={`${td} text-right font-mono font-bold`}>{fmt(it.quantity)}</td>
