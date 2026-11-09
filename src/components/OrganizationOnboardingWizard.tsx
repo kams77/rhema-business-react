@@ -480,7 +480,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                 </div>
 
                 <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Banque Principale & N° Compte (Virements Paie)</label>
+                  <label className="text-slate-300 font-semibold block mb-1">Banque principale & N° de compte</label>
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       type="text"
@@ -652,7 +652,7 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                   <ol className="list-decimal list-inside space-y-1 text-[11px]">
                     <li><strong>Organigramme & Entités</strong> → « Nouvelle Entité » : vos départements, directions, divisions et services.</li>
                     <li><strong>Gestion & CRUD Agents</strong> → « Enrôler un Collaborateur » : vos agents, avec leur rang et leur affectation.</li>
-                    <li>Ou <strong>Import Massif CSV & Paie</strong> : tous vos agents et contrats en une fois.</li>
+                    <li>Ou <strong>Import CSV des collaborateurs</strong> : tous les comptes de vos agents en une fois.</li>
                   </ol>
                 </div>
               )}

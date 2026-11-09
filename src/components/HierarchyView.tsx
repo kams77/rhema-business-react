@@ -499,7 +499,7 @@ export const HierarchyView: React.FC<HierarchyViewProps> = ({
                 <input
                   id="ent-desc"
                   type="text"
-                  placeholder="Ex : Paie, recrutement et dossiers du personnel"
+                  placeholder="Ex : Déploiement et maintenance des stations VSAT"
                   value={newEntity.description}
                   onChange={e => setNewEntity({ ...newEntity, description: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"

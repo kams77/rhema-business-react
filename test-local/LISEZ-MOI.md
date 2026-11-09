@@ -32,7 +32,7 @@ La première fois : 5 à 15 minutes (téléchargement et compilation). La fenêt
    - *Organigramme & Entités* → **Nouvelle Entité** : vos départements, directions, services ;
    - *Gestion & CRUD Agents* → **Enrôler un Collaborateur** : vos agents (ou en masse :
      *Import Massif CSV & Paie*, gabarit CSV téléchargeable dans l'écran) ;
-   - puis testez documents, tâches, paie, logistique…
+   - puis testez documents, tâches, pointage, logistique…
 
 ## 4. Voir les données dans MySQL
 

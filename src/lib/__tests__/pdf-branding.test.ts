@@ -12,8 +12,6 @@ import {
   exportApprovalSlipToPDF,
   exportAuditLogsToPDF,
   exportOfficialDocumentToPDF,
-  exportPayrollRunToPDF,
-  exportPayslipToPDF,
 } from '../../utils/exportUtils';
 // @ts-ignore — module JavaScript partagé avec le serveur
 import { isSafeImageDataUrl, LOGO_MAX_CHARS, BANNER_MAX_CHARS } from '../../../shared/branding.mjs';
@@ -85,26 +83,5 @@ exportApprovalSlipToPDF({
   electronicSignature: null,
 }, auto, 'bordereau-visa.pdf');
 ok(fs.existsSync(path.join(OUT, 'bordereau-visa.pdf')), 'bordereau de visa : en-tête de l\'organisation');
-
-const run: any = { id: 'r', month: '2026-09', title: 'Paie Septembre 2026', currency: 'USD', status: 'valide_drh' };
-const rows = Array.from({ length: 45 }, (_, i) => ({
-  contract: { matricule: `MAT-${100 + i}`, employeeCode: `E${i}`, categoryPro: 'Agent', contractType: 'CDI', paymentMode: 'virement' },
-  user: { name: `Agent ${i + 1}`, roleTitle: 'Magasinier' },
-  payslip: { currency: 'USD', baseSalary: 500, totalAllowances: 50, seniorityBonus: 10, overtimeAmount: 0, grossSalary: 560, totalEmployeeContributions: 28, totalTaxes: 40, advanceDeduction: 0, netSalary: 492, totalEmployerContributions: 70, totalEmployerCost: 630 },
-})) as any;
-exportPayrollRunToPDF(run, rows, letterhead, 'livre-paie.pdf');
-ok(pagesOf('livre-paie.pdf') >= 2, 'livre de paie : en-tête image et pagination');
-
-const payslip: any = {
-  orgName: base.name, rccm: base.rccm, idNat: base.idNat, numImpot: base.numImpot, headquarters: base.headquarters,
-  ref: 'BP-2026-09-001', period: 'Septembre 2026', date: '30/09/2026', employeeName: 'Aline Kahindo', matricule: 'MAT-001',
-  roleTitle: 'DRH', currency: 'USD', baseSalary: 1500, seniorityBonus: 50, allowances: 200, overtimeAmount: 0, grossSalary: 1750,
-  socialDeductionCNSS: 87.5, taxDeductionIPR: 210, advanceDeduction: 0, totalDeductions: 297.5, netSalary: 1452.5, counterValueCDF: 4100000,
-  employerCNSS: 157.5, employerINPP: 35, employerONEM: 3.5, totalEmployerCost: 1946,
-  earnings: [{ label: 'Salaire de base', base: '1 500', amount: 1500 }], deductions: [{ label: 'CNSS 5 %', base: '1 750', amount: 87.5 }], employerLines: [],
-};
-exportPayslipToPDF(payslip, false, 'bulletin.pdf', auto);
-exportPayslipToPDF(payslip, true, 'bulletin-specimen.pdf');
-ok(imagesOf('bulletin.pdf') >= 1 && fs.existsSync(path.join(OUT, 'bulletin-specimen.pdf')), 'bulletin de paie : logo de l\'organisation (et sans organisation fournie)');
 
 console.log(`\n${passed} vérifications des en-têtes et pieds de page PDF réussies (fichiers dans ${OUT}).`);

@@ -185,7 +185,7 @@ port **443**, jamais 5000/5001, 8080 ni 3306.
 Mettez en place **trois protections complémentaires** :
 
 1. **Export applicatif** (compte DG) : *menu utilisateur → Sauvegarde des données → Exporter* ; fichier
-   `.json` à conserver **chiffré et hors du NAS** (il contient toute la paie et les empreintes des mots de
+   `.json` à conserver **chiffré et hors du NAS** (il contient les pointages, les documents et les empreintes des mots de
    passe).
 2. **Copie quotidienne de la base** : *Panneau de configuration → Planificateur de tâches → Créer →
    Tâche planifiée → Script défini par l'utilisateur* — utilisateur **root**, tous les jours à 02:00 :
@@ -263,7 +263,7 @@ Désactivez SSH ensuite (*Panneau de configuration → Terminal et SNMP*).
 - [ ] Accès extérieur par VPN, ou seulement le port 443 ouvert sur la box.
 - [ ] Copie quotidienne de la base + Hyper Backup chiffré + instantanés ; restauration testée.
 - [ ] Mots de passe provisoires remis en main propre ; chaque agent a choisi le sien.
-- [ ] Droits « paie » attribués nominativement par le DG ; revue trimestrielle des comptes (départs, suspensions).
+- [ ] Revue trimestrielle des comptes et des responsables de chaque entité (départs, suspensions, délégations).
 - [ ] Journal d'audit vérifié chaque mois (*Journal d'audit → Vérifier l'intégrité*).
 
 ---
@@ -285,5 +285,5 @@ Possible mais non recommandé (le conteneur MariaDB est isolé et sauvegardé av
 |---|---|
 | `users` | Comptes (email, matricule, rôle, statut, empreinte du mot de passe) |
 | `sessions` | Sessions ouvertes (seule une empreinte du jeton est stockée) |
-| `app_data` | Données de chaque module (documents, paie, logistique…), avec numéro de version |
+| `app_data` | Données de chaque module (documents, pointages, logistique…), avec numéro de version |
 | `audit_logs` | Journal d'audit chaîné, en ajout seul |

@@ -6,7 +6,7 @@
 
 /** @typedef {{ id: string, role: string, roleTitle?: string, matricule?: string, employeeCode?: string,
  *   departementId?: string, directionId?: string, divisionId?: string, serviceId?: string,
- *   departmentName?: string, canManagePayroll?: boolean, canApproveServiceDocuments?: boolean }} AccessUser */
+ *   departmentName?: string, canApproveServiceDocuments?: boolean }} AccessUser */
 /** @typedef {{ id: string, parentId?: string }} AccessEntity */
 
 export const ROLE_RANK = { dg: 6, chef_departement: 5, directeur: 4, chef_division: 3, chef_service: 2, agent: 1 };
@@ -29,24 +29,6 @@ export function titleHasAny(title, terms) {
     const t = normalize(term).split(/[^a-z0-9]+/).filter(Boolean).join(' ');
     return t.length > 0 && words.includes(` ${t} `);
   });
-}
-
-export const HR_TITLE_TERMS = ['rh', 'drh', 'grh', 'paie', 'ressources humaines'];
-
-/**
- * Gestion de la paie et accès aux salaires de tous.
- * - DG : toujours.
- * - Autorisation explicite donnée par le DG (canManagePayroll = true / false) : prioritaire.
- * - Sinon : responsables de la DAF, de la direction RH ou financière, et fonctions RH / paie.
- * @param {AccessUser | undefined} u
- */
-export function isPayrollStaff(u) {
-  if (!u) return false;
-  if (u.role === 'dg') return true;
-  if (u.canManagePayroll === true) return true;
-  if (u.canManagePayroll === false) return false;
-  if (titleHasAny(u.roleTitle, HR_TITLE_TERMS)) return true;
-  return u.role !== 'agent' && (u.departementId === 'dept-daf' || u.directionId === 'dir-rh' || u.directionId === 'dir-finance');
 }
 
 /** Centre de sécurité et journal d'audit. @param {AccessUser | undefined} u */
@@ -158,15 +140,24 @@ export function isEntityInUserScope(u, entityId, entities) {
   return anchor ? isEntityDescendantOf(entityId, anchor, entities) : false;
 }
 
-/** Types de documents confidentiels : circuit, destinataire, Direction et fonction RH / Finance seulement. */
-export const CONFIDENTIAL_DOCUMENT_SUBTYPES = new Set(['contrat_travail', 'declaration_sociale', 'bilan_comptable']);
-/** Types de documents personnels d'un agent : lui, son circuit, sa hiérarchie et la fonction RH. */
-export const PERSONAL_DOCUMENT_SUBTYPES = new Set(['demande_conge', 'feuille_de_temps']);
+/** Types de documents confidentiels : circuit, destinataire et Direction Générale seulement. */
+export const CONFIDENTIAL_DOCUMENT_SUBTYPES = new Set(['bilan_comptable']);
+/** Types de documents personnels d'un agent : lui, son circuit et sa hiérarchie. */
+export const PERSONAL_DOCUMENT_SUBTYPES = new Set(['demande_conge']);
+
+/**
+ * Documents de l'ancien module RH (supprimé) : bulletins de paie, contrats de travail, déclarations
+ * sociales, fiches de poste et feuilles de temps. Ils ne se créent plus ; ceux qui subsisteraient
+ * (ancienne sauvegarde) ne sont visibles que de leur destinataire et de la Direction Générale.
+ */
+export const RETIRED_HR_DOCUMENT_SUBTYPES = new Set(['bulletin_de_paie', 'contrat_travail', 'declaration_sociale', 'fiche_poste', 'feuille_de_temps']);
+/** @param {any} doc */
+export const isRetiredHrDocument = doc => !!doc && (doc.isConfidentialPayslip === true || RETIRED_HR_DOCUMENT_SUBTYPES.has(doc.subtype));
 
 /**
  * Visibilité d'un document : QUI le voit et QUAND.
  * - DG : tout.
- * - Bulletins de paie : leur titulaire et la Direction / RH habilitée.
+ * - Anciens documents RH (paie, contrats…) : leur destinataire (et la DG) seulement.
  * - L'émetteur, le destinataire nommé et chaque valideur du circuit : toujours.
  * - Brouillon : personne d'autre (il n'est pas encore publié).
  * - En circuit ou rejeté : les responsables du périmètre concerné, jamais les autres agents.
@@ -176,20 +167,18 @@ export const PERSONAL_DOCUMENT_SUBTYPES = new Set(['demande_conge', 'feuille_de_
 export function canSeeDocument(u, doc, entities) {
   if (!u || !doc) return false;
   if (u.role === 'dg') return true;
-  if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
-    return doc.targetUserId === u.id || isPayrollStaff(u);
-  }
+  if (isRetiredHrDocument(doc)) return doc.targetUserId === u.id;
   if (doc.authorId === u.id || doc.targetUserId === u.id) return true;
   const steps = (doc.workflow && Array.isArray(doc.workflow.steps)) ? doc.workflow.steps : [];
   if (steps.some(s => isStepHolder(u, s))) return true;
-  // Documents confidentiels (contrats de travail, déclarations sociales, bilans) : jamais diffusés
-  // au-delà du circuit, du destinataire et de la fonction RH / Finance, quel que soit le choix d'audience.
-  if (CONFIDENTIAL_DOCUMENT_SUBTYPES.has(doc.subtype)) return doc.status !== 'brouillon' && isPayrollStaff(u);
-  // Documents personnels (congés — parfois pour maladie —, évaluations) : en plus, la hiérarchie
-  // de l'émetteur ; jamais ses collègues.
+  // Documents confidentiels (bilans) : jamais diffusés au-delà du circuit, du destinataire
+  // et de la Direction Générale, quel que soit le choix d'audience.
+  if (CONFIDENTIAL_DOCUMENT_SUBTYPES.has(doc.subtype)) return false;
+  // Documents personnels (congés — parfois pour maladie) : en plus, la hiérarchie de l'émetteur ;
+  // jamais ses collègues.
   if (PERSONAL_DOCUMENT_SUBTYPES.has(doc.subtype)) {
     if (doc.status === 'brouillon') return false;
-    return isPayrollStaff(u) || (isManager(u) && !!doc.originEntityId && isEntityInUserScope(u, doc.originEntityId, entities));
+    return isManager(u) && !!doc.originEntityId && isEntityInUserScope(u, doc.originEntityId, entities);
   }
   if (doc.status === 'brouillon') return false;
   const inProgress = doc.status === 'en_revue' || doc.status === 'rejete';
@@ -205,7 +194,7 @@ export function canSeeDocument(u, doc, entities) {
  * @param {AccessUser} u @param {any} doc @param {AccessEntity[]} entities
  */
 export function canWriteDocument(u, doc, entities) {
-  if (doc && (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie')) return isPayrollStaff(u);
+  if (isRetiredHrDocument(doc)) return false;
   return canSeeDocument(u, doc, entities);
 }
 
@@ -330,17 +319,17 @@ export function canDeleteEntity(u, before, entities) {
 }
 
 /** Lecture du module logistique (données commerciales, fournisseurs, stocks). @param {AccessUser | undefined} u */
-export const canReadLogistics = u => canAccessLogistics(u) || isSecurityStaff(u) || isPayrollStaff(u);
+export const canReadLogistics = u => canAccessLogistics(u) || isSecurityStaff(u);
 
 /** Champs d'un compte réservés à son titulaire et à ceux qui le gèrent (vie privée des agents). */
 export const PRIVATE_ACCOUNT_FIELDS = ['phone', 'lastLogin', 'failedAccessAttempts', 'mustChangePassword', 'lockedUntil'];
 
 /**
  * Peut voir la fiche complète d'un collègue (téléphone, dernière connexion, échecs de connexion) :
- * le titulaire, la Direction et la sécurité, la fonction RH / paie, et les responsables qui gèrent ce compte.
+ * le titulaire, la Direction et la sécurité, et les responsables qui gèrent ce compte.
  * @param {AccessUser} viewer @param {AccessUser} target @param {AccessEntity[]} entities
  */
 export function canSeeFullAccount(viewer, target, entities) {
   if (!viewer || !target) return false;
-  return viewer.id === target.id || isSecurityStaff(viewer) || isPayrollStaff(viewer) || canManageAccount(viewer, target, entities);
+  return viewer.id === target.id || isSecurityStaff(viewer) || canManageAccount(viewer, target, entities);
 }

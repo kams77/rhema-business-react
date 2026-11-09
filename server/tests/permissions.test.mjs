@@ -64,16 +64,12 @@ users = users.filter(u => !['p-chef', 'p-ag1', 'p-ag2', 'p-dir'].includes(u.id))
 ]);
 assert((await put(boss, 'users', users)).status === 200, 'DG : comptes de test créés');
 
-const contracts = [
-  { id: 'k1', userId: 'p-ag1', matricule: 'M1', baseSalary: 900, salaryCurrency: 'USD' },
-  { id: 'k2', userId: 'p-ag2', matricule: 'M2', baseSalary: 1400, salaryCurrency: 'USD' },
-  { id: 'k3', userId: 'p-chef', matricule: 'M3', baseSalary: 2000, salaryCurrency: 'USD' },
-];
-assert((await put(boss, 'contracts', contracts)).status === 200, 'DG : contrats enregistrés');
-assert((await put(boss, 'payroll.runs', [{ id: 'r1', month: '2026-10' }])).status === 200, 'DG : période de paie enregistrée');
+// Module RH / paie retiré : ses données ne passent plus par l'API, même pour le DG.
+assert((await put(boss, 'contracts', [{ id: 'k1', userId: 'p-ag1', baseSalary: 900 }])).status === 410, 'module RH retiré : contrats refusés (410)');
+assert((await put(boss, 'payroll.runs', [{ id: 'r1', month: '2026-10' }])).status === 410, 'module RH retiré : périodes de paie refusées (410)');
+assert((await put(boss, 'documents', [{ id: 'doc-pay', title: 'Bulletin', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag1', authorId: 'dg' }])).status === 403,
+  'module RH retiré : plus de création de bulletin de paie, même par le DG');
 const documents = [
-  { id: 'doc-pay-ag2', title: 'Bulletin Comptable', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag2', authorId: 'dg' },
-  { id: 'doc-pay-ag1', title: 'Bulletin Technicien', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag1', authorId: 'dg' },
   { id: 'doc-compta', title: 'Note comptable', targetEntityId: 'svc-compta', authorId: 'dg' },
   { id: 'doc-vsat', title: 'Procédure VSAT', targetEntityId: 'svc-vsat', authorId: 'dg' },
 ];
@@ -87,19 +83,14 @@ await login(tech, 'tech1@perm.cd', 'Temp-Tech1-xx1', 'Technicien-VSAT-2026');
 let r = await tech('GET', '/api/data');
 assert(r.status === 200, 'agent : chargement des données');
 const v = r.json.values;
-assert(v.contracts.length === 1 && v.contracts[0].userId === 'p-ag1', 'agent : ne voit que son propre contrat');
-assert(v['payroll.runs'] === undefined, 'agent : périodes de paie invisibles');
+assert(v.contracts === undefined && v['payroll.runs'] === undefined, 'agent : aucune donnée de paie');
 assert(Array.isArray(v.auditLogs) && v.auditLogs.length === 0, 'agent : journal d\'audit invisible');
 assert(!v.securityAlerts || v.securityAlerts.length === 0, 'agent : alertes de sécurité invisibles');
 const visibleDocs = v.documents.map(d => d.id).sort();
-assert(JSON.stringify(visibleDocs) === JSON.stringify(['doc-pay-ag1', 'doc-vsat']), `agent : voit son bulletin et les documents de son service (${visibleDocs})`);
+assert(JSON.stringify(visibleDocs) === JSON.stringify(['doc-vsat']), `agent : voit les documents de son service (${visibleDocs})`);
 
 r = await tech('GET', '/api/data/contracts');
-assert(r.json.value.length === 1, 'agent : lecture directe filtrée');
-r = await put(tech, 'contracts', [{ ...contracts[0], baseSalary: 99999 }]);
-assert(r.status === 403, 'agent : ne peut pas modifier son salaire');
-r = await put(tech, 'payroll.runs', []);
-assert(r.status === 403, 'agent : ne peut pas toucher aux périodes de paie');
+assert(r.status === 410, 'module RH retiré : lecture des contrats refusée (410)');
 r = await put(tech, 'securityAlerts', []);
 assert(r.status === 403, 'agent : ne peut pas effacer les alertes');
 r = await put(tech, 'organizations', []);
@@ -114,7 +105,7 @@ r = await tech('PUT', '/api/data/documents', {
 assert(r.status === 200, 'agent : peut ajouter un document de son service');
 r = await boss('GET', '/api/data/documents');
 const all = r.json.value.map(d => d.id);
-assert(all.includes('doc-pay-ag2') && all.includes('doc-compta') && all.includes('doc-new'), 'documents cachés à l\'agent conservés après son enregistrement');
+assert(all.includes('doc-compta') && all.includes('doc-new'), 'documents cachés à l\'agent conservés après son enregistrement');
 
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', { value: r.json.value.filter(d => d.id !== 'doc-vsat'), version: r.json.version });
@@ -168,9 +159,6 @@ assert(r.status === 403, 'chef de service : ne peut pas promouvoir un agent à s
 u = await usersNow(chef);
 r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, canApproveServiceDocuments: true } : x)), version: u.version });
 assert(r.status === 200, 'chef de service : peut déléguer le visa à un agent de son service');
-u = await usersNow(chef);
-r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, canManagePayroll: true } : x)), version: u.version });
-assert(r.status === 403, 'chef de service : ne peut pas donner l\'accès à la paie');
 
 // ---------------------------------------------------------------------------
 // Circuit de validation : chaque visa revient au bon titulaire, dans l'ordre
@@ -272,9 +260,6 @@ assert(r.status === 200, 'chef de service : modifie la fiche de son agent (champ
 r = (await boss('GET', '/api/data/users')).json.value.find(x => x.id === 'p-ag2');
 assert(r.phone === '+243 990 000 002', 'annuaire : les champs masqués au chef ne sont pas effacés par son enregistrement');
 u = await usersNow(chef);
-r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, roleTitle: 'Assistant RH et paie' } : x)), version: u.version });
-assert(r.status === 403, 'chef de service : ne peut pas ouvrir les salaires en changeant l\'intitulé d\'un poste');
-u = await usersNow(chef);
 r = await chef('PUT', '/api/data/users', { value: u.value.concat([{ ...base, id: 'p-new', name: 'Nouvel Agent', email: 'new@perm.cd', role: 'agent', roleTitle: 'Technicien', serviceId: 'svc-vsat', password: 'court' }]), version: u.version });
 assert(r.status === 400, 'chef de service : mot de passe provisoire trop court refusé');
 
@@ -318,16 +303,51 @@ assert(r.status === 200, 'invitations : le chef invite un agent dans son service
 r = await tech('GET', '/api/data/x%E0%A4%A');
 assert(r.status === 400, 'adresse mal formée : erreur 400 (pas de plantage)');
 
-// Le DG accorde l'accès paie au comptable : il voit alors tous les contrats
-u = await usersNow(boss);
-r = await boss('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag2' ? { ...x, canManagePayroll: true } : x)), version: u.version });
-assert(r.status === 200, 'DG : accorde l\'accès à la paie');
+// ---------------------------------------------------------------------------
+// Pointage automatique : arrivée à la première activité, pauses, départ à la déconnexion
+// ---------------------------------------------------------------------------
 const cpt = client();
 await login(cpt, 'cpt2@perm.cd', 'Temp-Cpt2-xx22', 'Comptable-Kin-2026');
-r = await cpt('GET', '/api/data/contracts');
-assert(r.json.value.length === 3, 'comptable habilité : voit tous les contrats');
-r = await cpt('GET', '/api/data/documents');
-assert(r.json.value.some(d => d.id === 'doc-pay-ag1'), 'comptable habilité : voit les bulletins');
+await cpt('GET', '/api/data/versions');
+r = await tech('GET', '/api/pointage');
+const techDay = r.json.days.find(d => d.userId === 'p-ag1');
+assert(r.status === 200 && techDay && techDay.date === r.json.today && Date.parse(techDay.arrivalAt) <= Date.parse(r.json.now) && !techDay.departureAt,
+  'pointage : arrivée enregistrée automatiquement (heure du serveur)');
+assert(r.json.days.every(d => d.userId === 'p-ag1'), 'pointage : l\'agent ne voit que ses propres journées');
+r = await tech('POST', '/api/pointage', { type: 'pause' });
+assert(r.status === 200 && r.json.day.breaks.some(b => !b.end), 'pointage : l\'agent déclare une pause');
+r = await tech('POST', '/api/pointage', { type: 'reprise' });
+assert(r.status === 200 && r.json.day.breaks.every(b => b.end), 'pointage : reprise après la pause');
+r = await tech('POST', '/api/pointage', { type: 'depart' });
+assert(r.status === 400, 'pointage : le départ ne se déclare pas à la main (il est automatique)');
+r = await tech('POST', '/api/pointage', { type: 'pause', at: '2026-01-01T06:00:00Z', userId: 'p-ag2' });
+assert(r.status === 200 && r.json.day.userId === 'p-ag1' && r.json.day.breaks.at(-1).start !== '2026-01-01T06:00:00Z', 'pointage : impossible d\'imposer une heure ou de pointer pour un collègue');
+await tech('POST', '/api/pointage', { type: 'reprise' });
+r = await chef('GET', '/api/pointage');
+let ids = r.json.days.map(d => d.userId);
+assert(ids.includes('p-ag1') && !ids.includes('p-ag2'), 'pointage : le chef de service voit son agent, pas ceux des autres services');
+r = await boss('GET', '/api/pointage');
+ids = r.json.days.map(d => d.userId);
+assert(ids.includes('p-ag1') && ids.includes('p-ag2') && ids.includes('p-chef'), 'pointage : la Direction Générale voit tout le monde');
+r = await cpt('GET', '/api/pointage');
+assert(r.json.days.every(d => d.userId === 'p-ag2'), 'pointage : un agent ne voit pas les présences de ses collègues');
+const monthKey = `pointage.${r.json.today.slice(0, 7)}`;
+r = await boss('GET', `/api/data/${monthKey}`);
+assert(r.status === 200 && r.json.value === null, 'pointage : illisible par l\'API générique (même pour le DG)');
+r = await boss('PUT', `/api/data/${monthKey}`, { value: [], version: r.json.version });
+assert(r.status === 403, 'pointage : impossible de réécrire les heures par l\'API générique');
+r = await boss('GET', '/api/pointage?from=2026-01-01&to=2026-12-31');
+assert(r.status === 400, 'pointage : période limitée à 93 jours');
+r = await cpt('POST', '/api/auth/logout', {});
+r = await boss('GET', '/api/pointage');
+const cptDay = r.json.days.find(d => d.userId === 'p-ag2');
+assert(cptDay && cptDay.departureAt && cptDay.departureAuto === false, 'pointage : départ enregistré à la déconnexion');
+await login(cpt, 'cpt2@perm.cd', 'Comptable-Kin-2026');
+await cpt('GET', '/api/data/versions');
+r = await boss('GET', '/api/pointage');
+const back = r.json.days.find(d => d.userId === 'p-ag2');
+assert(back && !back.departureAt && back.breaks.length === 1 && back.breaks[0].start === cptDay.departureAt,
+  'pointage : retour le même jour — la sortie compte comme une pause');
 
 // ---------------------------------------------------------------------------
 // Signature : confirmation du mot de passe par le serveur

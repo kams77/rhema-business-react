@@ -30,9 +30,6 @@ import type {
   TaskItem, 
   SecurityAlert,
   AuditLog,
-  PayrollSystemConfig,
-  EmployeeContract,
-  PayrollRunPeriod,
   PurchaseOrderItem,
   DeliveryNoteItem,
   ShipmentTracking,
@@ -48,8 +45,7 @@ import {
   initialDocuments, 
   initialTasks,
   initialSecurityAlerts,
-  initialAuditLogs,
-  initialContracts
+  initialAuditLogs
 } from './data/initialData';
 import { 
   initialLogisticsCatalog,
@@ -104,10 +100,9 @@ import { ConnectViaKeyModal } from './components/invitations/ConnectViaKeyModal'
 import { EntityInvitationsManagerModal } from './components/invitations/EntityInvitationsManagerModal';
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
-import { 
-  createStandardPayrollSystem, 
-  initialPayrollConfigs 
-} from './data/standardPayroll';
+import { attendance } from './lib/attendance';
+import { isRetiredHrDocument } from '../shared/access.mjs';
+import { removeValue } from './lib/storage';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { LoginView } from './components/LoginView';
@@ -130,6 +125,7 @@ const SecurityView = lazy(() => import('./components/SecurityView').then(m => ({
 const AgentCrudView = lazy(() => import('./components/AgentCrudView').then(m => ({ default: m.AgentCrudView })));
 const AuditView = lazy(() => import('./components/AuditView').then(m => ({ default: m.AuditView })));
 const BulkImportView = lazy(() => import('./components/BulkImportView').then(m => ({ default: m.BulkImportView })));
+const PointageView = lazy(() => import('./components/PointageView').then(m => ({ default: m.PointageView })));
 const LogisticsModuleView = lazy(() => import('./components/LogisticsModuleView').then(m => ({ default: m.LogisticsModuleView })));
 const LaravelIntegrationView = lazy(() => import('./components/LaravelIntegrationView').then(m => ({ default: m.LaravelIntegrationView })));
 const EntityInvitationsView = lazy(() => import('./components/EntityInvitationsView').then(m => ({ default: m.EntityInvitationsView })));
@@ -146,7 +142,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0], { keepDefaultInApi: true });
   const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
   const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
-  const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
   const [documents, setDocuments] = usePersistentState<DocumentItem[]>('documents', initialDocuments);
   const [tasks, setTasks] = usePersistentState<TaskItem[]>('tasks', initialTasks);
   
@@ -274,12 +269,15 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   // Déconnexion automatique après inactivité (mode local ; en mode serveur, c'est le serveur qui l'applique).
   useEffect(() => {
     if (!isAuthenticated || API_MODE) return;
+    // Pointage automatique (mode navigateur) : arrivée à l'ouverture de la session.
+    attendance.touch(currentUser);
     let lastTouch = 0;
     const onActivity = () => {
       const now = Date.now();
       if (now - lastTouch > 15_000) { // au plus une écriture toutes les 15 s
         lastTouch = now;
         touchSession();
+        attendance.touch(currentUser);
       }
     };
     const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'] as const;
@@ -324,6 +322,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       return;
     }
     const departingUser = currentUser;
+    attendance.depart(departingUser);
     clearSession();
     setIsAuthenticated(false);
     setActiveGuestInvitation(null);
@@ -437,12 +436,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setEntities(data.entities);
     setUsers(data.users);
     
-    // Création de la configuration de paie standard pour la nouvelle organisation
-    setPayrollConfigs(prev => ({
-      ...prev,
-      [data.organization.id]: createStandardPayrollSystem(data.organization.id, data.organization.name)
-    }));
-
     // Oblige une connectivité de tous les agents de cette organisation à pouvoir se connecter via un login
     clearSession();
     setIsAuthenticated(false);
@@ -476,33 +469,24 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     });
   };
 
-  // MASSIFICATION DES COLLABORATEURS & CONTRATS RH VIA CSV
-  const handleImportUsersAndContracts = (newUsers: User[], newContracts: EmployeeContract[], auditNote: string) => {
+  // IMPORT CSV DES COMPTES COLLABORATEURS
+  const handleImportUsers = (newUsers: User[], auditNote: string) => {
     setUsers(prev => [...newUsers, ...prev]);
-    setContracts(prev => [...newContracts, ...prev]);
     addAuditLog({
-      action: 'Massification CSV Employés & Contrats RH',
+      action: 'Import CSV des comptes collaborateurs',
       category: 'admin',
       details: auditNote,
     });
   };
 
-  // MASSIFICATION DES HISTORIQUES DE PAIE & ARCHIVES VIA CSV
-  const handleImportPayrollHistory = (newRun: PayrollRunPeriod, newPayslipDocs: DocumentItem[], auditNote: string) => {
-    setDocuments(prev => [...newPayslipDocs, ...prev]);
-    addAuditLog({
-      action: 'Massification CSV Historique Paie',
-      category: 'admin',
-      details: auditNote,
-    });
-  };
-
-  // État des configurations de Paie & RH RDC par organisation
-  const [payrollConfigs, setPayrollConfigs] = usePersistentState<Record<string, PayrollSystemConfig>>('payrollConfigs', 
-    initialPayrollConfigs || {
-      'org-1': createStandardPayrollSystem('org-1', 'RHEMA BUSINESS')
-    }
-  );
+  // Module RH / paie retiré : anciennes données de ce navigateur effacées (mode sans serveur).
+  useEffect(() => {
+    if (API_MODE) return;
+    ['contracts', 'payrollConfigs', 'payroll.runs', 'payroll.contracts', 'payroll.leaves', 'payroll.advances',
+      'payroll.overtime', 'payroll.disciplinary', 'payroll.exchangeRate'].forEach(removeValue);
+    setDocuments(prev => (prev.some(d => isRetiredHrDocument(d)) ? prev.filter(d => !isRetiredHrDocument(d)) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // =========================================================================
   // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT ET ÉNERGIE SOLAIRE (RDC)
@@ -1694,7 +1678,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               users={users}
               tasks={tasks}
               documents={documents}
-              contracts={contracts}
               onTaskAction={applyTaskAction}
               onCreateTask={handleCreateTask}
               onSubmitLeaveRequest={handleSubmitLeaveRequest}
@@ -1874,46 +1857,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
             )
           )}
 
-          {/* MODULE DE MASSIFICATION CSV & IMPORT RH / PAIE */}
+          {/* IMPORT CSV DES COMPTES COLLABORATEURS */}
           {currentTab === 'bulk_import' && (
             <BulkImportView
               currentUser={currentUser}
               currentOrg={currentOrg}
               entities={entities}
               users={users}
-              contracts={contracts}
-              onImportUsersAndContracts={handleImportUsersAndContracts}
-              onImportPayrollHistory={handleImportPayrollHistory}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
-              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
+              onImportUsers={handleImportUsers}
             />
           )}
 
-          {/* MODULE DE POINTAGE & HORODATAGE 28 JOURS OUVRABLES (+ HEURES SUP) */}
-          {currentTab === 'attendance_dispatch' && (
-            <BulkImportView
-              currentUser={currentUser}
-              currentOrg={currentOrg}
-              entities={entities}
-              users={users}
-              contracts={contracts}
-              onImportUsersAndContracts={handleImportUsersAndContracts}
-              onImportPayrollHistory={handleImportPayrollHistory}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
-              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
-            />
+          {/* POINTAGE AUTOMATIQUE : REGISTRE DE PRÉSENCE DU PÉRIMÈTRE */}
+          {currentTab === 'pointage' && (
+            <PointageView currentUser={currentUser} entities={entities} users={users} />
           )}
 
           {currentTab === 'security' && (

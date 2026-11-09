@@ -1,16 +1,16 @@
 // src/components/RegulationGuideModal.tsx
 // Guide des normes RDC, du cloisonnement RBAC, de la sécurité et des workflows.
 import React, { useState } from 'react';
-import { ShieldAlert, HelpCircle, X, Layers, Scale, FileCheck2 } from 'lucide-react';
+import { ShieldAlert, HelpCircle, X, Layers, FileCheck2 } from 'lucide-react';
 
-type HelpTab = 'rdc_payroll' | 'rbac' | 'security' | 'workflows';
+type HelpTab = 'rbac' | 'security' | 'workflows';
 
 interface RegulationGuideModalProps {
   onClose: () => void;
 }
 
 export const RegulationGuideModal: React.FC<RegulationGuideModalProps> = ({ onClose }) => {
-  const [helpActiveTab, setHelpActiveTab] = useState<HelpTab>('rdc_payroll');
+  const [helpActiveTab, setHelpActiveTab] = useState<HelpTab>('rbac');
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
@@ -36,7 +36,6 @@ export const RegulationGuideModal: React.FC<RegulationGuideModalProps> = ({ onCl
         {/* Onglets d'aide */}
         <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
           {[
-            { id: 'rdc_payroll', label: 'Paie & Fiscalité RDC', icon: Scale },
             { id: 'rbac', label: 'Cloisonnement RBAC', icon: Layers },
             { id: 'security', label: 'Anti-Intrusion & Récidive', icon: ShieldAlert },
             { id: 'workflows', label: 'Workflows & Hash SHA-256', icon: FileCheck2 },
@@ -61,46 +60,11 @@ export const RegulationGuideModal: React.FC<RegulationGuideModalProps> = ({ onCl
 
         {/* Contenu onglet */}
         <div className="text-xs leading-relaxed text-slate-300 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-          {helpActiveTab === 'rdc_payroll' && (
-            <div className="space-y-3">
-              <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
-                <h4 className="font-bold text-emerald-400 flex items-center gap-2">
-                  <Scale className="w-4 h-4" /> Devises Légales & Taux de Change
-                </h4>
-                <p>
-                  Conformément à la réglementation de la Banque Centrale du Congo (BCC), les calculs salariaux s'effectuent strictement en <strong>USD ($)</strong> ou en <strong>Francs Congolais (CDF)</strong> au taux de référence officiel (ex: 2 850 CDF = 1 USD).
-                </p>
-              </div>
-
-              <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
-                <h4 className="font-bold text-indigo-400">Cotisations Sociales Salarié & Employeur :</h4>
-                <ul className="list-disc pl-5 space-y-1.5 text-slate-300">
-                  <li><strong>CNSS Salariale (5%) :</strong> Branche des pensions de vieillesse et retraite légale.</li>
-                  <li><strong>CNSS Patronale (13%) :</strong> 5% pensions + 4% risques professionnels + 4% prestations familiales.</li>
-                  <li><strong>INPP Patronal (3%) :</strong> Institut National de Préparation Professionnelle (formation continue).</li>
-                  <li><strong>ONEM Patronal (0.2%) :</strong> Office National de l'Emploi pour la régulation du marché du travail.</li>
-                </ul>
-              </div>
-
-              <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
-                <h4 className="font-bold text-amber-400">Barème Progressif IPR (Impôt Professionnel sur les Rémunérations) :</h4>
-                <p className="text-slate-400">Tranches d'imposition sur le salaire net imposable avec abattement par charge de famille (enfants) :</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-[11px] pt-1">
-                  <div className="bg-slate-900 p-2 rounded border border-slate-800">0 à 200 $ : <strong>3%</strong></div>
-                  <div className="bg-slate-900 p-2 rounded border border-slate-800">200 à 600 $ : <strong>10%</strong></div>
-                  <div className="bg-slate-900 p-2 rounded border border-slate-800">600 à 1 500 $ : <strong>20%</strong></div>
-                  <div className="bg-slate-900 p-2 rounded border border-slate-800">1 500 à 3 000 $ : <strong>30%</strong></div>
-                  <div className="bg-slate-900 p-2 rounded border border-slate-800 col-span-2 sm:col-span-1">&gt; 3 000 $ : <strong>40%</strong></div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {helpActiveTab === 'rbac' && (
             <div className="space-y-3">
               <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
                 <h4 className="font-bold text-purple-400">1. Direction Générale (DG / PDG)</h4>
-                <p>Habilitation globale sans aucune restriction sur l'ensemble des départements, bilans comptables, fiches de paie et alertes de sécurité.</p>
+                <p>Habilitation globale sans aucune restriction sur l'ensemble des départements, bilans comptables, registres de pointage et alertes de sécurité.</p>
               </div>
               <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
                 <h4 className="font-bold text-blue-400">2. Chefs de Départements & Directeurs</h4>
@@ -120,7 +84,7 @@ export const RegulationGuideModal: React.FC<RegulationGuideModalProps> = ({ onCl
                   <ShieldAlert className="w-4 h-4" /> Politique Anti-Intrusion & Blocage Récidive
                 </h4>
                 <p>
-                  Dès qu'un collaborateur essaie d'ouvrir un document hors de son périmètre d'habilitation (par exemple un agent réseau essayant de lire les journaux de paie DAF) :
+                  Dès qu'un collaborateur essaie d'ouvrir un document hors de son périmètre d'habilitation (par exemple un agent réseau essayant de lire un bilan comptable de la DAF) :
                 </p>
                 <ol className="list-decimal pl-5 space-y-1 text-slate-300">
                   <li><strong>1ère tentative :</strong> Émission instantanée d'une Alerte de Sécurité au tableau de bord DG et horodatage de l'adresse IP.</li>

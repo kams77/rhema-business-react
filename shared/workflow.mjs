@@ -21,7 +21,7 @@ import {
   isStepHolder,
   holdsPosition,
   canWriteDocument,
-  isPayrollStaff,
+  isRetiredHrDocument,
 } from './access.mjs';
 
 // ---------------------------------------------------------------------------
@@ -41,14 +41,14 @@ export const DOCUMENT_CATEGORIES = {
   administratif_general: 'Administratif & Notes',
   financier_comptable: 'Financier & Comptable',
   chaine_logistique_commerciale: 'Logistique & Commercial',
-  ressources_humaines: 'Ressources Humaines',
+  ressources_humaines: 'Congés & absences',
 };
 
 /**
  * Catalogue des types de documents.
  * - amount : 'aucun' (pas de prix), 'facultatif', 'requis'
  * - chain  : niveaux du circuit, dans l'ordre. Niveaux hiérarchiques : service, division, direction,
- *            departement, dg. Contrôles fonctionnels : finance, rh, logistique.
+ *            departement, dg. Contrôles fonctionnels : finance, logistique.
  * - dgAbove : montant (USD) au-delà duquel le visa de la DG est ajouté.
  * - finalKind : 'signature' (signature électronique finale) ou 'visa' (approbation simple).
  * - confidential : réservé aux personnes du circuit, au destinataire et à la Direction.
@@ -138,31 +138,11 @@ export const DOCUMENT_TYPES = {
     label: 'Contrat commercial / partenaire', category: 'chaine_logistique_commerciale', amount: 'facultatif',
     chain: ['direction', 'departement', 'dg'], finalKind: 'signature',
   },
-  // --- Ressources humaines ----------------------------------------------------------------
+  // --- Congés & absences (seul document du personnel conservé) ---------------------------
   demande_conge: {
     label: "Demande de congé / d'absence", category: 'ressources_humaines', amount: 'aucun',
-    chain: ['service', 'division', 'rh'], finalKind: 'visa',
-    hint: 'Chef de service, chef de division puis Ressources Humaines.',
-  },
-  fiche_poste: {
-    label: 'Fiche de poste', category: 'ressources_humaines', amount: 'aucun',
-    chain: ['service', 'direction', 'rh'], finalKind: 'signature',
-  },
-  feuille_de_temps: {
-    label: "Feuille de temps / fiche d'évaluation", category: 'ressources_humaines', amount: 'aucun',
-    chain: ['service', 'division'], finalKind: 'visa',
-  },
-  contrat_travail: {
-    label: 'Contrat de travail (CDI / CDD)', category: 'ressources_humaines', amount: 'facultatif',
-    chain: ['rh', 'dg'], finalKind: 'signature', confidential: true,
-  },
-  declaration_sociale: {
-    label: 'Déclaration CNSS & IPR', category: 'ressources_humaines', amount: 'requis',
-    chain: ['rh', 'finance', 'dg'], finalKind: 'signature', confidential: true,
-  },
-  bulletin_de_paie: {
-    label: 'Bulletin de paie (confidentiel)', category: 'ressources_humaines', amount: 'requis',
-    chain: ['rh'], finalKind: 'signature', confidential: true,
+    chain: ['service', 'division', 'direction'], finalKind: 'visa',
+    hint: 'Chef de service, chef de division puis directeur.',
   },
 };
 
@@ -201,11 +181,10 @@ export function entityAncestry(entityId, entities) {
 
 const FUNCTION_PATTERNS = {
   finance: /financ|comptab|tr[ée]sorerie/i,
-  rh: /ressources humaines|\brh\b|\bdrh\b|personnel/i,
   logistique: /logistique|stock|approvisionnement/i,
 };
 
-/** Entité « fonctionnelle » (Finance, RH, Logistique) : une direction de préférence, sinon un département. */
+/** Entité « fonctionnelle » (Finance, Logistique) : une direction de préférence, sinon un département. */
 function functionalEntity(fn, entities) {
   const re = FUNCTION_PATTERNS[fn];
   if (!re) return undefined;
@@ -429,7 +408,6 @@ export function workflowSummary(doc) {
 const CONTENT_FIELDS = ['title', 'description', 'subtype', 'category', 'amount', 'currency', 'targetEntityId', 'authorId'];
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const FINAL_DOC = ['signe', 'approuve'];
-const isPayslip = d => !!d && (d.isConfidentialPayslip === true || d.subtype === 'bulletin_de_paie');
 const docChangedKeys = (a, b) => Object.keys({ ...(a || {}), ...(b || {}) }).filter(k => !same(a ? a[k] : undefined, b ? b[k] : undefined));
 
 /** Empreinte de la structure d'un circuit (qui valide, à quel poste, dans quel ordre). */
@@ -479,16 +457,16 @@ export function canApproveLegacyDocument(u, doc, entities) {
  * - chaque étape qui change d'état doit être celle EN COURS, validée par son titulaire (identifiant de la session) ;
  * - la signature électronique est au nom du signataire, à la dernière étape seulement ;
  * - un document n'est « signé » / « approuvé » que si toutes ses étapes le sont ;
- * - bulletins de paie : réservés à la Direction / RH habilitée.
+ * - anciens documents RH (bulletins, contrats…) : plus aucune création ni modification.
  * @param {any} u @param {any} before @param {any} after @param {any[]} entities @param {any[]} [users] annuaire (contrôle du circuit)
  */
 export function canWriteDocumentChange(u, before, after, entities, users) {
   if (!u || !after) return false;
+  if (isRetiredHrDocument(after)) return false;
   if (u.role === 'dg') {
     const steps = (after.workflow && after.workflow.steps) || [];
     return !FINAL_DOC.includes(after.status) || !after.workflow || (steps.length > 0 && steps.every(s => s.status === 'approuve'));
   }
-  if (isPayslip(after) || isPayslip(before)) return isPayrollStaff(u);
   if (before && docChangedKeys(before, after).length === 0) return true;
 
   const stepsAfter = (after.workflow && after.workflow.steps) || [];

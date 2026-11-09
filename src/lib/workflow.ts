@@ -122,8 +122,7 @@ export const REFERENCE_PREFIX: Partial<Record<DocumentSubtype, string>> = {
   demande_achat: 'DA', note_frais: 'NF', facture_client: 'FAC', facture_fournisseur: 'FF', avoir: 'AV',
   bilan_comptable: 'BIL', devis: 'PRO', bon_commande_client: 'BC', bon_livraison: 'BL', bon_reception: 'BR',
   bon_entree_stock: 'BES', bon_sortie_stock: 'BSS', ordre_transfert: 'OTIH', contrat_commercial: 'CTC',
-  demande_conge: 'CONG', fiche_poste: 'FP', feuille_de_temps: 'FT', contrat_travail: 'CT',
-  declaration_sociale: 'DCL', bulletin_de_paie: 'BP',
+  demande_conge: 'CONG',
 };
 
 interface NewDocumentInput {
@@ -184,7 +183,6 @@ export function createDocument(input: NewDocumentInput): DocumentItem {
     targetEntityName: input.audience === 'public' ? undefined : (target?.name || (input.audience === 'perimetre' ? origin?.name : undefined)),
     targetUserId: input.targetUserId,
     targetUserName: input.targetUserName,
-    isConfidentialPayslip: input.subtype === 'bulletin_de_paie' || undefined,
     description: input.description.trim(),
     source: input.source,
     allowedRoles: allowed,

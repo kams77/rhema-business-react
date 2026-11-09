@@ -107,13 +107,7 @@ users = users.concat([
 ]);
 assert((await put(boss, 'users', users)).status === 200, 'DG : comptes créés');
 
-await put(boss, 'contracts', [
-  { id: 'c-a1', userId: 's-a1', baseSalary: 800 },
-  { id: 'c-rh', userId: 's-rh', baseSalary: 1500 },
-]);
-await put(boss, 'payroll.runs', [{ id: 'run-1', month: '2026-10' }]);
 await put(boss, 'documents', [
-  { id: 'd-contrat', title: 'Contrat Agent Un', subtype: 'contrat_travail', status: 'signe', authorId: 's-dg', targetEntityId: 'svc-a', allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'] },
   { id: 'd-conge', title: 'Congé maladie Agent Un', subtype: 'demande_conge', status: 'approuve', authorId: 's-a1', originEntityId: 'svc-a', targetEntityId: 'svc-a', allowedRoles: ['dg', 'chef_departement', 'directeur', 'chef_division', 'chef_service', 'agent'] },
   { id: 'd-note', title: 'Note de service A', subtype: 'note_service', status: 'signe', authorId: 's-dg', targetEntityId: 'svc-a', allowedRoles: [] },
 ]);
@@ -129,27 +123,18 @@ await login(rh, 'rh@sec.cd', 'Temp-Chef-RH-1', 'Ressources-Limete-2026');
 
 // --- Documents confidentiels et personnels ---------------------------------
 const seen = async c => (await c('GET', '/api/data/documents')).json.value.map(d => d.id).sort().join(',');
-assert(await seen(a2) === 'd-note', `collègue : ne voit ni le contrat ni le congé d'un autre agent (${await seen(a2)})`);
+assert(await seen(a2) === 'd-note', `collègue : ne voit pas le congé d'un autre agent (${await seen(a2)})`);
 assert(await seen(a1) === 'd-conge,d-note', `agent : voit son propre congé (${await seen(a1)})`);
-assert(await seen(chef) === 'd-conge,d-note', `chef de service : voit le congé de son agent, pas son contrat (${await seen(chef)})`);
-assert((await seen(rh)).includes('d-contrat'), 'RH : voit le contrat de travail');
+assert(await seen(chef) === 'd-conge,d-note', `chef de service : voit le congé de son agent (${await seen(chef)})`);
+assert(!(await seen(rh)).includes('d-conge'), 'congé : plus de lecteur « RH » hors hiérarchie (module RH retiré)');
 assert(!canSeeDocument({ id: 'z', role: 'directeur', directionId: 'dir-b' }, { subtype: 'bilan_comptable', status: 'signe', allowedRoles: ['directeur'] }, []), 'bilan comptable : pas diffusé aux directeurs hors circuit');
-
-// --- Paie : pas de conflit d'intérêts ------------------------------------------
-let contracts = (await rh('GET', '/api/data/contracts')).json.value;
-assert(contracts.length === 2, 'RH : voit les contrats');
-r = await put(rh, 'contracts', contracts.map(c => (c.userId === 's-rh' ? { ...c, baseSalary: 9999 } : c)));
-assert(r.status === 403, 'RH : ne peut pas augmenter son propre salaire');
-r = await put(rh, 'contracts', contracts.map(c => (c.userId === 's-a1' ? { ...c, baseSalary: 850 } : c)));
-assert(r.status === 200, 'RH : peut mettre à jour le contrat d\'un agent');
-r = await put(rh, 'contracts', contracts.filter(c => c.userId !== 's-rh'));
-assert(r.status === 403, 'RH : ne peut pas supprimer son propre contrat');
 
 // --- Versions : pas de fuite sur l'activité des données cachées ----------------
 r = await a2('GET', '/api/data/versions');
-assert(r.status === 200 && !('payroll.runs' in r.json.versions) && !('auditLogs' in r.json.versions), 'agent : activité de la paie et du journal non révélée');
+assert(r.status === 200 && !('auditLogs' in r.json.versions) && !Object.keys(r.json.versions).some(k => k.startsWith('pointage.')),
+  'agent : activité du journal et des pointages non révélée');
 r = await a2('GET', '/api/data');
-assert(!('payroll.runs' in r.json.versions), 'agent : version de la paie absente du chargement initial');
+assert(!Object.keys(r.json.values).some(k => k.startsWith('pointage.')), 'agent : pointages absents du chargement initial');
 
 // --- Convocation disciplinaire : invisible des collègues -----------------------
 users = (await boss('GET', '/api/data/users')).json.value;
@@ -157,7 +142,7 @@ assert((await put(boss, 'users', users.map(u => (u.id === 's-a1' ? { ...u, statu
 const statusSeenBy = async c => (await c('GET', '/api/data/users')).json.value.find(u => u.id === 's-a1').status;
 assert(await statusSeenBy(a2) === 'actif', 'collègue : ne voit pas la convocation');
 assert(await statusSeenBy(chef) === 'convoque', 'chef de service : voit la convocation de son agent');
-assert(await statusSeenBy(rh) === 'convoque', 'RH : voit la convocation');
+assert(await statusSeenBy(rh) === 'actif', 'chef d\'un autre service : ne voit pas la convocation');
 
 // --- Tâches : personne ne valide son propre travail -----------------------------
 const task = extra => ({
@@ -227,5 +212,44 @@ assert(r.status === 200 && r.json.app === 'erp-workflow', 'sauvegarde au nom ERP
 r = await boss('POST', '/api/data/import', { ...r.json, app: 'rhema-business' });
 assert(r.status === 200, 'ancienne sauvegarde (rhema-business) toujours restaurable');
 
+// --- Ancienne sauvegarde avec données RH / paie : rien n'est restauré -----------------
+await login(boss, 'dg@sec.cd', dgUser.password, 'Kinshasa-Securite-2027');
+r = await boss('GET', '/api/data/export');
+const oldBackup = { ...r.json, data: { ...r.json.data,
+  contracts: [{ id: 'k', userId: 's-a1', baseSalary: 800, bankAccount: 'RIB-123' }],
+  'payroll.runs': [{ id: 'run', month: '2026-09' }],
+  documents: [...(r.json.data.documents || []), { id: 'd-bp', title: 'Bulletin', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 's-a1' }],
+} };
+assert(!('contracts' in r.json.data) && !Object.keys(r.json.data).some(k => k.startsWith('payroll.')), 'sauvegarde : aucune donnée de paie exportée');
+r = await boss('POST', '/api/data/import', oldBackup);
+assert(r.status === 200, 'ancienne sauvegarde avec paie : restauration acceptée');
+assert(!(await db.getData('contracts')) && !(await db.getData('payroll.runs')), 'ancienne sauvegarde : contrats et paie non restaurés');
+assert(!JSON.parse((await db.getData('documents')).value).some(d => d.id === 'd-bp'), 'ancienne sauvegarde : bulletins de paie non restaurés');
+
 server.close();
+
+// --- Base existante avec l'ancien module RH : effacement au démarrage --------------------
+const oldDb = await createMemoryDb();
+await oldDb.migrate();
+await oldDb.putData('contracts', JSON.stringify([{ id: 'k1', userId: 'u1', baseSalary: 900 }]), 0, null);
+await oldDb.putData('payrollConfigs', JSON.stringify({ o: { brackets: [] } }), 0, null);
+await oldDb.putData('payroll.advances', JSON.stringify([{ id: 'av', userId: 'u1', amount: 100 }]), 0, null);
+await oldDb.putData('documents', JSON.stringify([
+  { id: 'd-ok', title: 'Note', subtype: 'note_service' },
+  { id: 'd-bp', title: 'Bulletin', subtype: 'bulletin_de_paie', isConfidentialPayslip: true },
+  { id: 'd-ct', title: 'Contrat', subtype: 'contrat_travail' },
+  { id: 'd-cg', title: 'Congé', subtype: 'demande_conge' },
+]), 0, null);
+await oldDb.putData('logistics.hubs', JSON.stringify([{ id: 'h1' }]), 0, null);
+const oldServer = http.createServer(createApp({ db: oldDb, config: { setupCode: 'code-securite', distDir: '' } }));
+await new Promise(res => oldServer.listen(0, '127.0.0.1', res));
+await fetch(`http://127.0.0.1:${oldServer.address().port}/api/health`);
+const keysLeft = (await oldDb.getAllData()).map(d => d.key);
+assert(!keysLeft.includes('contracts') && !keysLeft.includes('payrollConfigs') && !keysLeft.includes('payroll.advances') && keysLeft.includes('logistics.hubs'),
+  `démarrage : données de paie effacées, le reste conservé (${keysLeft})`);
+const docsLeft = JSON.parse((await oldDb.getData('documents')).value).map(d => d.id).join(',');
+assert(docsLeft === 'd-ok,d-cg', `démarrage : bulletins et contrats de travail effacés, notes et congés conservés (${docsLeft})`);
+assert((await oldDb.listAuditLogs(10)).some(e => e.action === 'Retrait du module RH'), 'démarrage : effacement tracé dans le journal d\'audit');
+oldServer.close();
+
 console.log(`\n${passed} vérifications de sécurité réussies.`);

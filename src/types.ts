@@ -69,8 +69,6 @@ export interface User {
   phone?: string;
   canCreateSubAgents: boolean;
   canApproveServiceDocuments?: boolean;
-  /** Accès à la paie accordé (true) ou retiré (false) explicitement par le DG. */
-  canManagePayroll?: boolean;
   /** Blocage temporaire (comptes DG) : horodatage de fin, en millisecondes. */
   lockedUntil?: number;
 }
@@ -135,6 +133,7 @@ export type DocumentCategory =
   | 'administratif_general'
   | 'financier_comptable'
   | 'chaine_logistique_commerciale'
+  /** Congés et absences (seul type de document du personnel conservé). */
   | 'ressources_humaines';
 
 /** Types de documents : leur circuit et leur règle de montant sont définis dans shared/workflow.mjs. */
@@ -144,8 +143,7 @@ export type DocumentSubtype =
   | 'facture_client' | 'facture_fournisseur' | 'avoir' | 'bilan_comptable'
   | 'devis' | 'bon_commande_client' | 'bon_livraison' | 'bon_reception'
   | 'bon_entree_stock' | 'bon_sortie_stock' | 'ordre_transfert' | 'contrat_commercial'
-  | 'demande_conge' | 'contrat_travail' | 'bulletin_de_paie' | 'fiche_poste' | 'feuille_de_temps'
-  | 'declaration_sociale';
+  | 'demande_conge';
 
 /** Étape d'un circuit de validation (document ou tâche). */
 export interface ApprovalStep {
@@ -209,14 +207,11 @@ export interface DocumentItem {
   createdAt: string;
   status: 'brouillon' | 'en_revue' | 'approuve' | 'signe' | 'rejete';
   size: string;
-  /** Bulletin de paie : données complètes calculées par le moteur de paie (pour réimpression). */
-  payslipData?: import('./utils/exportUtils').PayslipExportData;
   fileType: string;
   targetEntityId?: string;
   targetEntityName?: string;
   targetUserId?: string;
   targetUserName?: string;
-  isConfidentialPayslip?: boolean;
   amount?: number;
   currency?: string;
   electronicSignature?: {
@@ -342,7 +337,7 @@ export type NavigationTab =
   | 'security' 
   | 'agents' 
   | 'bulk_import'
-  | 'attendance_dispatch'
+  | 'pointage'
   | 'audit';
 
 export interface SecurityAlert {
@@ -362,281 +357,27 @@ export interface SecurityAlert {
 }
 
 // -------------------------------------------------------------
-// MODULE PAIE & RH RDC AVANCÉ (CONFORME RDC CDF / USD & CAHIER DE CHARGES)
+// POINTAGE AUTOMATIQUE (présence des agents)
 // -------------------------------------------------------------
 
-export interface EmployeeContract {
-  id: string;
-  userId: string;
-  employeeCode: string;
-  matricule: string;
-  contractType: 'CDI' | 'CDD' | 'Stage' | 'Consultant' | 'Journalier';
-  startDate: string;
-  endDate?: string;
-  baseSalary: number;
-  salaryCurrency: 'USD' | 'CDF';
-  categoryPro: string; // Ex: Cadre Dirigeant, Agent de Maîtrise, Exécution
-  echelon: string;
-  cnssNumber: string;
-  inppRegistered: boolean;
-  onemRegistered: boolean;
-  bankName: string;
-  bankAccountNumber?: string;
-  mobileMoneyNumber?: string;
-  paymentMode: 'virement' | 'mobile_money' | 'cheque' | 'especes';
-  dependentsCount: number;
-  maritalStatus: 'celibataire' | 'marie' | 'divorce' | 'veuf';
-  active: boolean;
-}
-
-export interface LeaveRequest {
+/**
+ * Journée de présence d'un agent. Les heures sont posées par le serveur (horloge du serveur) :
+ * arrivée à la première connexion du jour, départ à la déconnexion ou, à défaut,
+ * à la dernière activité constatée (départ « automatique »).
+ */
+export interface AttendanceDay {
   id: string;
   userId: string;
   userName: string;
-  type: 'conge_annuel' | 'maladie' | 'maternite' | 'circonstance' | 'sans_solde';
-  startDate: string;
-  endDate: string;
-  durationDays: number;
-  reason: string;
-  status: 'en_attente' | 'approuve' | 'rejete';
-  approvedBy?: string;
-  approvedAt?: string;
-  certificateUrl?: string;
-}
-
-export interface SalaryAdvanceRequest {
-  id: string;
-  userId: string;
-  userName: string;
-  amount: number;
-  currency: 'USD' | 'CDF';
-  requestDate: string;
-  repaymentMonth: string; // Ex: 2026-10
-  reason: string;
-  status: 'en_attente' | 'valide_rh' | 'paye' | 'rejete';
-  deductedFromPayroll: boolean;
-}
-
-export interface OvertimeRecord {
-  id: string;
-  userId: string;
-  userName: string;
-  month: string;
-  dayHours: number;
-  nightHours: number;
-  holidayHours: number;
-  hourlyRate?: number;
-  calculatedAmountUSD?: number;
-  calculatedAmountCDF?: number;
-  currency?: 'USD' | 'CDF';
-  status: 'en_attente' | 'approuve' | 'rejete';
-  reason?: string;
-}
-
-export interface DisciplinaryAction {
-  id: string;
-  userId: string;
-  userName: string;
-  type: 'avertissement' | 'blame' | 'mise_a_pied' | 'licenciement';
-  title: string;
+  /** Jour local (AAAA-MM-JJ, fuseau du serveur). */
   date: string;
-  reason: string;
-  status: 'en_cours' | 'notifie' | 'clos';
-  issuedBy?: string;
-  legalArticleRef?: string;
-}
-
-export interface PayrollRunPeriod {
-  id: string;
-  month: string; // Ex: 2026-09
-  title: string; // Ex: Paie Septembre 2026
-  currency: 'USD' | 'CDF';
-  exchangeRateUSD_CDF: number; // Taux de change officiel BCC (ex: 2850 CDF = 1 USD)
-  status: 'brouillon' | 'parametre' | 'en_validation' | 'valide_drh' | 'virement_confirme' | 'cloture' | 'archive';
-  totalGross: number;
-  totalNet: number;
-  totalEmployerCharges: number;
-  totalEmployees: number;
-  validatedByDRH?: string;
-  validatedAtDRH?: string;
-  bankTransferConfirmedBy?: string;
-  bankTransferReference?: string;
-  bankTransferConfirmedAt?: string;
-  bankName?: string;
-  payslipsAutoDispatched?: boolean;
-  payslipsDispatchedAt?: string;
-  dispatchedCount?: number;
-  validatedByDG?: string;
-  validatedAt?: string;
-  closureHash?: string;
-  hash?: string;
-  /** Prime exceptionnelle versée à tous pour la période (devise de la période). */
-  extraBonus?: number;
-  /** Qui a réellement validé / confirmé chaque étape (identifiant du compte). */
-  validatedByDRHUserId?: string;
-  bankTransferConfirmedByUserId?: string;
-}
-
-export interface PayrollAllowance {
-  id: string;
-  name: string;
-  code: string;
-  type: 'fixe' | 'pourcentage';
-  defaultValue: number;
-  isTaxable: boolean;
-  isSubjectToSocialContributions: boolean;
-  isActive: boolean;
-  category: 'transport' | 'logement' | 'responsabilite' | 'repas' | 'performance' | 'autre';
-  description?: string;
-}
-
-export interface PayrollSocialContribution {
-  id: string;
-  name: string;
-  code: string;
-  employeeRate: number;
-  employerRate: number;
-  ceilingAmount?: number;
-  isActive: boolean;
-  description?: string;
-}
-
-export interface PayrollTaxBracket {
-  id: string;
-  min: number;
-  max: number | null;
-  rate: number;
-}
-
-export interface PayrollSystemConfig {
-  id: string;
-  organizationId: string;
-  isStandardTemplate: boolean;
-  systemName: string;
-  currency: 'USD' | 'CDF';
-  standardMonthlyHours: number;
-  overtimeRates: {
-    firstBracketRate: number;
-    secondBracketRate: number;
-    weekendHolidayRate: number;
-  };
-  payFrequency: 'mensuelle' | 'bimensuelle' | 'hebdomadaire';
-  allowances: PayrollAllowance[];
-  socialContributions: PayrollSocialContribution[];
-  taxConfig: {
-    taxName: string;
-    type: 'progressif' | 'fixe';
-    brackets: PayrollTaxBracket[];
-    flatRate?: number;
-    creditPerDependentChild: number;
-    localDevelopmentTax: number;
-  };
-  seniorityBonusPerTwoYearsPercent: number;
-  lastModifiedBy?: string;
-  lastModifiedAt?: string;
-  notes?: string;
-}
-
-export interface PayslipRecord {
-  id: string;
-  payrollRunId: string;
-  userId: string;
-  employeeName: string;
-  matricule: string;
-  department: string;
-  period: string; // 09/2026
-  baseSalary: number;
-  currency: 'USD' | 'CDF';
-  exchangeRate: number;
-  seniorityBonus: number;
-  overtimeHours: number;
-  overtimePay: number;
-  allowances: { name: string; amount: number; isTaxable: boolean }[];
-  grossSalary: number;
-  
-  // Cotisations RDC
-  cnssEmployee: number; // 5% CNSS
-  iprTax: number; // IPR (Impôt Professionnel sur les Rémunérations)
-  salaryAdvanceDeduction: number;
-  otherDeductions: number;
-  totalDeductions: number;
-  
-  netToPay: number;
-  
-  // Charges patronales RDC
-  cnssEmployer: number; // 13% CNSS (9% pensions + 4% prestations/risques)
-  inppEmployer: number; // INPP (3% employeur)
-  onemEmployer: number; // ONEM (0.2%)
-  totalEmployerCost: number;
-  
-  status: 'emis' | 'signe_electronique' | 'paye';
-  signatureHash?: string;
-  signedAt?: string;
-}
-
-// -------------------------------------------------------------
-// MODULE POINTAGE & HORODATAGE 28 JOURS OUVRABLES RDC
-// -------------------------------------------------------------
-
-export interface AttendanceRecord {
-  id: string;
-  userId: string;
-  userName: string;
-  matricule: string;
-  date: string;
-  clockIn: string;
-  clockOut?: string;
-  effectiveHours: number;
-  overtimeDayHours: number;
-  overtimeNightHours: number;
-  overtimeHolidayHours: number;
-  ipAddress: string;
-  status: 'present' | 'retard' | 'mission' | 'conge' | 'absent';
-  entityId: string;
-  entityName: string;
-  isCertified: boolean;
-}
-
-export interface Attendance28DaysCycleReport {
-  id: string;
-  cycleNumber: number;
-  monthPeriod: string; // Ex: 09/2026
-  workingDaysCompleted: number; // Ex: 28 jours ouvrables
-  targetWorkingDays: number; // 28 jours ouvrables
-  entityId: string;
-  entityName: string;
-  entityLevel: EntityLevel;
-  managerId?: string;
-  managerName: string;
-  managerEmail: string;
-  managerRole: UserRole;
-  totalAgents: number;
-  totalNormalHours: number;
-  totalOvertimeHours: number;
-  overtimeDayHours: number;
-  overtimeNightHours: number;
-  overtimeHolidayHours: number;
-  autoDispatchedAt?: string;
-  isAutoDispatched: boolean;
-  status: 'en_cours' | 'cycle_28j_atteint' | 'transmis_responsable' | 'valide_drh';
-  agentSummaries: {
-    userId: string;
-    userName: string;
-    matricule: string;
-    daysWorked: number;
-    normalHours: number;
-    overtimeHours: number;
-    overtimeDay: number;
-    overtimeNight: number;
-    overtimeHoliday: number;
-    estimatedOvertimeBonusUSD: number;
-  }[];
-  sha256Hash: string;
-  signatureCert?: {
-    signedBy: string;
-    signedAt: string;
-    role: string;
-  };
+  /** Horodatages ISO (UTC). */
+  arrivalAt: string;
+  departureAt?: string;
+  /** Départ déduit de la dernière activité (pas de déconnexion ce jour-là). */
+  departureAuto?: boolean;
+  breaks: { start: string; end?: string }[];
+  lastSeenAt: string;
 }
 
 // -------------------------------------------------------------

@@ -8,7 +8,6 @@ import { OrganizationOnboardingWizard } from './OrganizationOnboardingWizard';
 import { api, ApiError } from '../lib/api';
 import type { PublicStatus } from '../lib/api';
 import { remoteStore } from '../lib/remoteStore';
-import { createStandardPayrollSystem } from '../data/standardPayroll';
 import type { HierarchicalEntity, Organization, User } from '../types';
 import { APP_NAME } from '../config';
 import { isBackupAppId } from '../lib/storage';
@@ -191,7 +190,6 @@ const SetupScreen: React.FC<{ codeRequired: boolean; onDone: (message: string) =
         organizations: [d.organization],
         currentOrg: d.organization,
         entities: d.entities,
-        payrollConfigs: { [d.organization.id]: createStandardPayrollSystem(d.organization.id, d.organization.name) },
       },
       `L'organisation « ${d.organization.name} » est créée sur le serveur. Connectez-vous avec le compte DG ; chaque collaborateur choisira son mot de passe à sa première connexion.`
     );

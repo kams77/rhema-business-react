@@ -270,6 +270,10 @@ export async function createMysqlDb(config) {
         return { ok: true, version: currentVersion + 1 };
       });
     },
+    /** Efface une donnée (retrait d'un module). */
+    async deleteData(key) {
+      await pool.query('DELETE FROM app_data WHERE data_key = ?', [key]);
+    },
     /** Incrémente un compteur interne (ex. version de l'annuaire). */
     async bump(key) {
       await putDataSql(pool, key, '""', null);

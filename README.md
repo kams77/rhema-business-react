@@ -1,7 +1,7 @@
 # ERP-WORKFLOW — Portail Entreprise & Gestion Hiérarchique
 
 Application web de gestion d'entreprise pour la RD Congo : organigramme hiérarchique,
-circuits documentaires, paie conforme (USD / CDF), logistique VSAT & solaire,
+circuits documentaires, pointage automatique des agents, logistique VSAT & solaire,
 habilitations par rôle (RBAC), journal d'audit et signature électronique.
 
 Construite avec **React 19**, **TypeScript**, **Vite 6** et **Tailwind CSS 4**.
@@ -32,12 +32,13 @@ TypeScript, compilation et image Docker.
 
 | Module                 | Contenu                                                                  |
 | ---------------------- | ------------------------------------------------------------------------ |
-| Espace employé         | Tableau de bord personnel, tâches, documents, contrats                   |
+| Espace employé         | Journée, tâches, documents, pointage et demandes de congé                |
 | Hiérarchie             | Départements → directions → divisions → services, délégations de visa    |
 | Invitations            | Accès inter-entités par matricule et clé à 10 chiffres                   |
 | Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel         |
 | Logistique             | Bons de commande, livraisons, factures, hubs provinciaux, stocks, S/N    |
-| Import en masse        | Employés, contrats et historiques de paie par CSV                        |
+| Import CSV             | Comptes des collaborateurs (nom, poste, entité, email, matricule)        |
+| Pointage automatique   | Arrivée à la connexion, départ à la déconnexion, registre par périmètre  |
 | Sécurité & audit       | Alertes d'intrusion, verrouillage, journal horodaté exportable (PDF/CSV) |
 
 ## Circuit de validation (documents, tâches, logistique)
@@ -47,7 +48,7 @@ Règles communes à l'application et au serveur : `shared/workflow.mjs` (tests :
 - **Chaque type de document a son circuit** et sa règle de montant (*aucun*, *facultatif*, *obligatoire*).
   Exemples : note de service → chef de service → directeur ; demande d'achat → hiérarchie → Finance
   (+ DG au-delà de 5 000 USD) ; bon de commande → chef de service → directeur → Finance (+ DG au-delà
-  de 10 000 USD) ; demande de congé → hiérarchie → RH.
+  de 10 000 USD) ; demande de congé → chef de service → chef de division → directeur.
 - Le circuit part du **poste de l'émetteur** ; un poste vacant remonte au responsable au-dessus ;
   personne ne vise son propre document ; la DG signe seule ses documents.
 - Les visas se donnent **un par un, dans l'ordre** ; la dernière étape est la signature électronique ;

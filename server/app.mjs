@@ -34,7 +34,7 @@ import {
   canWriteEntity,
   canWriteInvitation,
   canWriteInvitationNotification,
-  isPayrollStaff,
+  isRetiredHrDocument,
   isSecurityStaff,
 } from '../shared/access.mjs';
 import {
@@ -45,6 +45,33 @@ import {
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
 import { sanitizeOrgData } from '../shared/branding.mjs';
+import {
+  ATTENDANCE_EVENTS,
+  DEFAULT_TIME_ZONE,
+  applyAttendanceEvent,
+  attendanceKey,
+  canSeeAttendanceOf,
+  localDay,
+  monthKeys,
+  previousMonth,
+  validRange,
+} from '../shared/attendance.mjs';
+
+/**
+ * Données de l'ancien module RH / paie (supprimé) : contrats, salaires, bulletins, congés de paie,
+ * avances, heures, sanctions, barèmes. Elles sont effacées au démarrage, refusées par l'API et
+ * ignorées à la restauration d'une ancienne sauvegarde.
+ */
+export const RETIRED_HR_KEY_RE = /^(contracts|payrollConfigs|payroll\..+)$/;
+const isRetiredKey = key => RETIRED_HR_KEY_RE.test(key);
+/** Pointages : lus et écrits uniquement par les routes /api/pointage (horloge du serveur). */
+const isAttendanceKey = key => key.startsWith('pointage.');
+
+/** Retire d'une donnée ce qui relève de l'ancien module RH (documents de paie, contrats…). */
+function stripRetiredHr(key, value) {
+  if (key === 'documents' && Array.isArray(value)) return value.filter(d => !isRetiredHrDocument(d));
+  return value;
+}
 
 const COOKIE = 'rhema_session';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -404,8 +431,109 @@ export function createApp({ db, config }) {
     const s = await loadSession(req);
     if (!s) throw new HttpError(401, 'Session expirée ou absente. Reconnectez-vous.');
     if (s.pending && !allowPending) throw new HttpError(403, 'Vous devez d\'abord choisir un nouveau mot de passe.');
+    // Pointage automatique : toute activité dans l'application compte comme présence.
+    if (!s.pending) await recordAttendance(s.user, 'activite').catch(err => console.error('[pointage]', err));
     return s;
   }
+
+  // --- pointage automatique -------------------------------------------------
+  // Arrivée à la première activité du jour, départ à la déconnexion (ou à la dernière activité),
+  // pauses déclarées par l'agent. Horloge du serveur ; un mois de pointages par clé « pointage.AAAA-MM ».
+  const timeZone = config.timeZone || process.env.TZ || DEFAULT_TIME_ZONE;
+  const lastActivity = new Map(); // userId -> { day, at } : une écriture par minute au plus
+  let attendanceQueue = Promise.resolve();
+
+  /** Met à jour un mois de pointages, l'un après l'autre (pas d'écritures concurrentes). */
+  function updateAttendanceMonth(key, userId, change) {
+    const run = attendanceQueue.then(async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const current = await db.getData(key);
+        const list = current ? JSON.parse(current.value) : [];
+        const r = change(Array.isArray(list) ? list : []);
+        if (!r.changed) return r;
+        const put = await db.putData(key, JSON.stringify(r.days), current?.version ?? 0, userId);
+        if (put.ok) return r;
+      }
+      throw new Error(`Pointage : écriture impossible (${key}).`);
+    });
+    attendanceQueue = run.catch(() => {});
+    return run;
+  }
+
+  /** Enregistre un événement de pointage pour l'utilisateur (heure du serveur). */
+  async function recordAttendance(user, type) {
+    const now = new Date();
+    const today = localDay(now, timeZone);
+    if (type === 'activite') {
+      const last = lastActivity.get(user.id);
+      if (last && last.day === today && now.getTime() - last.at < 60_000) return null;
+      lastActivity.set(user.id, { day: today, at: now.getTime() });
+    } else if (type === 'depart') {
+      // Le prochain retour (même dans la minute) doit rouvrir la journée.
+      lastActivity.delete(user.id);
+    }
+    const who = { id: user.id, name: user.name };
+    const nowIso = now.toISOString();
+    // Début de mois : une journée du mois précédent peut être restée ouverte.
+    if (today.slice(8) <= '07') {
+      await updateAttendanceMonth(`pointage.${previousMonth(today)}`, user.id, days => {
+        const mine = days.filter(d => d.userId === user.id && !d.departureAt);
+        if (!mine.length) return { days, changed: false, record: null };
+        const r = applyAttendanceEvent(days, who, 'depart', nowIso, today);
+        return { ...r, days: r.days.filter(d => d.date !== today) };
+      });
+    }
+    const r = await updateAttendanceMonth(attendanceKey(today), user.id, days => applyAttendanceEvent(days, who, type, nowIso, today));
+    return r.record;
+  }
+
+  /** Pointages visibles par un utilisateur sur une plage de jours. */
+  async function readAttendance(session, from, to) {
+    const me = accessUser(session.user);
+    const entities = await loadEntities();
+    const people = new Map((await db.listUsers()).map(u => [u.id, toClientUser(u)]));
+    const days = [];
+    for (const key of monthKeys(from, to)) {
+      const d = await db.getData(key);
+      const list = d ? JSON.parse(d.value) : [];
+      for (const day of Array.isArray(list) ? list : []) {
+        if (day.date < from || day.date > to) continue;
+        const target = people.get(day.userId) || { id: day.userId, role: 'agent' };
+        if (canSeeAttendanceOf(me, target, entities)) days.push(day);
+      }
+    }
+    return days;
+  }
+
+  // --- retrait du module RH : effacement unique des anciennes données -------
+  const hrRetirement = (async () => {
+    let removedKeys = 0;
+    for (const row of await db.getAllData()) {
+      if (isRetiredKey(row.key)) {
+        await db.deleteData(row.key);
+        removedKeys++;
+      }
+    }
+    let removedDocs = 0;
+    const docs = await db.getData('documents');
+    if (docs) {
+      const list = JSON.parse(docs.value);
+      if (Array.isArray(list)) {
+        const kept = list.filter(d => !isRetiredHrDocument(d));
+        removedDocs = list.length - kept.length;
+        if (removedDocs > 0) await db.putData('documents', JSON.stringify(kept), docs.version, null);
+      }
+    }
+    if (removedKeys || removedDocs) {
+      console.log(`[erp-workflow] Module RH retiré : ${removedKeys} donnée(s) de paie et ${removedDocs} document(s) RH effacés.`);
+      await audit(
+        { id: 'system', name: 'Système', role: 'dg', roleTitle: 'Système' },
+        'Retrait du module RH',
+        'admin',
+        `Effacement des données de paie (${removedKeys} module(s) : contrats, salaires, barèmes…) et de ${removedDocs} document(s) RH (bulletins, contrats de travail, déclarations, fiches de poste, feuilles de temps).`,
+      );
+    }
+  })().catch(err => console.error('[erp-workflow] Retrait du module RH :', err));
 
   const requireDG = s => {
     if (s.user.role !== 'dg') throw new HttpError(403, 'Action réservée à la Direction Générale.');
@@ -427,10 +555,6 @@ export function createApp({ db, config }) {
   // --- règles d'accès par donnée ---------------------------------------------
   // Les mêmes règles que les écrans (shared/access.mjs), appliquées par le serveur :
   // ce que l'écran cache, l'API ne le renvoie pas, et ce qu'il interdit, l'API le refuse.
-
-  /** Données de paie : réservées à la Direction / RH ; un salarié ne voit que ses propres lignes. */
-  const PAYROLL_OWN_ROWS = new Set(['contracts', 'payroll.contracts', 'payroll.leaves', 'payroll.advances', 'payroll.overtime', 'payroll.disciplinary']);
-  const PAYROLL_STAFF_ONLY = new Set(['payroll.runs', 'payroll.exchangeRate', 'payrollConfigs']);
 
   /** Utilisateur au format des règles d'accès (champs du profil inclus). */
   const accessUser = u => toClientUser(u);
@@ -454,24 +578,8 @@ export function createApp({ db, config }) {
   function policyFor(key, user, entities, users) {
     const u = accessUser(user);
     const own = row => row && row.userId === u.id;
-    if (PAYROLL_OWN_ROWS.has(key)) {
-      if (!isPayrollStaff(u)) return { read: own, write: false };
-      if (u.role === 'dg') return { read: 'all', write: true };
-      // Conflit d'intérêts : un gestionnaire de paie ne modifie ni son propre contrat (salaire, banque),
-      // ni ses propres congés, avances, heures ou sanctions. Ses demandes restent « en attente »
-      // jusqu'à leur traitement par un collègue ou la Direction.
-      const selfOk = (row, before) => {
-        if (key === 'contracts' || key === 'payroll.contracts' || key === 'payroll.disciplinary') return false;
-        const pending = r => !r || !('status' in r) || r.status === 'en_attente';
-        return pending(row) && pending(before);
-      };
-      const ownRow = r => !!r && r.userId === u.id;
-      return {
-        read: () => true,
-        write: (row, before) => (ownRow(row) || ownRow(before) ? selfOk(row, before) : true),
-      };
-    }
-    if (PAYROLL_STAFF_ONLY.has(key)) return isPayrollStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
+    // Ancien module RH et pointages : jamais par l'API générique.
+    if (isRetiredKey(key) || isAttendanceKey(key)) return { read: 'none', write: false };
     if (key === 'securityAlerts') return isSecurityStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
     if (key === 'entities') {
@@ -651,17 +759,8 @@ export function createApp({ db, config }) {
         if (!canManageAccount(me, toClientUser(next), entities)) {
           throw new HttpError(403, `Vous ne pouvez pas attribuer ce rôle ou ce périmètre à ${next.name}.`);
         }
-        // Droits sensibles : réservés au DG.
-        if ((next.profile?.canManagePayroll ?? null) !== (prev?.profile?.canManagePayroll ?? null)) {
-          throw new HttpError(403, 'Seule la Direction Générale peut attribuer l\'accès à la paie.');
-        }
-        // Accès indirect à la paie (intitulé « RH », rattachement DAF / RH / Finance) : même règle,
-        // sauf pour un responsable qui gère lui-même la paie.
         const before = prev ? accessUser(prev) : null;
         const after = toClientUser(next);
-        if (isPayrollStaff(after) && !(before && isPayrollStaff(before)) && !isPayrollStaff(me)) {
-          throw new HttpError(403, `Ce poste donne accès aux salaires : seule la Direction Générale peut l'attribuer à ${next.name}.`);
-        }
         if (canAccessLogistics(after) && !(before && canAccessLogistics(before)) && !canAccessLogistics(me)) {
           throw new HttpError(403, `Ce poste donne accès au module logistique : demandez à la Direction ou à la logistique de l'attribuer à ${next.name}.`);
         }
@@ -719,8 +818,10 @@ export function createApp({ db, config }) {
     for (const [k, v] of Object.entries(data)) {
       if (k === 'users' || k === 'auditLogs' || k === 'session') continue;
       if (!DATA_KEY_RE.test(k)) throw new HttpError(400, `Nom de donnée invalide : ${k}`);
+      // Ancienne sauvegarde : les données du module RH supprimé ne sont pas restaurées.
+      if (isRetiredKey(k)) continue;
       // Logo, en-tête et pied de page : images intégrées PNG/JPEG uniquement.
-      const json = JSON.stringify(sanitizeOrgData(k, v));
+      const json = JSON.stringify(stripRetiredHr(k, sanitizeOrgData(k, v)));
       if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, `Donnée « ${k} » trop volumineuse.`);
       entries.push([k, json]);
     }
@@ -921,6 +1022,8 @@ export function createApp({ db, config }) {
     if (p === '/api/auth/logout' && method === 'POST') {
       const s = await loadSession(req);
       if (s) {
+        // Pointage : la déconnexion marque le départ.
+        if (!s.pending) await recordAttendance(s.user, 'depart').catch(err => console.error('[pointage]', err));
         await db.deleteSession(s.tokenHash);
         await audit(s.user, 'Clôture de Session (Déconnexion)', 'auth', `Session de ${s.user.name} fermée.`);
       }
@@ -1001,11 +1104,32 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, r);
     }
 
+    // ----- Pointage automatique -----
+    if (p === '/api/pointage' && method === 'GET') {
+      const s = await requireSession(req);
+      const today = localDay(new Date(), timeZone);
+      const from = url.searchParams.get('from') || today;
+      const to = url.searchParams.get('to') || today;
+      if (!validRange(from, to)) throw new HttpError(400, 'Période invalide (93 jours au plus, dates AAAA-MM-JJ).');
+      return sendJson(req, res, 200, { today, now: new Date().toISOString(), days: await readAttendance(s, from, to) });
+    }
+
+    if (p === '/api/pointage' && method === 'POST') {
+      const s = await requireSession(req);
+      const body = await readJson(req);
+      // L'agent ne déclare que ses pauses ; arrivée et départ sont automatiques.
+      if (!['pause', 'reprise'].includes(body?.type) || !ATTENDANCE_EVENTS.includes(body.type)) {
+        throw new HttpError(400, 'Événement de pointage invalide (pause ou reprise).');
+      }
+      const record = await recordAttendance(s.user, body.type);
+      return sendJson(req, res, 200, { today: localDay(new Date(), timeZone), now: new Date().toISOString(), day: record });
+    }
+
     if (p === '/api/data/export' && method === 'GET') {
       const s = await requireSession(req);
       requireDG(s);
       const data = {};
-      for (const row of await db.getAllData()) if (!row.key.startsWith('_')) data[row.key] = JSON.parse(row.value);
+      for (const row of await db.getAllData()) if (!row.key.startsWith('_') && !isRetiredKey(row.key)) data[row.key] = JSON.parse(row.value);
       data.users = (await db.listUsers()).map(u => ({ ...toClientUser(u), passwordHash: u.passwordHash }));
       data.auditLogs = await db.listAuditLogs(AUDIT_LIMIT);
       await audit(s.user, 'Export de sauvegarde', 'admin', 'Téléchargement d\'une sauvegarde complète depuis le serveur.');
@@ -1039,6 +1163,7 @@ export function createApp({ db, config }) {
       const key = safeDecode(m[1]);
       if (!DATA_KEY_RE.test(key)) throw new HttpError(400, 'Nom de donnée invalide.');
       const s = await requireSession(req);
+      if (isRetiredKey(key)) throw new HttpError(410, 'Le module RH / paie a été retiré de l\'application.');
 
       if (method === 'GET') return sendJson(req, res, 200, await readKey(key, s));
 
@@ -1099,7 +1224,7 @@ export function createApp({ db, config }) {
         } else if (!policy.write) {
           throw new HttpError(403, 'Vous n\'avez pas le droit de modifier ces données.');
         }
-        value = sanitizeOrgData(key, value);
+        value = stripRetiredHr(key, sanitizeOrgData(key, value));
         const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
         const r = await db.putData(key, json, expected, s.user.id);
@@ -1160,6 +1285,7 @@ export function createApp({ db, config }) {
         if (req.method !== 'GET' && req.method !== 'HEAD' && site && site !== 'same-origin' && site !== 'none') {
           throw new HttpError(403, 'Requête refusée : elle ne provient pas de l\'application.');
         }
+        await hrRetirement;
         return await handleApi(req, res, url);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée.');

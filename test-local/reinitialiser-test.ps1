@@ -2,7 +2,7 @@
 Set-Location -LiteralPath $PSScriptRoot
 Write-Host ''
 Write-Host 'ATTENTION : cette opération efface définitivement la base MySQL de test' -ForegroundColor Yellow
-Write-Host '(organisation, agents, documents, paie...). Exportez d''abord une sauvegarde si besoin.' -ForegroundColor Yellow
+Write-Host '(organisation, agents, documents, pointages...). Exportez d''abord une sauvegarde si besoin.' -ForegroundColor Yellow
 $rep = Read-Host 'Tapez EFFACER pour confirmer'
 if ($rep -ne 'EFFACER') { Write-Host 'Annulé : rien n''a été effacé.'; Read-Host 'Appuyez sur Entrée pour fermer' | Out-Null; exit 0 }
 docker compose down -v

@@ -73,7 +73,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [userToUpdate, setUserToUpdate] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'logistics' | 'security'>('all');
+  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'operations' | 'logistics' | 'security'>('all');
 
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,7 +205,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
     if (selectedDemoCategory === 'all') return true;
     if (selectedDemoCategory === 'dg') return u.role === 'dg';
     if (selectedDemoCategory === 'finance') return u.directionId === 'dir-finance' || u.departementId === 'dept-daf' || u.roleTitle.toLowerCase().includes('compt') || u.roleTitle.toLowerCase().includes('finan');
-    if (selectedDemoCategory === 'rh') return u.directionId === 'dir-rh' || u.roleTitle.toLowerCase().includes('rh') || u.roleTitle.toLowerCase().includes('paie');
     if (selectedDemoCategory === 'operations') return u.departementId === 'dept-ops' || u.roleTitle.toLowerCase().includes('vsat') || u.roleTitle.toLowerCase().includes('réseau') || u.roleTitle.toLowerCase().includes('opérat');
     if (selectedDemoCategory === 'logistics') return u.directionId === 'dir-log' || u.roleTitle.toLowerCase().includes('logistique') || u.roleTitle.toLowerCase().includes('hub') || u.departmentName?.toLowerCase().includes('logistique');
     if (selectedDemoCategory === 'security') return u.status === 'verrouille' || u.failedAccessAttempts > 0;
@@ -465,7 +464,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 Règlement de Sécurité Opérationnelle :
               </div>
               <p>
-                Toute tentative d'accès à des documents financiers ou RH hors de votre périmètre hiérarchique émet une alerte automatique. Après {MAX_FAILED_ATTEMPTS} mots de passe erronés, le compte est verrouillé.
+                Toute tentative d'accès à des documents financiers ou personnels hors de votre périmètre hiérarchique émet une alerte automatique. Après {MAX_FAILED_ATTEMPTS} mots de passe erronés, le compte est verrouillé.
               </p>
             </div>
 
@@ -503,7 +502,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 { id: 'all', label: 'Tous les collaborateurs' },
                 { id: 'dg', label: 'Direction Générale' },
                 { id: 'finance', label: 'DAF & Finance' },
-                { id: 'rh', label: 'RH & Paie' },
                 { id: 'operations', label: 'Télécoms VSAT' },
                 { id: 'logistics', label: 'Logistique & Hubs' },
                 { id: 'security', label: 'Compte Verrouillé' },
@@ -591,8 +589,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <div className="text-[10px] text-slate-400 mt-0.5">Vision transversale intégrale</div>
             </div>
             <div className="p-2.5 rounded-xl bg-blue-950/20 border border-blue-800/40 text-blue-300">
-              <div className="font-bold">Directeurs DAF & RH</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Contrats & Bulletins certifiés</div>
+              <div className="font-bold">Directeurs & chefs</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Visas & pointage de leur périmètre</div>
             </div>
             <div className="p-2.5 rounded-xl bg-sky-950/20 border border-sky-800/40 text-sky-300">
               <div className="font-bold">Agents VSAT & Compta</div>

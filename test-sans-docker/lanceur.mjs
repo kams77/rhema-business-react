@@ -120,7 +120,7 @@ async function preparerBase(conf) {
 async function reinitialiser(conf) {
   titre('ERP-WORKFLOW : réinitialisation de la base de test');
   console.log(`ATTENTION : la base « ${conf.BASE} » va être effacée définitivement`);
-  console.log('(organisation, agents, documents, paie...). Les autres bases ne sont pas touchées.');
+  console.log('(organisation, agents, documents, pointages...). Les autres bases ne sont pas touchées.');
   console.log('Fermez d\'abord la fenêtre de l\'application si elle est ouverte.\n');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const reponse = await new Promise(r => rl.question('Tapez EFFACER pour confirmer : ', r));

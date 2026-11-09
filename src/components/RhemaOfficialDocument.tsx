@@ -251,7 +251,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
                 ) : (
                   <div className="border border-dashed border-slate-200 rounded-xl p-2.5 px-4 flex justify-between items-center bg-slate-50/40 text-[11px] text-slate-500">
                     <span className="font-medium text-slate-600">Incidence Financière :</span>
-                    <span className="italic text-slate-500">Document d'ordre administratif / RH — Émis sans obligation de prix ou de montant</span>
+                    <span className="italic text-slate-500">Document d’ordre administratif — Émis sans obligation de prix ou de montant</span>
                   </div>
                 )}
               </div>
