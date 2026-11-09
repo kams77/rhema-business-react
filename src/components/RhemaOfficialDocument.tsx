@@ -89,7 +89,7 @@ export const RhemaOfficialDocument: React.FC<RhemaOfficialDocumentProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
+    <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md print:backdrop-filter-none print:animate-none z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in">
       <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col max-h-[95vh] overflow-hidden">
         
         {/* BARRE SUPÉRIEURE (FIDÈLE À LA CAPTURE 2) */}

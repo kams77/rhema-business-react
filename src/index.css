@@ -173,10 +173,9 @@
     background: #fff !important;
     border: 0 !important;
     box-shadow: none !important;
+    /* Pas de translate/scale/rotate ici : le minifieur les fusionnerait en « transform: translate(0)… »,
+       ce qui recréerait le bloc conteneur qu'on veut supprimer. */
     transform: none !important;
-    translate: none !important;
-    scale: none !important;
-    rotate: none !important;
     filter: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
