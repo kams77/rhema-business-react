@@ -149,13 +149,6 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
 
   // Convertit une demande de rapport technique en DocumentItem imprimable
   const handlePrintCustomDoc = (title: string, desc: string, refNum: string, amount: number) => {
-    // Un bon de stock n'est « signé » que si le circuit l'a validé ; sinon il est imprimé avec son vrai statut.
-    const mvtStatus = ['bes', 'bss', 'otih'].includes(type) ? (item as StockMovementItem).status : undefined;
-    const docStatus: DocumentItem['status'] = mvtStatus === undefined ? 'signe'
-      : ['valide', 'en_transit', 'receptionne'].includes(mvtStatus) ? 'signe'
-      : mvtStatus === 'rejete' || mvtStatus === 'annule' ? 'rejete' : 'en_revue';
-    const mvtSigner = mvtStatus !== undefined ? (item as StockMovementItem).approvedByManagerName : undefined;
-
     const docItem: DocumentItem = {
       id: `doc-log-${Date.now()}`,
       title,
@@ -181,14 +174,14 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
         signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
       },
-      electronicSignature: docStatus === 'signe' ? {
-        signedBy: mvtSigner || currentUser.name,
-        signedAt: mvtStatus !== undefined ? (item as StockMovementItem).approvedAt || new Date().toISOString() : new Date().toISOString(),
-        role: mvtSigner ? 'Visa du circuit' : currentUser.roleTitle,
+      electronicSignature: {
+        signedBy: currentUser.name,
+        signedAt: new Date().toISOString(),
+        role: currentUser.roleTitle,
         certificateHash: ''
-      } : undefined
+      }
     };
-    if (docItem.electronicSignature) docItem.electronicSignature.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
+    docItem.electronicSignature!.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
     setPrintableDoc(docItem);
     if (onLogAction) {
       onLogAction('Émission Rapport Logistique Certifié', `Document ${refNum} (${title}) imprimé.`, 'document');
@@ -257,6 +250,13 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
       desc = `Régulation logistique inter-provinces : Expédié de ${mvt.sourceHubName} à destination de ${mvt.destinationHubName}. Convoi / Fret sous scellé. Matériels transférés : ${mvt.items.map(i => `${i.quantity}x ${i.name} (S/N: ${i.serialNumbers.join(', ') || 'N/A'})`).join(' ; ')}. ${mvt.notes}`;
     }
 
+    // Un bon de stock n'est « signé » que si le circuit l'a validé ; sinon il est imprimé avec son vrai statut.
+    const mvtStatus = ['bes', 'bss', 'otih'].includes(type) ? (item as StockMovementItem).status : undefined;
+    const docStatus: DocumentItem['status'] = mvtStatus === undefined ? 'signe'
+      : ['valide', 'en_transit', 'receptionne'].includes(mvtStatus) ? 'signe'
+      : mvtStatus === 'rejete' || mvtStatus === 'annule' ? 'rejete' : 'en_revue';
+    const mvtSigner = mvtStatus !== undefined ? (item as StockMovementItem).approvedByManagerName : undefined;
+
     const docItem: DocumentItem = {
       id: `doc-log-${Date.now()}`,
       title,
@@ -282,14 +282,14 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
         validateRoles: ['dg', 'chef_departement', 'directeur', 'chef_service'],
         signRoles: ['dg', 'chef_departement', 'directeur', 'chef_service']
       },
-      electronicSignature: {
-        signedBy: currentUser.name,
-        signedAt: new Date().toISOString(),
-        role: currentUser.roleTitle,
+      electronicSignature: docStatus === 'signe' ? {
+        signedBy: mvtSigner || currentUser.name,
+        signedAt: mvtStatus !== undefined ? (item as StockMovementItem).approvedAt || new Date().toISOString() : new Date().toISOString(),
+        role: mvtSigner ? 'Visa du circuit' : currentUser.roleTitle,
         certificateHash: ''
-      }
+      } : undefined
     };
-    docItem.electronicSignature!.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
+    if (docItem.electronicSignature) docItem.electronicSignature.certificateHash = contentHashSync({ ...docItem, electronicSignature: undefined });
 
     setPrintableDoc(docItem);
     if (onLogAction) {
@@ -463,7 +463,7 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           }`}
         >
           <Warehouse className="w-4 h-4" />
-          <span>2. Stocks & Hubs Provinciaux ({hubs.length})</span>
+          <span>2. Stocks & Hubs ({hubs.length} sites)</span>
         </button>
 
         <button
