@@ -1,0 +1,2 @@
+Paquet ERP-GESDOC « test sans Docker » (Windows + XAMPP).
+Construit depuis c04e62f6f5057fa4b7aad453c89d9e5d9f2b42d1, essayé sur Windows avec MariaDB.
