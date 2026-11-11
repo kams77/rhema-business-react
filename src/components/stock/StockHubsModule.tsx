@@ -5,14 +5,15 @@
 // par le circuit de visa avant de toucher au stock, et les droits suivent le module logistique.
 import React, { useMemo, useState } from 'react';
 import {
-  LayoutDashboard, ListOrdered, ArrowLeftRight, Grid3x3, FileSpreadsheet, CalendarRange, Package, MapPin, Settings2, Building2, Warehouse, ArrowLeft,
+  LayoutDashboard, ListOrdered, ArrowLeftRight, Grid3x3, FileSpreadsheet, CalendarRange, Package, MapPin, Settings2, Building2, Warehouse, ArrowLeft, Network,
 } from 'lucide-react';
 import type {
-  HubStockItem, LogisticsHub, LogisticsItem, Organization, StockMovementItem, StockSettings, User,
+  HubOrgUnit, HubStockItem, LogisticsHub, LogisticsItem, Organization, StockMovementItem, StockSettings, User,
 } from '../../types';
 import { isLogisticsManager } from '../../utils/rbac';
 import { hubsOfUser, isLateTransfer, isTransfer, movementIssues, negativeKeys } from '../../../shared/stock.mjs';
 import { HubPortalDashboard, HubsSupervisionPanel } from './HubPortalPanels';
+import { HubOrgChartPanel } from './HubOrgChartPanel';
 import { StockDashboardPanel } from './StockDashboardPanel';
 import { MovementsPanel } from './MovementsPanel';
 import { TransfersPanel } from './TransfersPanel';
@@ -23,7 +24,7 @@ import { CatalogPanel } from './CatalogPanel';
 import { SitesPanel } from './SitesPanel';
 import { StockSettingsPanel } from './StockSettingsPanel';
 
-export type StockTab = 'supervision' | 'dashboard' | 'movements' | 'transfers' | 'matrix' | 'report' | 'monthly' | 'catalog' | 'sites' | 'settings';
+export type StockTab = 'supervision' | 'orgchart' | 'dashboard' | 'movements' | 'transfers' | 'matrix' | 'report' | 'monthly' | 'catalog' | 'sites' | 'settings';
 
 export interface ReceptionInput {
   receivedAt?: string;
@@ -50,6 +51,9 @@ export interface StockModuleProps {
   onUpsertCatalogItem: (item: LogisticsItem) => void;
   onUpdateStockSettings: (settings: StockSettings) => void;
   onPrintDocument: (mvt: StockMovementItem, type: 'bes' | 'bss' | 'otih') => void;
+  /** Organigrammes internes des hubs, par identifiant de hub. */
+  hubOrgs: Record<string, HubOrgUnit[]>;
+  onUpdateHubOrg: (hubId: string, units: HubOrgUnit[], summary: string) => void;
   approvalState?: (refId: string) => { canAct: boolean; waiting?: string } | undefined;
 }
 
@@ -78,13 +82,14 @@ const TABS: { id: StockTab; label: string; icon: React.ReactNode; hint: string }
   { id: 'matrix', label: 'Stock par site', icon: <Grid3x3 className="w-4 h-4" />, hint: 'Automatique' },
   { id: 'report', label: 'Rapport de site', icon: <FileSpreadsheet className="w-4 h-4" />, hint: 'Site + dates' },
   { id: 'monthly', label: 'Suivi mensuel', icon: <CalendarRange className="w-4 h-4" />, hint: 'Site + année' },
+  { id: 'orgchart', label: 'Organigramme du hub', icon: <Network className="w-4 h-4" />, hint: 'Cellules, chefs et membres du hub' },
   { id: 'catalog', label: 'Catalogue', icon: <Package className="w-4 h-4" />, hint: 'Paramétrage' },
   { id: 'sites', label: 'Sites', icon: <MapPin className="w-4 h-4" />, hint: 'Paramétrage' },
   { id: 'settings', label: 'Paramètres', icon: <Settings2 className="w-4 h-4" />, hint: 'Paramétrage' },
 ];
 
 /** Onglets visibles : la centrale voit tout ; un portail ne montre que les vues de son hub. */
-const PORTAL_TABS: StockTab[] = ['dashboard', 'movements', 'transfers', 'matrix', 'report', 'monthly', 'catalog'];
+const PORTAL_TABS: StockTab[] = ['dashboard', 'movements', 'transfers', 'matrix', 'report', 'monthly', 'orgchart', 'catalog'];
 
 export const StockHubsModule: React.FC<StockModuleProps> = props => {
   const today = new Date().toLocaleDateString('en-CA');
@@ -122,7 +127,7 @@ export const StockHubsModule: React.FC<StockModuleProps> = props => {
   };
 
   const openPortal = (hubId?: string) => { setPortalId(hubId); setTab(hubId ? 'dashboard' : canManage ? 'supervision' : 'dashboard'); setFilter(undefined); };
-  const visible = TABS.filter(t => (portalHub ? PORTAL_TABS.includes(t.id) : canManage ? true : t.id !== 'supervision'));
+  const visible = TABS.filter(t => (portalHub ? PORTAL_TABS.includes(t.id) : t.id !== 'orgchart' && (canManage || t.id !== 'supervision')));
   const inScope = (m: (typeof props.movements)[number]) => !portalHub || m.sourceHubId === portalHub.id || m.destinationHubId === portalHub.id;
   const counts: Partial<Record<StockTab, number>> = {
     movements: props.movements.filter(m => !isTransfer(m) && inScope(m) && (issuesMap.get(m.id) || []).length).length,
@@ -189,6 +194,7 @@ export const StockHubsModule: React.FC<StockModuleProps> = props => {
       {tab === 'matrix' && <StockMatrixPanel key={`x-${portalId}`} {...ctx} />}
       {tab === 'report' && <SiteReportPanel key={`r-${filter}-${portalId}`} {...ctx} />}
       {tab === 'monthly' && <MonthlyPanel key={`y-${portalId}`} {...ctx} />}
+      {tab === 'orgchart' && portalHub && <HubOrgChartPanel key={portalHub.id} {...ctx} />}
       {tab === 'catalog' && <CatalogPanel {...ctx} />}
       {tab === 'sites' && !portalHub && <SitesPanel {...ctx} />}
       {tab === 'settings' && !portalHub && <StockSettingsPanel {...ctx} />}

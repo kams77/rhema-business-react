@@ -292,7 +292,7 @@ assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancair
   await login(mag, 'mag@perm.cd', 'Temp-Magasin-26', 'Cobalt-Riviere-Nord-77');
   assert((await put(boss, 'logistics.hubs', [
     { id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif' },
-    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif', staffIds: ['p-mag'] },
+    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif', managerId: 'p-mag', staffIds: ['p-mag'] },
   ])).status === 200, 'DG : sites enregistrés');
   assert((await put(boss, 'logistics.catalog', [{ id: 'si1', sku: 'ART-1', name: 'Article test', category: 'vsat', unitPriceUSD: 10, minAlertThreshold: 2 }])).status === 200, 'DG : catalogue enregistré');
   const line = q => [{ catalogItemId: 'si1', sku: 'ART-1', name: 'Article test', quantity: q, unitPriceUSD: 10, serialNumbers: [] }];
@@ -308,6 +308,17 @@ assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancair
   assert(r.status === 403 && /équipe/.test(r.json.error), 'portail : un membre du Site Deux ne saisit pas de bon pour le Site Un');
   r = await put(mag, 'logistics.hubs', [{ id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif', staffIds: ['p-mag'] }]);
   assert(r.status === 403, 'portail : un magasinier ne compose pas les équipes des hubs');
+  // Organigramme interne : le responsable du Site Deux tient le sien, pas celui d'un autre hub.
+  const cel = (id, name, parentId) => ({ id, name, parentId, members: [] });
+  r = await put(mag, 'logistics.hubOrgs', { sh2: [cel('c1', 'Réception'), cel('c2', 'Magasin', 'c1')] });
+  assert(r.status === 200, 'organigramme du hub : son responsable le crée');
+  const orgs = (await mag('GET', '/api/data/logistics.hubOrgs')).json;
+  r = await mag('PUT', '/api/data/logistics.hubOrgs', { value: { ...orgs.value, sh1: [cel('x1', 'Quai')] }, version: orgs.version });
+  assert(r.status === 403, "organigramme du hub : pas celui d'un autre hub");
+  r = await mag('PUT', '/api/data/logistics.hubOrgs', { value: { sh2: [cel('c1', 'Réception', 'c2'), cel('c2', 'Magasin', 'c1')] }, version: orgs.version });
+  assert(r.status === 422, 'organigramme du hub : une boucle de rattachement est refusée');
+  r = await put(boss, 'logistics.hubOrgs', { ...orgs.value, sh1: [cel('x1', 'Quai de chargement')] });
+  assert(r.status === 200, 'organigramme du hub : la centrale peut le tenir pour tout hub');
   r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule' }]);
   assert(r.status === 403, 'stock : un magasinier ne peut pas annuler un transfert');
   r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'receptionne', receivedAt: '2026-01-06', receivedQuantities: { si1: 6 } }]);

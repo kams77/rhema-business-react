@@ -682,6 +682,25 @@ export interface NetToPayInvoiceItem {
 // GESTION DES HUBS PROVINCIAUX & GESTION DES STOCKS MULTI-SITES
 // =============================================================
 
+/** Personne placée dans l'organigramme d'un hub (compte de l'équipe, ou personne sans compte). */
+export interface HubOrgPerson {
+  userId?: string;
+  name: string;
+  title?: string;
+  phone?: string;
+}
+
+/** Cellule de l'organigramme interne d'un hub (réception, magasin, expédition…). */
+export interface HubOrgUnit {
+  id: string;
+  name: string;
+  /** Cellule parente ; absente = directement sous le responsable du hub. */
+  parentId?: string;
+  mission?: string;
+  leader?: HubOrgPerson;
+  members: HubOrgPerson[];
+}
+
 export interface LogisticsHub {
   id: string;
   code: string;

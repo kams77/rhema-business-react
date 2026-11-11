@@ -2,7 +2,7 @@
 // Usage : node shared/__tests__/stock.test.mjs
 import assert from 'node:assert/strict';
 import {
-  hubPortalWriteProblem, hubsOfUser, isHubMember, movementTouchesHub,
+  hubOrgIssues, hubOrgWriteProblem, hubPortalWriteProblem, hubsOfUser, isHubMember, movementTouchesHub,
   availableForExit,
   computeBalances,
   deriveHubStocks,
@@ -170,6 +170,18 @@ test('portails des hubs : équipe, saisie et réception limitées au site', () =
   assert.match(hubPortalWriteProblem(mag, [t2], [{ ...t2, status: 'receptionne', receivedAt: '2026-03-02' }], hubsP), /Bukavu/);
   // Les visas du circuit (changement de statut d'un bon existant) restent possibles.
   assert.equal(hubPortalWriteProblem(mag, [sortieBuk], [{ ...sortieBuk, status: 'valide' }], hubsP), null);
+});
+
+test("organigramme d'un hub : structure et droits", () => {
+  const c = (id, name, parentId) => ({ id, name, parentId, members: [] });
+  assert.deepEqual(hubOrgIssues([c('a', 'Réception'), c('b', 'Magasin', 'a')]), []);
+  assert.ok(hubOrgIssues([c('a', 'Réception'), c('b', 'réception')]).some(i => i.includes('existe déjà')));
+  assert.ok(hubOrgIssues([c('a', 'A', 'b'), c('b', 'B', 'a')]).some(i => i.includes('elle-même')));
+  assert.ok(hubOrgIssues([c('a', 'A', 'zz')]).some(i => i.includes('inconnue')));
+  const hubsO = [{ id: 'gom', name: 'Goma', managerId: 'u1', staffIds: ['u2'] }, { id: 'buk', name: 'Bukavu', managerId: 'u3' }];
+  assert.equal(hubOrgWriteProblem({ id: 'u1' }, {}, { gom: [c('a', 'A')] }, hubsO), null);
+  assert.match(hubOrgWriteProblem({ id: 'u2' }, {}, { gom: [c('a', 'A')] }, hubsO), /responsable du site « Goma »/);
+  assert.match(hubOrgWriteProblem({ id: 'u1' }, { buk: [] }, { buk: [c('a', 'A')] }, hubsO), /Bukavu/);
 });
 
 console.log(`\n${n} tests du moteur de stock réussis.`);

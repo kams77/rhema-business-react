@@ -510,3 +510,55 @@ export function hubPortalWriteProblem(user, before, after, hubs, settings) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Organigramme interne d'un hub (cellules, chefs, membres). Sans effet sur les circuits de visa.
+// Données : clé « logistics.hubOrgs » = { [hubId]: HubOrgUnit[] }.
+// ---------------------------------------------------------------------------
+
+/** Peut modifier l'organigramme d'un hub : son responsable, ou la centrale logistique. */
+export const canEditHubOrg = (u, hub, isCentral) => !!isCentral || (!!u && !!hub && hub.managerId === u.id);
+
+/** Anomalies d'un organigramme de hub (nom, doublon, parent inconnu, boucle). */
+export function hubOrgIssues(units) {
+  if (!Array.isArray(units)) return ['Organigramme invalide.'];
+  const issues = [];
+  const byId = new Map(units.map(u => [u.id, u]));
+  const names = new Set();
+  for (const u of units) {
+    const name = String(u?.name || '').trim();
+    if (!u?.id || !name) { issues.push('Chaque cellule doit avoir un nom.'); continue; }
+    const k = name.toLowerCase();
+    if (names.has(k)) issues.push(`La cellule « ${name} » existe déjà dans ce hub.`);
+    names.add(k);
+    if (u.parentId && !byId.has(u.parentId)) issues.push(`La cellule « ${name} » est rattachée à une cellule inconnue.`);
+    // Boucle : remonter les parents sans repasser par la cellule.
+    const seen = new Set([u.id]);
+    let p = u.parentId ? byId.get(u.parentId) : undefined;
+    while (p) {
+      if (seen.has(p.id)) { issues.push(`La cellule « ${name} » ne peut pas être rattachée à elle-même ou à une de ses sous-cellules.`); break; }
+      seen.add(p.id);
+      p = p.parentId ? byId.get(p.parentId) : undefined;
+    }
+    if (u.members !== undefined && !Array.isArray(u.members)) issues.push(`Membres invalides pour « ${name} ».`);
+  }
+  return [...new Set(issues)];
+}
+
+/**
+ * Écriture des organigrammes de hubs par quelqu'un qui n'est pas de la centrale :
+ * il ne modifie que l'organigramme des hubs dont il est le responsable.
+ * @returns {string | null}
+ */
+export function hubOrgWriteProblem(user, before, after, hubs) {
+  if (!after || typeof after !== 'object' || Array.isArray(after)) return 'Format invalide.';
+  const prev = before && typeof before === 'object' ? before : {};
+  for (const id of new Set([...Object.keys(prev), ...Object.keys(after)])) {
+    if (JSON.stringify(prev[id] ?? null) === JSON.stringify(after[id] ?? null)) continue;
+    const hub = (hubs || []).find(h => h.id === id);
+    if (!canEditHubOrg(user, hub, false)) {
+      return `Seuls le responsable du site « ${hub ? hub.name : id} » et la centrale logistique modifient son organigramme.`;
+    }
+  }
+  return null;
+}

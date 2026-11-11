@@ -16,7 +16,8 @@ import type {
   LogisticsHub,
   HubStockItem,
   StockMovementItem,
-  StockSettings
+  StockSettings,
+  HubOrgUnit
 } from '../types';
 import { 
   Truck, 
@@ -76,6 +77,8 @@ interface LogisticsModuleViewProps {
   users?: User[];
   onUpsertCatalogItem: (item: LogisticsItem) => void;
   onUpdateHub: (hub: LogisticsHub) => void;
+  hubOrgs: Record<string, HubOrgUnit[]>;
+  onUpdateHubOrg: (hubId: string, units: HubOrgUnit[], summary: string) => void;
   onUpdateStockSettings: (settings: StockSettings) => void;
   onCreateOrder: (order: PurchaseOrderItem) => void;
   onApproveOrder: (orderId: string) => void;
@@ -114,6 +117,8 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
   users,
   onUpsertCatalogItem,
   onUpdateHub,
+  hubOrgs,
+  onUpdateHubOrg,
   onUpdateStockSettings,
   onCreateOrder,
   onApproveOrder,
@@ -588,6 +593,8 @@ export const LogisticsModuleView: React.FC<LogisticsModuleViewProps> = ({
           settings={stockSettings}
           onAddHub={onAddHub}
           onUpdateHub={onUpdateHub}
+          hubOrgs={hubOrgs}
+          onUpdateHubOrg={onUpdateHubOrg}
           onAddMovement={onAddMovement}
           onApproveMovement={onApproveMovement}
           onReceiveTransfer={onReceiveTransfer}

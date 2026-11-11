@@ -46,7 +46,7 @@ import {
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
 import { sanitizeOrgData } from '../shared/branding.mjs';
-import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings, hubPortalWriteProblem } from '../shared/stock.mjs';
+import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings, hubPortalWriteProblem, hubOrgIssues, hubOrgWriteProblem } from '../shared/stock.mjs';
 import {
   ATTENDANCE_EVENTS,
   DEFAULT_TIME_ZONE,
@@ -1294,6 +1294,18 @@ export function createApp({ db, config }) {
         }
         value = stripRetiredHr(key, sanitizeOrgData(key, value));
         if (key === 'logistics.stockMovements') await checkStockWrite(s.user, current ? JSON.parse(current.value) : [], value);
+        // Organigramme interne des hubs : son responsable ou la centrale ; structure toujours contrôlée.
+        if (key === 'logistics.hubOrgs') {
+          const hubsNow = (await readData('logistics.hubs')).value || [];
+          if (!isLogisticsManager(accessUser(s.user))) {
+            const why = hubOrgWriteProblem(accessUser(s.user), current ? JSON.parse(current.value) : {}, value, hubsNow);
+            if (why) throw new HttpError(403, why);
+          }
+          for (const [hubId, units] of Object.entries(value || {})) {
+            const issues = hubOrgIssues(units);
+            if (issues.length) throw new HttpError(422, `${(hubsNow.find(h => h.id === hubId) || {}).name || hubId} : ${issues[0]}`);
+          }
+        }
         // Sites (et leurs équipes), catalogue et paramètres des stocks : gérés par la centrale logistique.
         if (['logistics.hubs', 'logistics.catalog', 'logistics.settings'].includes(key) && !isLogisticsManager(accessUser(s.user))) {
           throw new HttpError(403, 'Les sites, leurs équipes, le catalogue et les paramètres des stocks sont gérés par la centrale logistique.');

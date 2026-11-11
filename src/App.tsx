@@ -88,6 +88,7 @@ import type {
   HubStockItem, 
   StockMovementItem,
   StockSettings,
+  HubOrgUnit,
   EntityInvitation,
   EntityInvitationNotification
 } from './types';
@@ -102,7 +103,7 @@ import { EntityInvitationsManagerModal } from './components/invitations/EntityIn
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
 import { attendance } from './lib/attendance';
-import { availableForExit, deriveHubStocks, isHubMember, migrateLegacyStocks, movementOwnerHub, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
+import { availableForExit, canEditHubOrg, deriveHubStocks, hubOrgIssues, isHubMember, migrateLegacyStocks, movementOwnerHub, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
 import { isRetiredHrDocument } from '../shared/access.mjs';
 import { removeValue } from './lib/storage';
 import { Navbar } from './components/Navbar';
@@ -506,6 +507,8 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [legacyStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
   const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', initialStockMovements);
   const [savedStockSettings, setSavedStockSettings] = usePersistentState<StockSettings | null>('logistics.settings', null);
+  // Organigrammes internes des hubs (cellules, chefs, membres), par identifiant de hub.
+  const [hubOrgs, setHubOrgs] = usePersistentState<Record<string, HubOrgUnit[]>>('logistics.hubOrgs', {});
   const stockConfig = useMemo(() => stockSettings(savedStockSettings) as StockSettings, [savedStockSettings]);
   const todayIso = new Date().toLocaleDateString('en-CA');
 
@@ -543,6 +546,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setHubs(prev => prev.map(h => (h.id === hub.id ? hub : h)));
     addAuditLog({ action: 'Site logistique modifié', category: 'admin', details: `${hub.code} — ${hub.name} (${hub.status}).` });
     showToast('success', 'Site mis à jour.');
+  };
+
+  const handleUpdateHubOrg = (hubId: string, units: HubOrgUnit[], summary: string) => {
+    const hub = hubs.find(h => h.id === hubId);
+    if (!hub) return;
+    if (!canEditHubOrg(currentUser, hub, isLogisticsManager(currentUser))) {
+      showToast('error', "L'organigramme du hub est tenu par son responsable et par la centrale logistique.");
+      return;
+    }
+    const issues = hubOrgIssues(units);
+    if (issues.length) { showToast('error', issues[0]); return; }
+    setHubOrgs(prev => ({ ...prev, [hubId]: units }));
+    addAuditLog({ action: 'Organigramme du hub modifié', category: 'admin', details: `${hub.code} — ${hub.name} : ${summary}.` });
+    showToast('success', `Organigramme du ${hub.name} : ${summary}.`);
   };
 
   const handleUpdateStockSettings = (next: StockSettings) => {
@@ -1860,6 +1877,8 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 users={users}
                 onUpsertCatalogItem={handleUpsertCatalogItem}
                 onUpdateHub={handleUpdateHub}
+                hubOrgs={hubOrgs}
+                onUpdateHubOrg={handleUpdateHubOrg}
                 onUpdateStockSettings={handleUpdateStockSettings}
                 onCreateOrder={handleCreateOrder}
                 onApproveOrder={handleApproveOrder}

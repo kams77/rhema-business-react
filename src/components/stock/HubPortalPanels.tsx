@@ -172,7 +172,7 @@ export const HubsSupervisionPanel: React.FC<StockContext & { onOpenPortal: (hubI
                 <div className="bg-slate-950/50 rounded-xl p-2"><div className="text-[10px] text-slate-500">À recevoir</div><div className={`font-mono font-black ${f.late.length ? 'text-rose-300' : 'text-sky-300'}`}>{f.incoming.length}{f.late.length ? ' ⏰' : ''}</div></div>
               </div>
               <div className="text-[11px] text-slate-400 flex justify-between">
-                <span>{f.pending.length} bon(s) au visa · {f.outgoing.length} envoi(s) en route</span>
+                <span>{f.pending.length} bon(s) au visa · {f.outgoing.length} envoi(s) en route · {(props.hubOrgs[hub.id] || []).length} cellule(s) à l'organigramme</span>
                 <span>Dernier mouvement : {f.last ? frDate(f.last) : '—'}</span>
               </div>
               <div className="flex gap-2 mt-auto">
