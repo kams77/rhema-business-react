@@ -227,7 +227,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
 
               <div className="p-3 bg-slate-100 rounded border border-slate-200 text-slate-800">
                 <p><strong>Date de comparution :</strong> Sous 24 heures ouvrables au siège de Kintambo.</p>
-                <p><strong>Membres du collège :</strong> Directeur Général, DRH, Responsable Sécurité.</p>
+                <p><strong>Membres du collège :</strong> Directeur Général, Responsable Sécurité.</p>
               </div>
 
               <div className="pt-2 text-right">

@@ -30,7 +30,7 @@ export type ActiveTab =
   | 'security' 
   | 'agents' 
   | 'bulk_import'
-  | 'attendance_dispatch'
+  | 'pointage'
   | 'audit' 
   | 'laravel';
 
@@ -105,16 +105,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'bulk_import',
-      label: 'Import Massif CSV & Paie',
+      label: 'Import CSV des collaborateurs',
       icon: <UploadCloud className="w-4 h-4 text-emerald-400" />,
       badge: 'Direction DG',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 font-bold',
     },
     {
-      id: 'attendance_dispatch',
-      label: 'Pointage & Envoi 28 Jours',
+      id: 'pointage',
+      label: 'Pointage de l\'équipe',
       icon: <Clock className="w-4 h-4 text-cyan-400" />,
-      badge: '28j Ouvrables',
+      badge: 'Automatique',
       badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
     },
     {

@@ -31,7 +31,7 @@ import {
   Info,
 } from 'lucide-react';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
-import { canUserViewDocument, getEntitiesInUserScope, isPayrollStaff } from '../utils/rbac';
+import { canUserViewDocument, getEntitiesInUserScope } from '../utils/rbac';
 import { exportOfficialDocumentToPDF, exportOfficialDocumentToCSV } from '../utils/exportUtils';
 import { ElectronicSignatureModal } from './ElectronicSignatureModal';
 import { ApprovalChips, ApprovalTimeline, HistoryList } from './workflow/ApprovalTimeline';
@@ -53,8 +53,7 @@ export type DocumentWorkflowFilter = 'all' | 'to_act' | 'mine' | 'in_progress' |
 
 /** Types qu'un agent exécutant ne publie pas (directives, contrats, pièces confidentielles). */
 const AGENT_FORBIDDEN: DocumentSubtype[] = [
-  'note_service', 'communique', 'contrat_commercial', 'contrat_travail', 'fiche_poste',
-  'bilan_comptable', 'declaration_sociale', 'bulletin_de_paie',
+  'note_service', 'communique', 'contrat_commercial', 'bilan_comptable',
 ];
 
 const STATUS_BADGE: Record<DocumentItem['status'], { label: string; cls: string }> = {
@@ -115,7 +114,6 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   const isAgent = currentUser.role === 'agent';
   const allowedTypes = (cat: DocumentCategory) => documentTypesFor(cat).filter(t =>
     !(isAgent && AGENT_FORBIDDEN.includes(t.value)) &&
-    !(t.value === 'bulletin_de_paie' && !isPayrollStaff(currentUser)) &&
     !(t.confidential && isAgent));
   const categories = (Object.keys(DOCUMENT_CATEGORIES) as DocumentCategory[]).filter(c => allowedTypes(c).length > 0);
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory>(categories[0] || 'administratif_general');

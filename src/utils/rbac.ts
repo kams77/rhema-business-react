@@ -1,7 +1,6 @@
 // src/utils/rbac.ts
 import type { User, HierarchicalEntity, DocumentItem, UserRole } from '../types';
 import {
-  isPayrollStaff as sharedIsPayrollStaff,
   isSecurityStaff as sharedIsSecurityStaff,
   canSeeDocument as sharedCanSeeDocument,
   canAccessLogistics as sharedCanAccessLogistics,
@@ -9,8 +8,6 @@ import {
 } from '../../shared/access.mjs';
 import { canActOnDocument, currentStep, waitingFor } from '../lib/workflow';
 
-/** Accès à la paie (règle commune avec le serveur : shared/access.mjs). */
-export const isPayrollStaff = (user: User): boolean => sharedIsPayrollStaff(user as any);
 /** Accès au Centre de sécurité et au journal d'audit (règle commune avec le serveur). */
 export const isSecurityStaff = (user: User): boolean => sharedIsSecurityStaff(user as any);
 
@@ -31,8 +28,6 @@ export function titleHasAny(title: string | undefined, terms: string[]): boolean
   });
 }
 
-/** Fonctions RH / paie reconnues dans l'intitulé de poste. */
-export const HR_TITLE_TERMS = ['rh', 'drh', 'grh', 'paie', 'ressources humaines'];
 
 /**
  * Retourne la liste de tous les IDs d'entités subordonnées descendant d'un ancêtre
@@ -72,6 +67,34 @@ export function isEntityDescendantOf(
     current = entities.find(e => e.id === parentId);
   }
   return false;
+}
+
+/**
+ * Affectation complète d'un compte à partir d'une entité : l'entité choisie ET toutes celles
+ * au-dessus (service, division, direction, département). Sans cela, un agent d'un service ne
+ * verrait pas les documents adressés à son département. Entité vide = Direction Générale.
+ */
+export function entityPlacement(
+  entityId: string | undefined,
+  entities: HierarchicalEntity[]
+): Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> {
+  const out: Pick<User, 'departementId' | 'directionId' | 'divisionId' | 'serviceId' | 'departmentName'> = {
+    departementId: undefined, directionId: undefined, divisionId: undefined, serviceId: undefined,
+    departmentName: 'Direction Générale',
+  };
+  const byId = new Map(entities.map(e => [e.id, e]));
+  let cur = entityId ? byId.get(entityId) : undefined;
+  if (cur) out.departmentName = cur.name;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.level === 'service' && !out.serviceId) out.serviceId = cur.id;
+    if (cur.level === 'division' && !out.divisionId) out.divisionId = cur.id;
+    if (cur.level === 'direction' && !out.directionId) out.directionId = cur.id;
+    if (cur.level === 'departement' && !out.departementId) out.departementId = cur.id;
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return out;
 }
 
 /**
@@ -212,9 +235,6 @@ export function canUserViewDocument(
   entities: HierarchicalEntity[]
 ): { allowed: boolean; reason?: string } {
   if (sharedCanSeeDocument(user as any, doc as any, entities as any)) return { allowed: true };
-  if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
-    return { allowed: false, reason: "Ce bulletin de paie est strictement confidentiel et réservé à son titulaire et à la Direction des Ressources Humaines." };
-  }
   if (doc.status === 'brouillon') return { allowed: false, reason: "Brouillon non publié : visible uniquement par son émetteur." };
   return { allowed: false, reason: `Document réservé au périmètre : ${doc.targetEntityName || doc.originEntityName || 'entité concernée'}.` };
 }
@@ -298,9 +318,10 @@ export function canUserAccessTab(user: User, tabId: string): boolean {
     case 'logistics':
       return canAccessLogistics(user);
     case 'bulk_import':
-      // Imports massifs : Direction Générale, chefs de département et directeurs
+      // Import des comptes collaborateurs : Direction Générale, chefs de département et directeurs
       return user.role === 'chef_departement' || user.role === 'directeur';
-    case 'attendance_dispatch':
+    case 'pointage':
+      // Registre de présence : chaque responsable voit les agents de son périmètre
       return user.role !== 'agent';
     case 'agents':
       // Chefs de service, division, direction, département et DG peuvent administrer leurs agents

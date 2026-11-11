@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import { Sparkles, X, Check, Lock, Plus, Trash2, Landmark } from 'lucide-react';
 import type { Organization, OrganizationBankAccount } from '../types';
+import { BrandingFields } from './branding/BrandingFields';
+import { sanitizeBranding } from '../../shared/branding.mjs';
 
 interface OrganizationIdentityModalProps {
   organization: Organization;
@@ -24,7 +26,9 @@ const buildForm = (org: Organization) => ({
   managerName: org.managerName || '',
   managerRole: org.managerRole || 'Directeur Général (DG)',
   description: org.description || '',
-  logoUrl: org.logo || '',
+  // Ancien logo par lien externe : non conservé (images intégrées uniquement).
+  logo: org.logo?.startsWith('data:image/') ? org.logo : undefined,
+  branding: { ...(org.branding || {}) },
 });
 
 export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps> = ({
@@ -55,7 +59,8 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
       managerName: form.managerName.trim(),
       managerRole: form.managerRole.trim(),
       description: form.description,
-      logo: form.logoUrl || undefined,
+      logo: form.logo,
+      branding: sanitizeBranding(form.branding),
     });
   };
 
@@ -67,14 +72,14 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
         aria-label="Identité de l'organisation"
         onKeyDown={e => e.key === 'Escape' && onClose()}
       >
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-5 my-8">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-8">
           <div className="flex items-center justify-between border-b border-slate-800 pb-4">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Identité & Logo Officiels (DG)</h3>
+                <h3 className="text-base font-bold text-white">Identité, Logo, En-tête & Pied de page (DG)</h3>
                 <p className="text-xs text-slate-400">Paramétrage scellé pour les fiches officielles, devis et en-têtes</p>
               </div>
             </div>
@@ -174,17 +179,6 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
               </div>
 
               <div>
-                <label className="text-slate-300 font-semibold block mb-1">URL du Logo (ou vide pour badge RB)</label>
-                <input
-                  type="url"
-                  placeholder="https://.../logo.png"
-                  value={form.logoUrl}
-                  onChange={e => setForm({ ...form, logoUrl: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
                 <label className="text-slate-300 font-semibold block mb-1">Identification nationale (Id. Nat)</label>
                 <input
                   type="text"
@@ -254,6 +248,24 @@ export const OrganizationIdentityModal: React.FC<OrganizationIdentityModalProps>
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="sm:col-span-2 space-y-2 pt-2 border-t border-slate-800">
+                <span className="text-slate-300 font-semibold block">Logo, papier à en-tête et pied de page des documents</span>
+                <BrandingFields
+                  value={{ logo: form.logo, branding: form.branding }}
+                  onChange={v => setForm({ ...form, logo: v.logo, branding: v.branding })}
+                  identity={{
+                    name: form.name || organization.name,
+                    headquarters: form.headquarters,
+                    rccm: form.registrationNumber,
+                    idNat: form.idNat,
+                    numImpot: form.numImpot,
+                    email: form.email,
+                    phone: form.phone,
+                  }}
+                  disabled={!canEdit}
+                />
               </div>
 
               <div className="sm:col-span-2">

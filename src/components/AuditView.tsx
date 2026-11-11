@@ -1,6 +1,6 @@
 // src/components/AuditView.tsx
 import React, { useState } from 'react';
-import type { AuditLog } from '../types';
+import type { AuditLog, Organization } from '../types';
 import { History, Shield, Hash, Search, Clock, Download, Filter, CheckCircle2, ShieldAlert, FileText } from 'lucide-react';
 import { exportAuditLogsToCSV, exportAuditLogsToPDF } from '../utils/exportUtils';
 import { API_MODE } from '../config';
@@ -10,6 +10,8 @@ import { shortHash, verifyAuditChain } from '../lib/integrity';
 interface AuditViewProps {
   logs: AuditLog[];
   organizationName?: string;
+  /** Organisation (logo, en-tête et pied de page des exports PDF). */
+  organization?: Organization | null;
 }
 
 type VerifyState =
@@ -19,7 +21,7 @@ type VerifyState =
   | { status: 'broken'; count: number; source: 'serveur' | 'local'; detail: string }
   | { status: 'error'; message: string };
 
-export const AuditView: React.FC<AuditViewProps> = ({ logs, organizationName }) => {
+export const AuditView: React.FC<AuditViewProps> = ({ logs, organizationName, organization }) => {
   const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
 
   const handleVerify = async () => {
@@ -64,7 +66,7 @@ export const AuditView: React.FC<AuditViewProps> = ({ logs, organizationName }) 
   const handleExportPDF = () => {
     setIsExporting(true);
     try {
-      exportAuditLogsToPDF(filteredLogs, organizationName || 'Organisation');
+      exportAuditLogsToPDF(filteredLogs, organization || organizationName || 'Organisation');
     } finally {
       setIsExporting(false);
     }

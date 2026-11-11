@@ -1,4 +1,4 @@
-// server/app.mjs — API RHEMA Business + service des fichiers de l'application.
+// server/app.mjs — API ERP-GESDOC + service des fichiers de l'application.
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -14,6 +14,7 @@ import {
   rechain,
   hashToken,
   isPasswordHash,
+  needsRehash,
   newSessionToken,
   safeEqualStrings,
   validatePasswordStrength,
@@ -21,13 +22,20 @@ import {
   verifyPassword,
 } from './auth.mjs';
 import {
+  PRIVATE_ACCOUNT_FIELDS,
   canAccessLogistics,
+  isLogisticsManager,
+  canDeleteEntity,
   canManageAccount,
+  canReadLogistics,
   canSeeDocument,
+  canSeeFullAccount,
   canSeeInvitation,
   canSeeInvitationNotification,
-  isManager,
-  isPayrollStaff,
+  canWriteEntity,
+  canWriteInvitation,
+  canWriteInvitationNotification,
+  isRetiredHrDocument,
   isSecurityStaff,
 } from '../shared/access.mjs';
 import {
@@ -37,6 +45,35 @@ import {
   canWriteDocumentChange,
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
+import { sanitizeOrgData } from '../shared/branding.mjs';
+import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings, hubPortalWriteProblem, hubOrgIssues, hubOrgWriteProblem } from '../shared/stock.mjs';
+import {
+  ATTENDANCE_EVENTS,
+  DEFAULT_TIME_ZONE,
+  applyAttendanceEvent,
+  attendanceKey,
+  canSeeAttendanceOf,
+  localDay,
+  monthKeys,
+  previousMonth,
+  validRange,
+} from '../shared/attendance.mjs';
+
+/**
+ * Données de l'ancien module RH / paie (supprimé) : contrats, salaires, bulletins, congés de paie,
+ * avances, heures, sanctions, barèmes. Elles sont effacées au démarrage, refusées par l'API et
+ * ignorées à la restauration d'une ancienne sauvegarde.
+ */
+export const RETIRED_HR_KEY_RE = /^(contracts|payrollConfigs|payroll\..+)$/;
+const isRetiredKey = key => RETIRED_HR_KEY_RE.test(key);
+/** Pointages : lus et écrits uniquement par les routes /api/pointage (horloge du serveur). */
+const isAttendanceKey = key => key.startsWith('pointage.');
+
+/** Retire d'une donnée ce qui relève de l'ancien module RH (documents de paie, contrats…). */
+function stripRetiredHr(key, value) {
+  if (key === 'documents' && Array.isArray(value)) return value.filter(d => !isRetiredHrDocument(d));
+  return value;
+}
 
 const COOKIE = 'rhema_session';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -50,10 +87,13 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'X-Permitted-Cross-Domain-Policies': 'none',
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; " +
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; " +
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
@@ -83,6 +123,57 @@ const nowStamp = (d = new Date()) =>
     year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const newId = prefix => `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+/** Mot de passe provisoire lisible (sans caractères ambigus), avec lettres et chiffres. */
+export function temporaryPassword(length = 12) {
+  const letters = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const all = letters + digits;
+  for (;;) {
+    const bytes = crypto.randomBytes(length);
+    const out = Array.from(bytes, b => all[b % all.length]).join('');
+    if (/[a-zA-Z]/.test(out) && /\d/.test(out)) return out;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Proxys de confiance (TRUSTED_PROXIES) : « loopback », adresses IPv4 ou plages CIDR, séparées par des virgules.
+// ---------------------------------------------------------------------------
+const ipv4ToInt = ip => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  if (parts.some(n => n > 255)) return null;
+  return ((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+};
+
+export function parseRanges(spec) {
+  return String(spec || '').split(',').map(s => s.trim()).filter(Boolean).map(item => {
+    if (item === 'loopback') return { loopback: true };
+    const [addr, bits = '32'] = item.split('/');
+    const base = ipv4ToInt(addr);
+    const n = Number(bits);
+    if (base === null || !Number.isInteger(n) || n < 0 || n > 32) return null;
+    const mask = n === 0 ? 0 : (0xffffffff << (32 - n)) >>> 0;
+    return { base: (base & mask) >>> 0, mask };
+  }).filter(Boolean);
+}
+
+export function isInRanges(remote, ranges) {
+  const ip = String(remote || '').replace(/^::ffff:/i, '');
+  if (ip === '::1' || ip.startsWith('127.')) return ranges.some(r => r.loopback || (ipv4ToInt(ip) !== null && ((ipv4ToInt(ip) & r.mask) >>> 0) === r.base));
+  const v = ipv4ToInt(ip);
+  return v !== null && ranges.some(r => !r.loopback && ((v & r.mask) >>> 0) === r.base);
+}
+
+/** Décodage d'URL sans planter le serveur sur une adresse mal formée. */
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, 'Adresse invalide.');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Conversion utilisateur base <-> application
@@ -125,16 +216,19 @@ function validateClientUser(c) {
 }
 
 /** Construit un utilisateur « base » à partir d'un compte venant de l'application. */
-async function fromClientUser(c, existing, { allowHash }) {
+async function fromClientUser(c, existing, { allowHash, forceChange = false }) {
   validateClientUser(c);
   let passwordHash = existing?.passwordHash ?? null;
   let mustChangePassword = existing ? existing.mustChangePassword : true;
   // Le mot de passe en clair n'est pris en compte qu'à la création du compte
   // (l'application le renvoie tant qu'elle n'a pas relu l'annuaire du serveur).
   if (!existing && typeof c.password === 'string' && c.password) {
+    if (c.password.length < 8 || c.password.length > 200) {
+      throw new HttpError(400, `Mot de passe provisoire trop court pour ${c.name} (8 caractères minimum).`);
+    }
     // Mot de passe provisoire fourni par la Direction : à changer à la première connexion.
     passwordHash = await hashPassword(c.password);
-    mustChangePassword = c.mustChangePassword ?? true;
+    mustChangePassword = forceChange ? true : (c.mustChangePassword ?? true);
   } else if (allowHash && isPasswordHash(c.passwordHash)) {
     passwordHash = c.passwordHash;
     mustChangePassword = !!c.mustChangePassword;
@@ -165,11 +259,38 @@ export function createApp({ db, config }) {
   const loginAttempts = new Map(); // ip -> { count, resetAt }
 
   // --- utilitaires HTTP ----------------------------------------------------
-  const isHttps = req =>
-    !!req.socket.encrypted || (config.trustProxy && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
 
-  const clientIp = req =>
-    (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || '';
+  // Les en-têtes X-Forwarded-* ne sont crus que s'ils viennent d'un proxy de confiance
+  // (par défaut : le NAS lui-même ou le réseau interne de Docker). Un poste qui contacterait
+  // directement le serveur ne peut donc pas s'inventer une adresse pour contourner les limites.
+  const trustedRanges = parseRanges(config.trustedProxies ?? 'loopback,172.16.0.0/12');
+  const fromTrustedProxy = req => config.trustProxy && isInRanges(req.socket.remoteAddress || '', trustedRanges);
+  const isHttps = req =>
+    !!req.socket.encrypted || (fromTrustedProxy(req) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
+
+  // Derrière un reverse proxy (DSM, Nginx), la DERNIÈRE adresse de X-Forwarded-For est celle
+  // ajoutée par le proxy lui-même : les précédentes viennent du client et peuvent être inventées.
+  const clientIp = req => {
+    if (fromTrustedProxy(req)) {
+      const chain = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+      if (chain.length) return chain[chain.length - 1].slice(0, 64);
+    }
+    return req.socket.remoteAddress || '';
+  };
+
+  /** Limite de débit par adresse (connexion, vérification de mot de passe). */
+  function rateLimit(bucket, ip, max, windowMs) {
+    const now = Date.now();
+    const key = `${bucket}:${ip}`;
+    const rl = loginAttempts.get(key);
+    if (rl && rl.resetAt > now && rl.count >= max) {
+      throw new HttpError(429, 'Trop de tentatives depuis ce poste. Réessayez dans quelques minutes.');
+    }
+    loginAttempts.set(key, rl && rl.resetAt > now ? { ...rl, count: rl.count + 1 } : { count: 1, resetAt: now + windowMs });
+    if (loginAttempts.size > 10_000) {
+      for (const [k, v] of loginAttempts) if (v.resetAt <= now) loginAttempts.delete(k);
+    }
+  }
 
   function baseHeaders(req) {
     const h = { ...SECURITY_HEADERS };
@@ -217,7 +338,12 @@ export function createApp({ db, config }) {
     const out = {};
     for (const part of String(req.headers.cookie || '').split(';')) {
       const i = part.indexOf('=');
-      if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      if (i <= 0) continue;
+      try {
+        out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      } catch {
+        /* cookie mal formé : ignoré */
+      }
     }
     return out;
   }
@@ -307,8 +433,173 @@ export function createApp({ db, config }) {
     const s = await loadSession(req);
     if (!s) throw new HttpError(401, 'Session expirée ou absente. Reconnectez-vous.');
     if (s.pending && !allowPending) throw new HttpError(403, 'Vous devez d\'abord choisir un nouveau mot de passe.');
+    // Pointage automatique : toute activité dans l'application compte comme présence.
+    if (!s.pending) await recordAttendance(s.user, 'activite').catch(err => console.error('[pointage]', err));
     return s;
   }
+
+  // --- pointage automatique -------------------------------------------------
+  // Arrivée à la première activité du jour, départ à la déconnexion (ou à la dernière activité),
+  // pauses déclarées par l'agent. Horloge du serveur ; un mois de pointages par clé « pointage.AAAA-MM ».
+  const timeZone = config.timeZone || process.env.TZ || DEFAULT_TIME_ZONE;
+  const lastActivity = new Map(); // userId -> { day, at } : une écriture par minute au plus
+  let attendanceQueue = Promise.resolve();
+
+  /** Met à jour un mois de pointages, l'un après l'autre (pas d'écritures concurrentes). */
+  function updateAttendanceMonth(key, userId, change) {
+    const run = attendanceQueue.then(async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const current = await db.getData(key);
+        const list = current ? JSON.parse(current.value) : [];
+        const r = change(Array.isArray(list) ? list : []);
+        if (!r.changed) return r;
+        const put = await db.putData(key, JSON.stringify(r.days), current?.version ?? 0, userId);
+        if (put.ok) return r;
+      }
+      throw new Error(`Pointage : écriture impossible (${key}).`);
+    });
+    attendanceQueue = run.catch(() => {});
+    return run;
+  }
+
+  /** Enregistre un événement de pointage pour l'utilisateur (heure du serveur). */
+  async function recordAttendance(user, type) {
+    const now = new Date();
+    const today = localDay(now, timeZone);
+    if (type === 'activite') {
+      const last = lastActivity.get(user.id);
+      if (last && last.day === today && now.getTime() - last.at < 60_000) return null;
+      lastActivity.set(user.id, { day: today, at: now.getTime() });
+    } else if (type === 'depart') {
+      // Le prochain retour (même dans la minute) doit rouvrir la journée.
+      lastActivity.delete(user.id);
+    }
+    const who = { id: user.id, name: user.name };
+    const nowIso = now.toISOString();
+    // Début de mois : une journée du mois précédent peut être restée ouverte.
+    if (today.slice(8) <= '07') {
+      await updateAttendanceMonth(`pointage.${previousMonth(today)}`, user.id, days => {
+        const mine = days.filter(d => d.userId === user.id && !d.departureAt);
+        if (!mine.length) return { days, changed: false, record: null };
+        const r = applyAttendanceEvent(days, who, 'depart', nowIso, today);
+        return { ...r, days: r.days.filter(d => d.date !== today) };
+      });
+    }
+    const r = await updateAttendanceMonth(attendanceKey(today), user.id, days => applyAttendanceEvent(days, who, type, nowIso, today));
+    return r.record;
+  }
+
+  /** Pointages visibles par un utilisateur sur une plage de jours. */
+  async function readAttendance(session, from, to) {
+    const me = accessUser(session.user);
+    const entities = await loadEntities();
+    const people = new Map((await db.listUsers()).map(u => [u.id, toClientUser(u)]));
+    const days = [];
+    for (const key of monthKeys(from, to)) {
+      const d = await db.getData(key);
+      const list = d ? JSON.parse(d.value) : [];
+      for (const day of Array.isArray(list) ? list : []) {
+        if (day.date < from || day.date > to) continue;
+        const target = people.get(day.userId) || { id: day.userId, role: 'agent' };
+        if (canSeeAttendanceOf(me, target, entities)) days.push(day);
+      }
+    }
+    return days;
+  }
+
+  // --- stocks multi-sites : journal des mouvements (shared/stock.mjs) --------
+  const readData = async key => {
+    const d = await db.getData(key);
+    return d ? { value: JSON.parse(d.value), version: d.version } : { value: null, version: 0 };
+  };
+
+  /**
+   * Règles du journal des stocks, contrôlées par le serveur à chaque écriture :
+   * - aucun stock ne devient négatif (sorties et transferts limités au stock du Site) ;
+   * - transferts cohérents (source ≠ destination, reçu ≤ envoyé, réception après l'envoi) ;
+   * - l'annulation d'un transfert en transit est réservée aux responsables de la logistique.
+   */
+  async function checkStockWrite(user, before, after) {
+    if (!Array.isArray(after)) throw new HttpError(400, 'Liste attendue.');
+    const me = accessUser(user);
+    const prevById = new Map((Array.isArray(before) ? before : []).map(m => [m.id, m]));
+    for (const m of after) {
+      const prev = prevById.get(m.id);
+      if (m.type === TRANSFER_TYPE && m.status === 'annule' && prev?.status !== 'annule' && !isLogisticsManager(me)) {
+        throw new HttpError(403, 'L\'annulation d\'un transfert est réservée aux responsables de la logistique.');
+      }
+    }
+    const settings = (await readData('logistics.settings')).value;
+    const hubs = (await readData('logistics.hubs')).value || [];
+    const catalog = (await readData('logistics.catalog')).value || [];
+    // Portails des hubs : hors centrale logistique, on ne saisit et ne réceptionne que pour son site.
+    if (!isLogisticsManager(me)) {
+      const portal = hubPortalWriteProblem(me, Array.isArray(before) ? before : [], after, hubs, settings);
+      if (portal) throw new HttpError(403, portal);
+    }
+    const problems = ledgerWriteProblems(Array.isArray(before) ? before : [], after, settings, { hubs, catalog });
+    if (problems.length) throw new HttpError(422, problems.slice(0, 3).join(' '));
+  }
+
+  /**
+   * Passage au journal des stocks (une seule fois) : les stocks enregistrés deviennent un
+   * « Stock initial » par Site et les anciens mouvements sont marqués comme déjà comptés.
+   */
+  async function migrateStockLedger() {
+    const settings = await readData('logistics.settings');
+    if (settings.value && Number(settings.value.ledgerVersion) >= LEDGER_VERSION) return;
+    const stocks = (await readData('logistics.stocks')).value || [];
+    const movements = await readData('logistics.stockMovements');
+    const hubs = (await readData('logistics.hubs')).value || [];
+    const catalog = await readData('logistics.catalog');
+    if (stocks.length || (movements.value || []).length) {
+      const today = localDay(new Date(), timeZone);
+      const r = migrateLegacyStocks(stocks, movements.value || [], hubs, today);
+      await db.putData('logistics.stockMovements', JSON.stringify(r.movements), movements.version, null);
+      if (Array.isArray(catalog.value)) {
+        const next = catalog.value.map(c => (c.minAlertThreshold === undefined && r.thresholds[c.id] !== undefined ? { ...c, minAlertThreshold: r.thresholds[c.id] } : c));
+        await db.putData('logistics.catalog', JSON.stringify(next), catalog.version, null);
+      }
+      await audit(
+        { id: 'system', name: 'Système', role: 'dg', roleTitle: 'Système' },
+        'Passage au journal des stocks',
+        'admin',
+        `Stocks repris en « Stock initial » sur ${new Set(stocks.filter(x => x.quantityAvailable > 0).map(x => x.hubId)).size} site(s) ; ${(movements.value || []).length} ancien(s) mouvement(s) conservé(s) dans l'historique.`,
+      );
+    }
+    await db.putData('logistics.settings', JSON.stringify({ ...stockSettings(settings.value), ledgerVersion: LEDGER_VERSION }), settings.version, null);
+  }
+
+  // --- retrait du module RH : effacement unique des anciennes données -------
+  const hrRetirement = (async () => {
+    let removedKeys = 0;
+    for (const row of await db.getAllData()) {
+      if (isRetiredKey(row.key)) {
+        await db.deleteData(row.key);
+        removedKeys++;
+      }
+    }
+    let removedDocs = 0;
+    const docs = await db.getData('documents');
+    if (docs) {
+      const list = JSON.parse(docs.value);
+      if (Array.isArray(list)) {
+        const kept = list.filter(d => !isRetiredHrDocument(d));
+        removedDocs = list.length - kept.length;
+        if (removedDocs > 0) await db.putData('documents', JSON.stringify(kept), docs.version, null);
+      }
+    }
+    if (removedKeys || removedDocs) {
+      console.log(`[erp-gesdoc] Module RH retiré : ${removedKeys} donnée(s) de paie et ${removedDocs} document(s) RH effacés.`);
+      await audit(
+        { id: 'system', name: 'Système', role: 'dg', roleTitle: 'Système' },
+        'Retrait du module RH',
+        'admin',
+        `Effacement des données de paie (${removedKeys} module(s) : contrats, salaires, barèmes…) et de ${removedDocs} document(s) RH (bulletins, contrats de travail, déclarations, fiches de poste, feuilles de temps).`,
+      );
+    }
+    await migrateStockLedger();
+  })().catch(err => console.error('[erp-gesdoc] Démarrage (retrait RH / journal des stocks) :', err));
 
   const requireDG = s => {
     if (s.user.role !== 'dg') throw new HttpError(403, 'Action réservée à la Direction Générale.');
@@ -331,10 +622,6 @@ export function createApp({ db, config }) {
   // Les mêmes règles que les écrans (shared/access.mjs), appliquées par le serveur :
   // ce que l'écran cache, l'API ne le renvoie pas, et ce qu'il interdit, l'API le refuse.
 
-  /** Données de paie : réservées à la Direction / RH ; un salarié ne voit que ses propres lignes. */
-  const PAYROLL_OWN_ROWS = new Set(['contracts', 'payroll.contracts', 'payroll.leaves', 'payroll.advances', 'payroll.overtime', 'payroll.disciplinary']);
-  const PAYROLL_STAFF_ONLY = new Set(['payroll.runs', 'payroll.exchangeRate', 'payrollConfigs']);
-
   /** Utilisateur au format des règles d'accès (champs du profil inclus). */
   const accessUser = u => toClientUser(u);
 
@@ -354,41 +641,57 @@ export function createApp({ db, config }) {
    * - write  : false | true | fonction « peut écrire cette ligne » (reçoit la ligne et sa version précédente)
    * - remove : fonction « peut supprimer cette ligne » (sinon la règle d'écriture s'applique)
    */
-  function policyFor(key, user, entities) {
+  function policyFor(key, user, entities, users) {
     const u = accessUser(user);
     const own = row => row && row.userId === u.id;
-    if (PAYROLL_OWN_ROWS.has(key)) {
-      return isPayrollStaff(u) ? { read: 'all', write: true } : { read: own, write: false };
-    }
-    if (PAYROLL_STAFF_ONLY.has(key)) return isPayrollStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
+    // Ancien module RH et pointages : jamais par l'API générique.
+    if (isRetiredKey(key) || isAttendanceKey(key)) return { read: 'none', write: false };
     if (key === 'securityAlerts') return isSecurityStaff(u) ? { read: 'all', write: true } : { read: 'none', write: false };
     if (key === 'organizations' || key === 'currentOrg') return { read: 'all', write: u.role === 'dg' };
-    if (key === 'entities') return { read: 'all', write: isManager(u) };
+    if (key === 'entities') {
+      // Chaque responsable ne touche qu'à sa branche (sinon il pourrait s'approprier une autre entité).
+      return {
+        read: () => true,
+        write: (e, before) => canWriteEntity(u, before, e, entities),
+        remove: e => canDeleteEntity(u, e, entities),
+      };
+    }
     if (key === 'documents') {
       // Circuit de validation : chaque visa doit venir du bon titulaire, à son tour (shared/workflow.mjs).
       return {
         read: d => canSeeDocument(u, d, entities),
-        write: (d, before) => canWriteDocumentChange(u, before, d, entities),
+        write: (d, before) => canWriteDocumentChange(u, before, d, entities, users),
         remove: d => canDeleteDocument(u, d),
       };
     }
     if (key === 'tasks') {
       return {
         read: t => canSeeTask(u, t, entities),
-        write: (t, before) => canWriteTaskChange(u, before, t, entities),
+        write: (t, before) => canWriteTaskChange(u, before, t, entities, users),
         remove: t => canDeleteTask(u, t),
       };
     }
     if (key === 'invitations') {
-      return { read: inv => canSeeInvitation(u, inv, entities), write: inv => canSeeInvitation(u, inv, entities) };
+      return {
+        read: inv => canSeeInvitation(u, inv, entities),
+        write: (inv, before) => canWriteInvitation(u, before, inv, entities),
+        remove: inv => isSecurityStaff(u) || inv.inviterUserId === u.id,
+      };
     }
     if (key === 'invitationNotifications') {
       // Une notification est créée par l'invitant pour le destinataire, puis marquée lue par celui-ci.
-      return { read: n => canSeeInvitationNotification(u, n), write: () => true };
+      return {
+        read: n => canSeeInvitationNotification(u, n),
+        write: (n, before) => canWriteInvitationNotification(u, before, n),
+        remove: () => u.role === 'dg',
+      };
     }
-    if (key.startsWith('logistics.')) return { read: 'all', write: canAccessLogistics(u) };
-    // Données opérationnelles partagées (tâches, workflows…).
-    return { read: 'all', write: true };
+    if (key.startsWith('logistics.')) {
+      // Données commerciales (fournisseurs, prix, stocks) : personnel logistique, Direction, finance.
+      return { read: canReadLogistics(u) ? 'all' : 'none', write: canAccessLogistics(u) };
+    }
+    // Donnée inconnue de l'application : lecture seule, création réservée au DG.
+    return { read: 'all', write: u.role === 'dg' };
   }
 
   /** Applique la règle de lecture à une valeur (undefined = donnée non communiquée). */
@@ -439,15 +742,34 @@ export function createApp({ db, config }) {
     return result;
   }
 
+  /**
+   * Annuaire vu par un utilisateur : chacun voit les noms, postes et rattachements de ses collègues
+   * (nécessaires aux circuits de validation), mais pas leurs données personnelles (téléphone,
+   * dernière connexion, échecs de connexion) sauf s'il gère ce compte ou en est le titulaire.
+   */
+  async function directoryFor(session, list) {
+    const me = accessUser(session.user);
+    const entities = await loadEntities();
+    const all = list ?? (await db.listUsers());
+    return all.map(u => {
+      const c = toClientUser(u);
+      if (canSeeFullAccount(me, c, entities)) return c;
+      for (const f of PRIVATE_ACCOUNT_FIELDS) delete c[f];
+      // Une convocation (procédure disciplinaire) ne regarde pas les collègues.
+      if (c.status === 'convoque') c.status = 'actif';
+      return c;
+    });
+  }
+
   async function readKey(key, session) {
-    if (key === 'users') return { value: (await db.listUsers()).map(toClientUser), version: await usersVersion() };
+    if (key === 'users') return { value: await directoryFor(session), version: await usersVersion() };
     if (key === 'auditLogs') {
       const visible = isSecurityStaff(accessUser(session.user)) ? await db.listAuditLogs(AUDIT_LIMIT) : [];
       return { value: visible, version: await db.auditVersion() };
     }
     const d = await db.getData(key);
     const raw = d ? JSON.parse(d.value) : null;
-    const policy = policyFor(key, session.user, await loadEntities());
+    const policy = policyFor(key, session.user, await loadEntities(), []);
     return { value: raw === null ? null : applyRead(policy, key, raw) ?? null, version: d?.version ?? 0 };
   }
 
@@ -469,15 +791,30 @@ export function createApp({ db, config }) {
     const ids = new Set();
     const emails = new Set();
     const result = [];
-    for (const c of incoming) {
-      validateClientUser(c);
+    for (const raw of incoming) {
+      validateClientUser(raw);
+      let c = raw;
+      const prevAccount = existing.get(c.id);
+      if (prevAccount) {
+        // Champs personnels masqués à ce responsable : on garde les valeurs enregistrées.
+        const prevClient = toClientUser(prevAccount);
+        if (!canSeeFullAccount(me, prevClient, entities)) {
+          c = { ...c };
+          for (const f of PRIVATE_ACCOUNT_FIELDS) {
+            if (prevClient[f] === undefined) delete c[f];
+            else c[f] = prevClient[f];
+          }
+          // Statut « convoqué » masqué à ce responsable (voir directoryFor) : on garde la valeur enregistrée.
+          if (prevClient.status === 'convoque' && c.status === 'actif') c.status = 'convoque';
+        }
+      }
       if (ids.has(c.id)) throw new HttpError(400, `Compte en double : ${c.id}.`);
       const email = c.email.trim().toLowerCase();
       if (emails.has(email)) throw new HttpError(400, `L'email ${c.email} est utilisé par deux comptes.`);
       ids.add(c.id);
       emails.add(email);
       const prev = existing.get(c.id);
-      const next = await fromClientUser(c, prev, { allowHash: false });
+      const next = await fromClientUser(c, prev, { allowHash: false, forceChange: true });
 
       if (!isDG && (!prev || accountSignature(prev) !== accountSignature(next))) {
         // Un responsable ne gère que des comptes de rang inférieur, dans son périmètre, avant ET après modification.
@@ -488,9 +825,10 @@ export function createApp({ db, config }) {
         if (!canManageAccount(me, toClientUser(next), entities)) {
           throw new HttpError(403, `Vous ne pouvez pas attribuer ce rôle ou ce périmètre à ${next.name}.`);
         }
-        // Droits sensibles : réservés au DG.
-        if ((next.profile?.canManagePayroll ?? null) !== (prev?.profile?.canManagePayroll ?? null)) {
-          throw new HttpError(403, 'Seule la Direction Générale peut attribuer l\'accès à la paie.');
+        const before = prev ? accessUser(prev) : null;
+        const after = toClientUser(next);
+        if (canAccessLogistics(after) && !(before && canAccessLogistics(before)) && !canAccessLogistics(me)) {
+          throw new HttpError(403, `Ce poste donne accès au module logistique : demandez à la Direction ou à la logistique de l'attribuer à ${next.name}.`);
         }
       }
       result.push(next);
@@ -546,7 +884,10 @@ export function createApp({ db, config }) {
     for (const [k, v] of Object.entries(data)) {
       if (k === 'users' || k === 'auditLogs' || k === 'session') continue;
       if (!DATA_KEY_RE.test(k)) throw new HttpError(400, `Nom de donnée invalide : ${k}`);
-      const json = JSON.stringify(v);
+      // Ancienne sauvegarde : les données du module RH supprimé ne sont pas restaurées.
+      if (isRetiredKey(k)) continue;
+      // Logo, en-tête et pied de page : images intégrées PNG/JPEG uniquement.
+      const json = JSON.stringify(stripRetiredHr(k, sanitizeOrgData(k, v)));
       if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, `Donnée « ${k} » trop volumineuse.`);
       entries.push([k, json]);
     }
@@ -602,7 +943,7 @@ export function createApp({ db, config }) {
       await prependToData('securityAlerts', {
         id: newId('sec'), timestamp: nowStamp(), userId: user.id, userName: user.name, userRole: user.role,
         userEntityName: user.profile?.departmentName || user.profile?.roleTitle || '', targetEntityId: 'auth',
-        targetEntityName: context === 'signature' ? 'Signature électronique' : 'Écran de connexion', attemptCount: attempts,
+        targetEntityName: { signature: 'Signature électronique', 'changement de mot de passe': 'Changement de mot de passe' }[context] || 'Écran de connexion', attemptCount: attempts,
         status: temporary ? 'alerte_emise' : 'compte_verrouille', severity: 'critique', ipAddress: ip,
         reason: temporary
           ? `${attempts} mots de passe erronés sur le compte DG : blocage temporaire de 15 minutes.`
@@ -614,7 +955,7 @@ export function createApp({ db, config }) {
         : 'Trop de tentatives : le compte a été verrouillé. Contactez la Direction Générale.');
     }
     const remaining = MAX_FAILED_ATTEMPTS - attempts;
-    return new HttpError(401, `${context === 'signature' ? 'Mot de passe incorrect.' : 'Identifiant ou mot de passe incorrect.'} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${user.role === 'dg' ? 'blocage temporaire' : 'verrouillage'} du compte.`);
+    return new HttpError(401, `${context === 'connexion' ? 'Identifiant ou mot de passe incorrect.' : 'Mot de passe incorrect.'} Il vous reste ${remaining} essai${remaining > 1 ? 's' : ''} avant le ${user.role === 'dg' ? 'blocage temporaire' : 'verrouillage'} du compte.`);
   }
 
   // --- routes API ----------------------------------------------------------
@@ -634,11 +975,13 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, {
         initialized,
         setupCodeRequired: !!config.setupCode,
-        organization: o ? { id: o.id, name: o.name, logo: o.logo, registrationNumber: o.registrationNumber, type: o.type } : null,
+        organization: o ? { id: o.id, name: o.name, logo: o.logo, registrationNumber: o.registrationNumber, type: o.type, headquarters: o.headquarters } : null,
       });
     }
 
     if (p === '/api/setup' && method === 'POST') {
+      // Empêche de deviner le code d'installation par essais successifs.
+      rateLimit('setup', clientIp(req), 10, 15 * 60_000);
       const body = await readJson(req);
       if ((await db.countUsers()) > 0) throw new HttpError(409, 'L\'application est déjà initialisée.');
       if (config.setupCode && !safeEqualStrings(body.setupCode ?? '', config.setupCode)) {
@@ -649,6 +992,7 @@ export function createApp({ db, config }) {
       const auditEntries = prepareAudit(body.data?.auditLogs);
       try {
         await db.replaceAllData(entries, users, auditEntries);
+        await migrateStockLedger().catch(err => console.error('[stocks]', err));
       } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') throw new HttpError(400, 'Deux comptes utilisent le même email.');
         throw err;
@@ -662,11 +1006,7 @@ export function createApp({ db, config }) {
     if (p === '/api/auth/login' && method === 'POST') {
       const ip = clientIp(req);
       const now = Date.now();
-      const rl = loginAttempts.get(ip);
-      if (rl && rl.resetAt > now && rl.count >= 30) {
-        throw new HttpError(429, 'Trop de tentatives depuis ce poste. Réessayez dans quelques minutes.');
-      }
-      loginAttempts.set(ip, rl && rl.resetAt > now ? { ...rl, count: rl.count + 1 } : { count: 1, resetAt: now + 15 * 60_000 });
+      rateLimit('login', ip, 30, 15 * 60_000);
 
       const body = await readJson(req);
       const identifier = String(body.identifier ?? '').slice(0, 190);
@@ -685,14 +1025,16 @@ export function createApp({ db, config }) {
 
       const lastLogin = nowStamp();
       const { lockedUntil: _expired, ...profile } = user.profile || {};
-      await db.updateUser(user.id, { failedAttempts: 0, lastLogin, profile });
+      // Empreinte ancienne (moins d'itérations) : renforcée de façon transparente.
+      const rehash = needsRehash(user.passwordHash) ? { passwordHash: await hashPassword(password) } : {};
+      await db.updateUser(user.id, { failedAttempts: 0, lastLogin, profile, ...rehash });
       await db.bump(USERS_VERSION_KEY);
       const token = newSessionToken();
       await db.createSession({
         tokenHash: hashToken(token), userId: user.id, pending: user.mustChangePassword,
         createdAt: now, lastSeen: now, ip, userAgent: String(req.headers['user-agent'] || ''),
       });
-      loginAttempts.delete(ip);
+      loginAttempts.delete(`login:${ip}`);
       await audit(user, 'Connexion Certifiée (Identifiants)', 'auth', `Authentification réussie pour ${user.name} (${user.role.toUpperCase()}).`);
       return sendJson(req, res, 200,
         { user: toClientUser({ ...user, lastLogin, failedAttempts: 0 }), mustChangePassword: user.mustChangePassword },
@@ -707,9 +1049,11 @@ export function createApp({ db, config }) {
 
     if (p === '/api/auth/change-password' && method === 'POST') {
       const s = await requireSession(req, { allowPending: true });
+      rateLimit('password', clientIp(req), 30, 15 * 60_000);
       const body = await readJson(req);
       if (!s.pending && !(await verifyPassword(String(body.currentPassword ?? ''), s.user.passwordHash))) {
-        throw new HttpError(400, 'Mot de passe actuel incorrect.');
+        // Compte comme une tentative : on ne devine pas un mot de passe avec une session volée.
+        throw await registerFailedAttempt(await db.getUser(s.user.id), 'changement de mot de passe', clientIp(req));
       }
       const next = String(body.newPassword ?? '');
       const weak = validatePasswordStrength(next, s.user);
@@ -727,6 +1071,7 @@ export function createApp({ db, config }) {
     // Les échecs comptent comme des tentatives de connexion : 5 erreurs verrouillent le compte.
     if (p === '/api/auth/verify-password' && method === 'POST') {
       const s = await requireSession(req);
+      rateLimit('password', clientIp(req), 30, 15 * 60_000);
       const body = await readJson(req);
       const fresh = await db.getUser(s.user.id);
       const blocked = lockMessage(fresh);
@@ -744,10 +1089,37 @@ export function createApp({ db, config }) {
     if (p === '/api/auth/logout' && method === 'POST') {
       const s = await loadSession(req);
       if (s) {
+        // Pointage : la déconnexion marque le départ.
+        if (!s.pending) await recordAttendance(s.user, 'depart').catch(err => console.error('[pointage]', err));
         await db.deleteSession(s.tokenHash);
         await audit(s.user, 'Clôture de Session (Déconnexion)', 'auth', `Session de ${s.user.name} fermée.`);
       }
       return sendJson(req, res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+    }
+
+    // Réinitialisation d'un mot de passe oublié par la Direction ou le responsable du compte.
+    // Le mot de passe provisoire n'est affiché qu'une fois ; il devra être changé à la connexion.
+    const reset = p.match(/^\/api\/users\/([^/]+)\/reset-password$/);
+    if (reset && method === 'POST') {
+      const s = await requireSession(req);
+      const target = await db.getUser(safeDecode(reset[1]));
+      if (!target) throw new HttpError(404, 'Compte introuvable.');
+      if (target.id === s.user.id) throw new HttpError(400, 'Pour votre propre compte, utilisez « Changer mon mot de passe ».');
+      const entities = await loadEntities();
+      if (s.user.role !== 'dg' && !canManageAccount(accessUser(s.user), accessUser(target), entities)) {
+        throw new HttpError(403, `Vous n'avez pas autorité sur le compte de ${target.name}.`);
+      }
+      const temp = temporaryPassword();
+      const { lockedUntil: _l, ...profile } = target.profile || {};
+      await db.updateUser(target.id, {
+        passwordHash: await hashPassword(temp), mustChangePassword: true, failedAttempts: 0, profile,
+        status: target.status === 'verrouille' ? 'actif' : target.status,
+      });
+      await db.deleteUserSessions(target.id, '');
+      await db.bump(USERS_VERSION_KEY);
+      await audit(s.user, 'Réinitialisation de Mot de Passe', 'security',
+        `${s.user.name} a réinitialisé le mot de passe de ${target.name} (mot de passe provisoire, changement obligatoire).`);
+      return sendJson(req, res, 200, { temporaryPassword: temp });
     }
 
     // ----- Données (session obligatoire) -----
@@ -758,8 +1130,10 @@ export function createApp({ db, config }) {
       const versions = {};
       for (const row of await db.getAllData()) {
         if (row.key.startsWith('_')) continue;
+        const policy = policyFor(row.key, s.user, entities, []);
+        if (policy.read === 'none') continue;
         versions[row.key] = row.version;
-        const visible = applyRead(policyFor(row.key, s.user, entities), row.key, JSON.parse(row.value));
+        const visible = applyRead(policy, row.key, JSON.parse(row.value));
         if (visible !== null && visible !== undefined) values[row.key] = visible;
       }
       for (const key of ['users', 'auditLogs']) {
@@ -771,8 +1145,16 @@ export function createApp({ db, config }) {
     }
 
     if (p === '/api/data/versions' && method === 'GET') {
-      await requireSession(req);
-      return sendJson(req, res, 200, { versions: await allVersions() });
+      const s = await requireSession(req);
+      // On ne révèle pas l'activité des données auxquelles l'utilisateur n'a pas accès (paie, sécurité…).
+      const entities = await loadEntities();
+      const versions = await allVersions();
+      for (const k of Object.keys(versions)) {
+        if (k === 'users' || k === 'auditLogs') continue;
+        if (policyFor(k, s.user, entities, []).read === 'none') delete versions[k];
+      }
+      if (!isSecurityStaff(accessUser(s.user))) delete versions.auditLogs;
+      return sendJson(req, res, 200, { versions });
     }
 
     // Vérification de l'intégrité du journal (chaîne d'empreintes).
@@ -789,16 +1171,37 @@ export function createApp({ db, config }) {
       return sendJson(req, res, 200, r);
     }
 
+    // ----- Pointage automatique -----
+    if (p === '/api/pointage' && method === 'GET') {
+      const s = await requireSession(req);
+      const today = localDay(new Date(), timeZone);
+      const from = url.searchParams.get('from') || today;
+      const to = url.searchParams.get('to') || today;
+      if (!validRange(from, to)) throw new HttpError(400, 'Période invalide (93 jours au plus, dates AAAA-MM-JJ).');
+      return sendJson(req, res, 200, { today, now: new Date().toISOString(), days: await readAttendance(s, from, to) });
+    }
+
+    if (p === '/api/pointage' && method === 'POST') {
+      const s = await requireSession(req);
+      const body = await readJson(req);
+      // L'agent ne déclare que ses pauses ; arrivée et départ sont automatiques.
+      if (!['pause', 'reprise'].includes(body?.type) || !ATTENDANCE_EVENTS.includes(body.type)) {
+        throw new HttpError(400, 'Événement de pointage invalide (pause ou reprise).');
+      }
+      const record = await recordAttendance(s.user, body.type);
+      return sendJson(req, res, 200, { today: localDay(new Date(), timeZone), now: new Date().toISOString(), day: record });
+    }
+
     if (p === '/api/data/export' && method === 'GET') {
       const s = await requireSession(req);
       requireDG(s);
       const data = {};
-      for (const row of await db.getAllData()) if (!row.key.startsWith('_')) data[row.key] = JSON.parse(row.value);
+      for (const row of await db.getAllData()) if (!row.key.startsWith('_') && !isRetiredKey(row.key)) data[row.key] = JSON.parse(row.value);
       data.users = (await db.listUsers()).map(u => ({ ...toClientUser(u), passwordHash: u.passwordHash }));
       data.auditLogs = await db.listAuditLogs(AUDIT_LIMIT);
       await audit(s.user, 'Export de sauvegarde', 'admin', 'Téléchargement d\'une sauvegarde complète depuis le serveur.');
-      return sendJson(req, res, 200, { app: 'rhema-business', version: 1, exportedAt: new Date().toISOString(), data }, {
-        'Content-Disposition': `attachment; filename="rhema-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
+      return sendJson(req, res, 200, { app: 'erp-gesdoc', version: 1, exportedAt: new Date().toISOString(), data }, {
+        'Content-Disposition': `attachment; filename="erp-gesdoc-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
       });
     }
 
@@ -806,8 +1209,9 @@ export function createApp({ db, config }) {
       const s = await requireSession(req);
       requireDG(s);
       const backup = await readJson(req);
-      if (!backup || backup.app !== 'rhema-business' || typeof backup.data !== 'object') {
-        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde RHEMA Business.');
+      // Les anciens noms (« erp-workflow », « rhema-business ») restent acceptés pour les sauvegardes existantes.
+      if (!backup || !['erp-gesdoc', 'erp-workflow', 'rhema-business'].includes(backup.app) || typeof backup.data !== 'object') {
+        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde ERP-GESDOC.');
       }
       const users = await prepareUsers(backup.data.users);
       if (!users.some(u => u.id === s.user.id || u.email.toLowerCase() === s.user.email.toLowerCase())) {
@@ -816,6 +1220,7 @@ export function createApp({ db, config }) {
       const entries = prepareDataEntries(backup.data);
       const auditEntries = prepareAudit(backup.data.auditLogs);
       await db.replaceAllData(entries, users, auditEntries);
+      await migrateStockLedger().catch(err => console.error("[stocks]", err));
       await db.bump(USERS_VERSION_KEY);
       await audit(s.user, 'Restauration de sauvegarde', 'admin', `Restauration complète (${users.length} comptes, ${entries.length} modules).`);
       return sendJson(req, res, 200, { ok: true, relogin: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
@@ -823,9 +1228,10 @@ export function createApp({ db, config }) {
 
     const m = p.match(/^\/api\/data\/([^/]+)$/);
     if (m) {
-      const key = decodeURIComponent(m[1]);
+      const key = safeDecode(m[1]);
       if (!DATA_KEY_RE.test(key)) throw new HttpError(400, 'Nom de donnée invalide.');
       const s = await requireSession(req);
+      if (isRetiredKey(key)) throw new HttpError(410, 'Le module RH / paie a été retiré de l\'application.');
 
       if (method === 'GET') return sendJson(req, res, 200, await readKey(key, s));
 
@@ -859,14 +1265,16 @@ export function createApp({ db, config }) {
         if (key === 'users') {
           const current = await usersVersion();
           if (body.version !== current) {
-            return sendJson(req, res, 409, { error: 'conflict', value: (await db.listUsers()).map(toClientUser), version: current });
+            return sendJson(req, res, 409, { error: 'conflict', value: await directoryFor(s), version: current });
           }
           await syncUsers(s, body.value);
           return sendJson(req, res, 200, { version: await usersVersion() });
         }
 
         const entities = await loadEntities();
-        const policy = policyFor(key, s.user, entities);
+        // L'annuaire sert à vérifier que le circuit d'un document est bien celui de l'organigramme.
+        const users = key === 'documents' || key === 'tasks' ? (await db.listUsers()).map(toClientUser) : [];
+        const policy = policyFor(key, s.user, entities, users);
         const current = await db.getData(key);
         const expected = Number(body.version) || 0;
         if ((current?.version ?? 0) !== expected) {
@@ -883,6 +1291,24 @@ export function createApp({ db, config }) {
           value = mergeFilteredWrite(policy, current ? JSON.parse(current.value) : [], body.value);
         } else if (!policy.write) {
           throw new HttpError(403, 'Vous n\'avez pas le droit de modifier ces données.');
+        }
+        value = stripRetiredHr(key, sanitizeOrgData(key, value));
+        if (key === 'logistics.stockMovements') await checkStockWrite(s.user, current ? JSON.parse(current.value) : [], value);
+        // Organigramme interne des hubs : son responsable ou la centrale ; structure toujours contrôlée.
+        if (key === 'logistics.hubOrgs') {
+          const hubsNow = (await readData('logistics.hubs')).value || [];
+          if (!isLogisticsManager(accessUser(s.user))) {
+            const why = hubOrgWriteProblem(accessUser(s.user), current ? JSON.parse(current.value) : {}, value, hubsNow);
+            if (why) throw new HttpError(403, why);
+          }
+          for (const [hubId, units] of Object.entries(value || {})) {
+            const issues = hubOrgIssues(units);
+            if (issues.length) throw new HttpError(422, `${(hubsNow.find(h => h.id === hubId) || {}).name || hubId} : ${issues[0]}`);
+          }
+        }
+        // Sites (et leurs équipes), catalogue et paramètres des stocks : gérés par la centrale logistique.
+        if (['logistics.hubs', 'logistics.catalog', 'logistics.settings'].includes(key) && !isLogisticsManager(accessUser(s.user))) {
+          throw new HttpError(403, 'Les sites, leurs équipes, le catalogue et les paramètres des stocks sont gérés par la centrale logistique.');
         }
         const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
@@ -907,7 +1333,7 @@ export function createApp({ db, config }) {
       res.writeHead(404, { ...baseHeaders(req), 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Application non compilée (dossier dist introuvable).');
     }
-    let rel = decodeURIComponent(url.pathname);
+    let rel = safeDecode(url.pathname);
     let file = path.join(distDir, path.normalize(rel).replace(/^([/\\])+/, ''));
     if (!file.startsWith(distDir)) file = path.join(distDir, 'index.html');
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -937,7 +1363,16 @@ export function createApp({ db, config }) {
   return async function handler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     try {
-      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      if (url.pathname.startsWith('/api/')) {
+        // Défense en profondeur contre les requêtes forgées depuis un autre site (CSRF) :
+        // les navigateurs indiquent l'origine de chaque requête dans Sec-Fetch-Site.
+        const site = String(req.headers['sec-fetch-site'] || '');
+        if (req.method !== 'GET' && req.method !== 'HEAD' && site && site !== 'same-origin' && site !== 'none') {
+          throw new HttpError(403, 'Requête refusée : elle ne provient pas de l\'application.');
+        }
+        await hrRetirement;
+        return await handleApi(req, res, url);
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Méthode non autorisée.');
       return serveStatic(req, res, url);
     } catch (err) {

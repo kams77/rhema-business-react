@@ -59,9 +59,9 @@ test("Demande d'achat > 5 000 USD : hiérarchie, Finance, puis DG", () => {
   assert.deepEqual(labels(steps), ['chef_service:srv-vsat', 'directeur:dir-vsat', 'directeur:dir-finance', 'dg:']);
 });
 
-test('Demande de congé : chef de service, (division vacante → directeur), puis RH — visa final', () => {
+test('Demande de congé : chef de service, puis (division vacante) directeur — visa final, sans étape RH', () => {
   const steps = buildDocumentChain(newDoc(agentVsat, 'demande_conge'), agentVsat, entities, users);
-  assert.deepEqual(labels(steps), ['chef_service:srv-vsat', 'directeur:dir-vsat', 'directeur:dir-rh']);
+  assert.deepEqual(labels(steps), ['chef_service:srv-vsat', 'directeur:dir-vsat']);
   assert.equal(steps.at(-1).kind, 'visa');
 });
 

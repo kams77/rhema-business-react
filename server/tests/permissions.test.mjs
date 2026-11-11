@@ -48,7 +48,8 @@ await login(boss, DG.identifier, DG.password);
 
 const entities = [
   { id: 'dep-tech', name: 'Département Technique', code: 'TECH', level: 'departement', organizationId: 'o' },
-  { id: 'svc-vsat', name: 'Service VSAT', code: 'VSAT', level: 'service', parentId: 'dep-tech', organizationId: 'o' },
+  { id: 'dir-tech', name: 'Direction Technique', code: 'DTECH', level: 'direction', parentId: 'dep-tech', organizationId: 'o' },
+  { id: 'svc-vsat', name: 'Service VSAT', code: 'VSAT', level: 'service', parentId: 'dir-tech', organizationId: 'o' },
   { id: 'svc-compta', name: 'Service Comptabilité', code: 'CPT', level: 'service', organizationId: 'o' },
 ];
 assert((await put(boss, 'entities', entities)).status === 200, 'DG : organigramme enregistré');
@@ -56,23 +57,19 @@ assert((await put(boss, 'entities', entities)).status === 200, 'DG : organigramm
 const base = { organizationId: 'o', status: 'actif', failedAccessAttempts: 0, canCreateSubAgents: false };
 let users = (await boss('GET', '/api/data/users')).json.value;
 users = users.filter(u => !['p-chef', 'p-ag1', 'p-ag2', 'p-dir'].includes(u.id)).concat([
-  { ...base, id: 'p-dir', name: 'Directeur Technique', email: 'dir@perm.cd', role: 'directeur', roleTitle: 'Directeur Technique', departementId: 'dep-tech', password: 'Temp-Directeur-1' },
-  { ...base, id: 'p-chef', name: 'Chef VSAT', email: 'chef@perm.cd', role: 'chef_service', roleTitle: 'Chef de service VSAT', departementId: 'dep-tech', serviceId: 'svc-vsat', password: 'Temp-ChefVsat-1' },
-  { ...base, id: 'p-ag1', name: 'Technicien Un', email: 'tech1@perm.cd', role: 'agent', roleTitle: 'Technicien VSAT', departementId: 'dep-tech', serviceId: 'svc-vsat', password: 'Temp-Tech1-xx1' },
-  { ...base, id: 'p-ag2', name: 'Comptable Deux', email: 'cpt2@perm.cd', role: 'agent', roleTitle: 'Comptable', serviceId: 'svc-compta', password: 'Temp-Cpt2-xx22' },
+  { ...base, id: 'p-dir', name: 'Directeur Technique', email: 'dir@perm.cd', role: 'directeur', roleTitle: 'Directeur Technique', departementId: 'dep-tech', directionId: 'dir-tech', password: 'Temp-Directeur-1' },
+  { ...base, id: 'p-chef', name: 'Chef VSAT', email: 'chef@perm.cd', role: 'chef_service', roleTitle: 'Chef de service VSAT', departementId: 'dep-tech', directionId: 'dir-tech', serviceId: 'svc-vsat', password: 'Temp-ChefVsat-1' },
+  { ...base, id: 'p-ag1', name: 'Technicien Un', email: 'tech1@perm.cd', role: 'agent', roleTitle: 'Technicien VSAT', departementId: 'dep-tech', directionId: 'dir-tech', serviceId: 'svc-vsat', phone: '+243 810 000 001', password: 'Temp-Tech1-xx1' },
+  { ...base, id: 'p-ag2', name: 'Comptable Deux', email: 'cpt2@perm.cd', role: 'agent', roleTitle: 'Comptable', serviceId: 'svc-compta', phone: '+243 990 000 002', password: 'Temp-Cpt2-xx22' },
 ]);
 assert((await put(boss, 'users', users)).status === 200, 'DG : comptes de test créés');
 
-const contracts = [
-  { id: 'k1', userId: 'p-ag1', matricule: 'M1', baseSalary: 900, salaryCurrency: 'USD' },
-  { id: 'k2', userId: 'p-ag2', matricule: 'M2', baseSalary: 1400, salaryCurrency: 'USD' },
-  { id: 'k3', userId: 'p-chef', matricule: 'M3', baseSalary: 2000, salaryCurrency: 'USD' },
-];
-assert((await put(boss, 'contracts', contracts)).status === 200, 'DG : contrats enregistrés');
-assert((await put(boss, 'payroll.runs', [{ id: 'r1', month: '2026-10' }])).status === 200, 'DG : période de paie enregistrée');
+// Module RH / paie retiré : ses données ne passent plus par l'API, même pour le DG.
+assert((await put(boss, 'contracts', [{ id: 'k1', userId: 'p-ag1', baseSalary: 900 }])).status === 410, 'module RH retiré : contrats refusés (410)');
+assert((await put(boss, 'payroll.runs', [{ id: 'r1', month: '2026-10' }])).status === 410, 'module RH retiré : périodes de paie refusées (410)');
+assert((await put(boss, 'documents', [{ id: 'doc-pay', title: 'Bulletin', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag1', authorId: 'dg' }])).status === 403,
+  'module RH retiré : plus de création de bulletin de paie, même par le DG');
 const documents = [
-  { id: 'doc-pay-ag2', title: 'Bulletin Comptable', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag2', authorId: 'dg' },
-  { id: 'doc-pay-ag1', title: 'Bulletin Technicien', subtype: 'bulletin_de_paie', isConfidentialPayslip: true, targetUserId: 'p-ag1', authorId: 'dg' },
   { id: 'doc-compta', title: 'Note comptable', targetEntityId: 'svc-compta', authorId: 'dg' },
   { id: 'doc-vsat', title: 'Procédure VSAT', targetEntityId: 'svc-vsat', authorId: 'dg' },
 ];
@@ -86,19 +83,14 @@ await login(tech, 'tech1@perm.cd', 'Temp-Tech1-xx1', 'Technicien-VSAT-2026');
 let r = await tech('GET', '/api/data');
 assert(r.status === 200, 'agent : chargement des données');
 const v = r.json.values;
-assert(v.contracts.length === 1 && v.contracts[0].userId === 'p-ag1', 'agent : ne voit que son propre contrat');
-assert(v['payroll.runs'] === undefined, 'agent : périodes de paie invisibles');
+assert(v.contracts === undefined && v['payroll.runs'] === undefined, 'agent : aucune donnée de paie');
 assert(Array.isArray(v.auditLogs) && v.auditLogs.length === 0, 'agent : journal d\'audit invisible');
 assert(!v.securityAlerts || v.securityAlerts.length === 0, 'agent : alertes de sécurité invisibles');
 const visibleDocs = v.documents.map(d => d.id).sort();
-assert(JSON.stringify(visibleDocs) === JSON.stringify(['doc-pay-ag1', 'doc-vsat']), `agent : voit son bulletin et les documents de son service (${visibleDocs})`);
+assert(JSON.stringify(visibleDocs) === JSON.stringify(['doc-vsat']), `agent : voit les documents de son service (${visibleDocs})`);
 
 r = await tech('GET', '/api/data/contracts');
-assert(r.json.value.length === 1, 'agent : lecture directe filtrée');
-r = await put(tech, 'contracts', [{ ...contracts[0], baseSalary: 99999 }]);
-assert(r.status === 403, 'agent : ne peut pas modifier son salaire');
-r = await put(tech, 'payroll.runs', []);
-assert(r.status === 403, 'agent : ne peut pas toucher aux périodes de paie');
+assert(r.status === 410, 'module RH retiré : lecture des contrats refusée (410)');
 r = await put(tech, 'securityAlerts', []);
 assert(r.status === 403, 'agent : ne peut pas effacer les alertes');
 r = await put(tech, 'organizations', []);
@@ -107,13 +99,13 @@ assert(r.status === 403, 'agent : ne peut pas modifier l\'organisation');
 // Documents : ajout d'un document de son service ; les documents cachés restent intacts
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', {
-  value: [{ id: 'doc-new', title: 'Rapport intervention', targetEntityId: 'svc-vsat', authorId: 'p-ag1' }, ...r.json.value],
+  value: [{ id: 'doc-new', title: 'Rapport intervention', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'brouillon' }, ...r.json.value],
   version: r.json.version,
 });
 assert(r.status === 200, 'agent : peut ajouter un document de son service');
 r = await boss('GET', '/api/data/documents');
 const all = r.json.value.map(d => d.id);
-assert(all.includes('doc-pay-ag2') && all.includes('doc-compta') && all.includes('doc-new'), 'documents cachés à l\'agent conservés après son enregistrement');
+assert(all.includes('doc-compta') && all.includes('doc-new'), 'documents cachés à l\'agent conservés après son enregistrement');
 
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', { value: r.json.value.filter(d => d.id !== 'doc-vsat'), version: r.json.version });
@@ -167,17 +159,35 @@ assert(r.status === 403, 'chef de service : ne peut pas promouvoir un agent à s
 u = await usersNow(chef);
 r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, canApproveServiceDocuments: true } : x)), version: u.version });
 assert(r.status === 200, 'chef de service : peut déléguer le visa à un agent de son service');
-u = await usersNow(chef);
-r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, canManagePayroll: true } : x)), version: u.version });
-assert(r.status === 403, 'chef de service : ne peut pas donner l\'accès à la paie');
 
 // ---------------------------------------------------------------------------
 // Circuit de validation : chaque visa revient au bon titulaire, dans l'ordre
 // ---------------------------------------------------------------------------
 const wfSteps = [
   { id: 'e1', kind: 'visa', approverRole: 'chef_service', entityId: 'svc-vsat', label: 'Chef VSAT', status: 'en_attente' },
-  { id: 'e2', kind: 'signature', approverRole: 'directeur', approverUserId: 'p-dir', label: 'Directeur', status: 'en_attente' },
+  { id: 'e2', kind: 'signature', approverRole: 'directeur', entityId: 'dir-tech', label: 'Directeur', status: 'en_attente' },
 ];
+// Circuit inventé par l'émetteur (un complice comme unique valideur) : refusé.
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', {
+  value: [{ id: 'doc-complice', title: 'Achat urgent', subtype: 'note_service', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'en_revue',
+    workflow: { cycle: 1, submittedAt: '2026-10-08T10:00:00Z', steps: [{ id: 'x1', kind: 'signature', approverRole: 'agent', approverUserId: 'p-ag2', label: 'Complice', status: 'en_attente' }], history: [] } }, ...r.json.value],
+  version: r.json.version,
+});
+assert(r.status === 403, 'circuit : l\'émetteur ne peut pas choisir lui-même ses valideurs');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', {
+  value: [{ id: 'doc-faux-signe', title: 'Attestation', subtype: 'note_service', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'signe',
+    electronicSignature: { signedBy: 'Directrice Test', signedAt: '2026-10-08', role: 'DG', certificateHash: 'abc' } }, ...r.json.value],
+  version: r.json.version,
+});
+assert(r.status === 403, 'document : impossible de créer un document déjà « signé » (fausse signature)');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', {
+  value: [{ id: 'doc-usurpe', title: 'Note', subtype: 'note_service', targetEntityId: 'svc-vsat', authorId: 'p-chef', status: 'brouillon' }, ...r.json.value],
+  version: r.json.version,
+});
+assert(r.status === 403, 'document : impossible de publier au nom d\'un autre');
 r = await tech('GET', '/api/data/documents');
 r = await tech('PUT', '/api/data/documents', {
   value: [{ id: 'doc-wf', title: 'Note VSAT', subtype: 'note_service', targetEntityId: 'svc-vsat', authorId: 'p-ag1', status: 'en_revue',
@@ -205,6 +215,12 @@ assert(r.status === 200, 'circuit : le chef de service vise à son tour');
 r = await dir('GET', '/api/data/documents');
 r = await dir('PUT', '/api/data/documents', { value: visa(r.json.value, 'e2', 'p-dir', { status: 'signe' }), version: r.json.version });
 assert(r.status === 200, 'circuit : le directeur signe en dernier');
+r = await tech('GET', '/api/data/documents');
+r = await tech('PUT', '/api/data/documents', { value: r.json.value.map(d => (d.id === 'doc-wf' ? { ...d, allowedRoles: ['agent'], targetEntityId: undefined } : d)), version: r.json.version });
+assert(r.status === 403, 'document signé : diffusion et contenu verrouillés');
+r = await chef('GET', '/api/data/documents');
+r = await chef('PUT', '/api/data/documents', { value: r.json.value.map(d => (d.id === 'doc-wf' ? { ...d, electronicSignature: { signedBy: 'Chef VSAT', signedAt: 'x', role: 'x', certificateHash: 'faux' } } : d)), version: r.json.version });
+assert(r.status === 403, 'document signé : la signature électronique ne peut pas être remplacée');
 
 // Tâches : l'agent ne voit que les siennes
 r = await boss('GET', '/api/data/tasks');
@@ -222,17 +238,162 @@ r = await tech('GET', '/api/data/tasks');
 assert(r.json.value.map(t => t.id).join() === 'tk-1', 'agent : ne voit que ses propres tâches');
 r = await tech('PUT', '/api/data/tasks', { value: r.json.value.map(t => ({ ...t, status: 'validee_terminee' })), version: r.json.version });
 assert(r.status === 403, 'agent : ne peut pas valider lui-même sa tâche');
+r = await chef('GET', '/api/data/tasks');
+r = await chef('PUT', '/api/data/tasks', { value: r.json.value.map(t => (t.id === 'tk-1' ? { ...t, status: 'validee_terminee' } : t)), version: r.json.version });
+assert(r.status === 403, 'créateur : ne peut pas clôturer une tâche sans le circuit de validation');
 
-// Le DG accorde l'accès paie au comptable : il voit alors tous les contrats
-u = await usersNow(boss);
-r = await boss('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag2' ? { ...x, canManagePayroll: true } : x)), version: u.version });
-assert(r.status === 200, 'DG : accorde l\'accès à la paie');
+// ---------------------------------------------------------------------------
+// Vie privée de l'annuaire et escalade de droits
+// ---------------------------------------------------------------------------
+let dirList = (await tech('GET', '/api/data/users')).json.value;
+const colleague = dirList.find(x => x.id === 'p-ag2');
+const myself = dirList.find(x => x.id === 'p-ag1');
+assert(colleague && colleague.name === 'Comptable Deux' && colleague.phone === undefined && colleague.lastLogin === undefined && colleague.failedAccessAttempts === undefined,
+  'annuaire : un agent ne voit pas le téléphone ni les connexions de ses collègues');
+assert(myself && myself.phone === '+243 810 000 001', 'annuaire : chacun voit sa propre fiche complète');
+dirList = (await chef('GET', '/api/data/users')).json.value;
+assert(dirList.find(x => x.id === 'p-ag1').phone === '+243 810 000 001', 'annuaire : le chef de service voit la fiche de ses agents');
+assert(dirList.find(x => x.id === 'p-ag2').phone === undefined, 'annuaire : mais pas celle des agents d\'un autre service');
+u = await usersNow(chef);
+r = await chef('PUT', '/api/data/users', { value: u.value.map(x => (x.id === 'p-ag1' ? { ...x, departmentName: 'Service VSAT (terrain)' } : x)), version: u.version });
+assert(r.status === 200, 'chef de service : modifie la fiche de son agent (champs masqués préservés)');
+r = (await boss('GET', '/api/data/users')).json.value.find(x => x.id === 'p-ag2');
+assert(r.phone === '+243 990 000 002', 'annuaire : les champs masqués au chef ne sont pas effacés par son enregistrement');
+u = await usersNow(chef);
+r = await chef('PUT', '/api/data/users', { value: u.value.concat([{ ...base, id: 'p-new', name: 'Nouvel Agent', email: 'new@perm.cd', role: 'agent', roleTitle: 'Technicien', serviceId: 'svc-vsat', password: 'court' }]), version: u.version });
+assert(r.status === 400, 'chef de service : mot de passe provisoire trop court refusé');
+
+// Organigramme : chacun sa branche
+r = await chef('GET', '/api/data/entities');
+r = await chef('PUT', '/api/data/entities', { value: r.json.value.map(e => (e.id === 'svc-compta' ? { ...e, parentId: 'svc-vsat' } : e)), version: r.json.version });
+assert(r.status === 403, 'organigramme : un chef ne peut pas s\'approprier une autre entité');
+r = await chef('GET', '/api/data/entities');
+r = await chef('PUT', '/api/data/entities', { value: r.json.value.map(e => (e.id === 'svc-vsat' ? { ...e, parentId: undefined } : e)), version: r.json.version });
+assert(r.status === 403, 'organigramme : un chef ne peut pas détacher son service de sa hiérarchie');
+r = await tech('GET', '/api/data/entities');
+r = await tech('PUT', '/api/data/entities', { value: r.json.value.concat([{ id: 'svc-x', name: 'X', level: 'service', parentId: 'svc-vsat' }]), version: r.json.version });
+assert(r.status === 403, 'organigramme : un agent ne peut rien modifier');
+
+// Logistique, données inconnues, invitations
+r = await boss('GET', '/api/data/logistics.suppliers');
+r = await boss('PUT', '/api/data/logistics.suppliers', { value: [{ id: 'sup1', name: 'Fournisseur', bankDetails: { ibanOrRib: 'CD00 1234' } }], version: r.json.version });
+assert(r.status === 200, 'DG : fournisseurs enregistrés');
+r = await tech('GET', '/api/data/logistics.suppliers');
+assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancaires invisibles hors logistique');
+// Journal des stocks : jamais de stock négatif ; annulation d'un transfert réservée aux responsables.
+{
+  const us = await boss('GET', '/api/data/users');
+  r = await boss('PUT', '/api/data/users', {
+    value: us.json.value.filter(x => x.id !== 'p-mag').concat([{ ...base, id: 'p-mag', name: 'Magasinier Test', email: 'mag@perm.cd', role: 'agent', roleTitle: 'Magasinier', serviceId: 'svc-vsat', password: 'Temp-Magasin-26' }]),
+    version: us.json.version,
+  });
+  assert(r.status === 200, 'DG : compte magasinier créé');
+  const mag = client();
+  await login(mag, 'mag@perm.cd', 'Temp-Magasin-26', 'Cobalt-Riviere-Nord-77');
+  assert((await put(boss, 'logistics.hubs', [
+    { id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif' },
+    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif', managerId: 'p-mag', staffIds: ['p-mag'] },
+  ])).status === 200, 'DG : sites enregistrés');
+  assert((await put(boss, 'logistics.catalog', [{ id: 'si1', sku: 'ART-1', name: 'Article test', category: 'vsat', unitPriceUSD: 10, minAlertThreshold: 2 }])).status === 200, 'DG : catalogue enregistré');
+  const line = q => [{ catalogItemId: 'si1', sku: 'ART-1', name: 'Article test', quantity: q, unitPriceUSD: 10, serialNumbers: [] }];
+  const opening = { id: 'smv-1', movementNumber: 'MV-2026-00001', type: 'stock_initial', destinationHubId: 'sh1', items: line(10), date: '2026-01-05', status: 'valide' };
+  const cur = (await boss('GET', '/api/data/logistics.stockMovements')).json.value || [];
+  assert((await put(boss, 'logistics.stockMovements', [...cur, opening])).status === 200, 'stock : stock initial enregistré');
+  r = await put(boss, 'logistics.stockMovements', [...cur, opening, { id: 'smv-2', movementNumber: 'MV-2026-00002', type: 'sortie_vente', sourceHubId: 'sh1', items: line(15), date: '2026-01-06', status: 'valide' }]);
+  assert(r.status === 422 && /insuffisant/i.test(r.json.error), 'stock : une sortie qui rendrait le stock négatif est refusée (422)');
+  const transfer = { id: 'smv-3', movementNumber: 'TR-2026-00001', type: 'transfert_inter_hub', sourceHubId: 'sh1', destinationHubId: 'sh2', items: line(4), date: '2026-01-07', sentAt: '2026-01-07', status: 'en_transit' };
+  assert((await put(boss, 'logistics.stockMovements', [...cur, opening, transfer])).status === 200, 'stock : transfert mis en transit');
+  // Portails des hubs : le magasinier fait partie de l'équipe du Site Deux seulement.
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, transfer, { id: 'smv-9', movementNumber: 'MV-2026-00009', type: 'sortie_vente', sourceHubId: 'sh1', items: line(1), date: '2026-01-07', status: 'en_attente_visa' }]);
+  assert(r.status === 403 && /équipe/.test(r.json.error), 'portail : un membre du Site Deux ne saisit pas de bon pour le Site Un');
+  r = await put(mag, 'logistics.hubs', [{ id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif', staffIds: ['p-mag'] }]);
+  assert(r.status === 403, 'portail : un magasinier ne compose pas les équipes des hubs');
+  // Organigramme interne : le responsable du Site Deux tient le sien, pas celui d'un autre hub.
+  const cel = (id, name, parentId) => ({ id, name, parentId, members: [] });
+  r = await put(mag, 'logistics.hubOrgs', { sh2: [cel('c1', 'Réception'), cel('c2', 'Magasin', 'c1')] });
+  assert(r.status === 200, 'organigramme du hub : son responsable le crée');
+  const orgs = (await mag('GET', '/api/data/logistics.hubOrgs')).json;
+  r = await mag('PUT', '/api/data/logistics.hubOrgs', { value: { ...orgs.value, sh1: [cel('x1', 'Quai')] }, version: orgs.version });
+  assert(r.status === 403, "organigramme du hub : pas celui d'un autre hub");
+  r = await mag('PUT', '/api/data/logistics.hubOrgs', { value: { sh2: [cel('c1', 'Réception', 'c2'), cel('c2', 'Magasin', 'c1')] }, version: orgs.version });
+  assert(r.status === 422, 'organigramme du hub : une boucle de rattachement est refusée');
+  r = await put(boss, 'logistics.hubOrgs', { ...orgs.value, sh1: [cel('x1', 'Quai de chargement')] });
+  assert(r.status === 200, 'organigramme du hub : la centrale peut le tenir pour tout hub');
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule' }]);
+  assert(r.status === 403, 'stock : un magasinier ne peut pas annuler un transfert');
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'receptionne', receivedAt: '2026-01-06', receivedQuantities: { si1: 6 } }]);
+  assert(r.status === 422, 'stock : réception incohérente refusée (reçu > envoyé, réception avant envoi)');
+  r = await put(boss, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule', cancelledAt: '2026-01-08', cancelReason: 'Test' }]);
+  assert(r.status === 200, 'stock : un responsable logistique peut annuler un transfert');
+}
+r = await tech('PUT', '/api/data/donnee-pirate', { value: { x: 1 }, version: 0 });
+assert(r.status === 403, 'agent : ne peut pas créer de donnée inconnue');
+r = await tech('GET', '/api/data/invitations');
+r = await tech('PUT', '/api/data/invitations', {
+  value: [{ id: 'inv-pirate', inviterUserId: 'p-ag1', invitedAgentId: 'p-ag1', hostEntityId: 'svc-compta', status: 'active', expiresAt: '2099-01-01' }, ...(r.json.value || [])],
+  version: r.json.version,
+});
+assert(r.status === 403, 'invitations : un agent ne peut pas s\'inviter lui-même ailleurs');
+r = await tech('GET', '/api/data/invitationNotifications');
+r = await tech('PUT', '/api/data/invitationNotifications', {
+  value: [{ id: 'notif-pirate', recipientUserId: 'p-ag2', title: 'Clé', authKey10Digits: '0000000000', isRead: false }, ...(r.json.value || [])],
+  version: r.json.version,
+});
+assert(r.status === 403, 'invitations : un agent ne peut pas envoyer de fausse notification');
+r = await chef('GET', '/api/data/invitations');
+r = await chef('PUT', '/api/data/invitations', {
+  value: [{ id: 'inv-ok', inviterUserId: 'p-chef', invitedAgentId: 'p-ag2', invitedAgentMatricule: 'M2', hostEntityId: 'svc-vsat', status: 'active', expiresAt: '2099-01-01T00:00:00Z' }, ...(r.json.value || [])],
+  version: r.json.version,
+});
+assert(r.status === 200, 'invitations : le chef invite un agent dans son service');
+r = await tech('GET', '/api/data/x%E0%A4%A');
+assert(r.status === 400, 'adresse mal formée : erreur 400 (pas de plantage)');
+
+// ---------------------------------------------------------------------------
+// Pointage automatique : arrivée à la première activité, pauses, départ à la déconnexion
+// ---------------------------------------------------------------------------
 const cpt = client();
 await login(cpt, 'cpt2@perm.cd', 'Temp-Cpt2-xx22', 'Comptable-Kin-2026');
-r = await cpt('GET', '/api/data/contracts');
-assert(r.json.value.length === 3, 'comptable habilité : voit tous les contrats');
-r = await cpt('GET', '/api/data/documents');
-assert(r.json.value.some(d => d.id === 'doc-pay-ag1'), 'comptable habilité : voit les bulletins');
+await cpt('GET', '/api/data/versions');
+r = await tech('GET', '/api/pointage');
+const techDay = r.json.days.find(d => d.userId === 'p-ag1');
+assert(r.status === 200 && techDay && techDay.date === r.json.today && Date.parse(techDay.arrivalAt) <= Date.parse(r.json.now) && !techDay.departureAt,
+  'pointage : arrivée enregistrée automatiquement (heure du serveur)');
+assert(r.json.days.every(d => d.userId === 'p-ag1'), 'pointage : l\'agent ne voit que ses propres journées');
+r = await tech('POST', '/api/pointage', { type: 'pause' });
+assert(r.status === 200 && r.json.day.breaks.some(b => !b.end), 'pointage : l\'agent déclare une pause');
+r = await tech('POST', '/api/pointage', { type: 'reprise' });
+assert(r.status === 200 && r.json.day.breaks.every(b => b.end), 'pointage : reprise après la pause');
+r = await tech('POST', '/api/pointage', { type: 'depart' });
+assert(r.status === 400, 'pointage : le départ ne se déclare pas à la main (il est automatique)');
+r = await tech('POST', '/api/pointage', { type: 'pause', at: '2026-01-01T06:00:00Z', userId: 'p-ag2' });
+assert(r.status === 200 && r.json.day.userId === 'p-ag1' && r.json.day.breaks.at(-1).start !== '2026-01-01T06:00:00Z', 'pointage : impossible d\'imposer une heure ou de pointer pour un collègue');
+await tech('POST', '/api/pointage', { type: 'reprise' });
+r = await chef('GET', '/api/pointage');
+let ids = r.json.days.map(d => d.userId);
+assert(ids.includes('p-ag1') && !ids.includes('p-ag2'), 'pointage : le chef de service voit son agent, pas ceux des autres services');
+r = await boss('GET', '/api/pointage');
+ids = r.json.days.map(d => d.userId);
+assert(ids.includes('p-ag1') && ids.includes('p-ag2') && ids.includes('p-chef'), 'pointage : la Direction Générale voit tout le monde');
+r = await cpt('GET', '/api/pointage');
+assert(r.json.days.every(d => d.userId === 'p-ag2'), 'pointage : un agent ne voit pas les présences de ses collègues');
+const monthKey = `pointage.${r.json.today.slice(0, 7)}`;
+r = await boss('GET', `/api/data/${monthKey}`);
+assert(r.status === 200 && r.json.value === null, 'pointage : illisible par l\'API générique (même pour le DG)');
+r = await boss('PUT', `/api/data/${monthKey}`, { value: [], version: r.json.version });
+assert(r.status === 403, 'pointage : impossible de réécrire les heures par l\'API générique');
+r = await boss('GET', '/api/pointage?from=2026-01-01&to=2026-12-31');
+assert(r.status === 400, 'pointage : période limitée à 93 jours');
+r = await cpt('POST', '/api/auth/logout', {});
+r = await boss('GET', '/api/pointage');
+const cptDay = r.json.days.find(d => d.userId === 'p-ag2');
+assert(cptDay && cptDay.departureAt && cptDay.departureAuto === false, 'pointage : départ enregistré à la déconnexion');
+await login(cpt, 'cpt2@perm.cd', 'Comptable-Kin-2026');
+await cpt('GET', '/api/data/versions');
+r = await boss('GET', '/api/pointage');
+const back = r.json.days.find(d => d.userId === 'p-ag2');
+assert(back && !back.departureAt && back.breaks.length === 1 && back.breaks[0].start === cptDay.departureAt,
+  'pointage : retour le même jour — la sortie compte comme une pause');
 
 // ---------------------------------------------------------------------------
 // Signature : confirmation du mot de passe par le serveur
@@ -274,6 +435,19 @@ r = await anon('POST', '/api/auth/login', { identifier: 'tech1@perm.cd', passwor
 assert(r.status === 423, 'agent verrouillé : même le bon mot de passe est refusé');
 let me = (await boss('GET', '/api/data/users')).json.value.find(x => x.id === 'p-ag1');
 assert(me.status === 'verrouille', 'agent : statut « verrouillé » (réactivation par la Direction)');
+
+// Mot de passe oublié : le chef réinitialise le compte de son agent (et le débloque).
+r = await tech('POST', '/api/users/p-chef/reset-password', {});
+assert(r.status === 401 || r.status === 403, 'réinitialisation : un agent ne peut pas réinitialiser le compte de son chef');
+r = await chef('POST', '/api/users/p-ag2/reset-password', {});
+assert(r.status === 403, 'réinitialisation : un chef ne réinitialise pas un agent d\'un autre service');
+r = await chef('POST', '/api/users/p-ag1/reset-password', {});
+assert(r.status === 200 && typeof r.json.temporaryPassword === 'string' && r.json.temporaryPassword.length >= 10, 'réinitialisation : mot de passe provisoire fourni une seule fois');
+const fresh = client();
+r = await fresh('POST', '/api/auth/login', { identifier: 'tech1@perm.cd', password: r.json.temporaryPassword });
+assert(r.status === 200 && r.json.mustChangePassword === true, 'réinitialisation : compte débloqué, nouveau mot de passe obligatoire');
+r = await fresh('GET', '/api/data');
+assert(r.status === 403, 'réinitialisation : aucune donnée tant que le mot de passe n\'est pas changé');
 
 // En dernier : le DG se bloque lui-même (temporairement).
 for (let i = 0; i < 4; i++) {

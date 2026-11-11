@@ -1,5 +1,6 @@
 // src/components/DepartmentTasksProgressChart.tsx
 import React, { useState, useMemo } from 'react';
+import { DEMO_MODE } from '../config';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -41,7 +42,7 @@ interface DepartmentTasksProgressChartProps {
   className?: string;
 }
 
-// Couleurs harmonisées avec la charte Rhema Business
+// Couleurs harmonisées avec la charte ERP-GESDOC
 const DEPT_COLORS = {
   operations: {
     stroke: '#0284c7', // Sky 600
@@ -58,14 +59,6 @@ const DEPT_COLORS = {
     gradientEnd: '#e0e7ff',
     name: 'Admin. & Finances (DAF)',
     short: 'Finances'
-  },
-  rh: {
-    stroke: '#059669', // Emerald 600
-    fill: '#34d399',   // Emerald 400
-    gradientStart: '#10b981',
-    gradientEnd: '#d1fae5',
-    name: 'Ressources Humaines (DRH)',
-    short: 'RH'
   },
   dg: {
     stroke: '#7c3aed', // Purple 600
@@ -85,14 +78,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 1,
     operations: 4,
     finance: 3,
-    rh: 2,
     dg: 2,
-    total: 11,
+    total: 9,
     operationsPeriod: 4,
     financePeriod: 3,
-    rhPeriod: 2,
     dgPeriod: 2,
-    totalPeriod: 11,
+    totalPeriod: 9,
     slaRate: 89.2
   },
   {
@@ -101,14 +92,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 5,
     operations: 9,
     finance: 6,
-    rh: 4,
     dg: 3,
-    total: 22,
+    total: 18,
     operationsPeriod: 5,
     financePeriod: 3,
-    rhPeriod: 2,
     dgPeriod: 1,
-    totalPeriod: 11,
+    totalPeriod: 9,
     slaRate: 91.0
   },
   {
@@ -117,14 +106,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 10,
     operations: 14,
     finance: 9,
-    rh: 6,
     dg: 5,
-    total: 34,
+    total: 28,
     operationsPeriod: 5,
     financePeriod: 3,
-    rhPeriod: 2,
     dgPeriod: 2,
-    totalPeriod: 12,
+    totalPeriod: 10,
     slaRate: 92.4
   },
   {
@@ -133,14 +120,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 15,
     operations: 19,
     finance: 13,
-    rh: 9,
     dg: 7,
-    total: 48,
+    total: 39,
     operationsPeriod: 5,
     financePeriod: 4,
-    rhPeriod: 3,
     dgPeriod: 2,
-    totalPeriod: 14,
+    totalPeriod: 11,
     slaRate: 93.8
   },
   {
@@ -149,14 +134,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 20,
     operations: 24,
     finance: 17,
-    rh: 11,
     dg: 8,
-    total: 60,
+    total: 49,
     operationsPeriod: 5,
     financePeriod: 4,
-    rhPeriod: 2,
     dgPeriod: 1,
-    totalPeriod: 12,
+    totalPeriod: 10,
     slaRate: 94.6
   },
   {
@@ -165,14 +148,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 25,
     operations: 29,
     finance: 20,
-    rh: 13,
     dg: 9,
-    total: 71,
+    total: 58,
     operationsPeriod: 5,
     financePeriod: 3,
-    rhPeriod: 2,
     dgPeriod: 1,
-    totalPeriod: 11,
+    totalPeriod: 9,
     slaRate: 95.5
   },
   {
@@ -181,14 +162,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 28,
     operations: 33,
     finance: 22,
-    rh: 15,
     dg: 10,
-    total: 80,
+    total: 65,
     operationsPeriod: 4,
     financePeriod: 2,
-    rhPeriod: 2,
     dgPeriod: 1,
-    totalPeriod: 9,
+    totalPeriod: 7,
     slaRate: 96.1
   },
   {
@@ -197,14 +176,12 @@ const THIRTY_DAYS_PROGRESSION = [
     dayIndex: 30,
     operations: 37,
     finance: 24,
-    rh: 16,
     dg: 11,
-    total: 88,
+    total: 72,
     operationsPeriod: 4,
     financePeriod: 2,
-    rhPeriod: 1,
     dgPeriod: 1,
-    totalPeriod: 8,
+    totalPeriod: 7,
     slaRate: 96.8
   }
 ];
@@ -230,16 +207,6 @@ const RECENT_COMPLETED_TASKS = [
     completedBy: 'Mme Sophie Traoré (DAF)',
     daysToResolve: 3,
     conformity: '100% Lettré'
-  },
-  {
-    id: 'ct-3',
-    title: 'Clôture Paie & Émargement Pointage 28 Jours Ouvrables',
-    department: 'Ressources Humaines (DRH)',
-    deptKey: 'rh',
-    date: '01 Octobre 2026',
-    completedBy: 'M. Jean-Paul Kouassi (DRH)',
-    daysToResolve: 1,
-    conformity: '100% Conforme'
   },
   {
     id: 'ct-4',
@@ -271,7 +238,7 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
   className = ''
 }) => {
   const [chartMode, setChartMode] = useState<'cumulative' | 'periodic' | 'sla'>('cumulative');
-  const [deptFilter, setDeptFilter] = useState<'all' | 'operations' | 'finance' | 'rh' | 'dg'>('all');
+  const [deptFilter, setDeptFilter] = useState<'all' | 'operations' | 'finance' | 'dg'>('all');
   const [rangeFilter, setRangeFilter] = useState<'30' | '15' | '7'>('30');
   const [showRecentTasks, setShowRecentTasks] = useState<boolean>(false);
 
@@ -344,6 +311,12 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
 
   return (
     <div className={`bg-white rounded-2xl border border-sky-200 shadow-sm p-5 space-y-5 ${className}`}>
+      {!DEMO_MODE && (
+        <p role="note" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          Graphique d'illustration : ces courbes et cette liste sont des exemples et ne proviennent pas encore de vos tâches.
+          Vos chiffres réels sont dans « Tâches & Approbations ».
+        </p>
+      )}
       {/* En-tête du composant */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-sky-100">
         <div className="space-y-1">
@@ -359,7 +332,7 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
                 </span>
               </h3>
               <p className="text-xs text-slate-500">
-                Suivi chronologique et dynamique de l'achèvement opérationnel par direction (DOP, DAF, DRH, DG).
+                Suivi chronologique et dynamique de l'achèvement opérationnel par direction (DOP, DAF, DG).
               </p>
             </div>
           </div>
@@ -532,18 +505,6 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
         </button>
 
         <button
-          onClick={() => setDeptFilter('rh')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap flex items-center gap-1.5 ${
-            deptFilter === 'rh'
-              ? 'bg-emerald-600 text-white font-bold shadow-sm'
-              : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />
-          Ressources Humaines ({currentSnapshot.rh})
-        </button>
-
-        <button
           onClick={() => setDeptFilter('dg')}
           className={`px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap flex items-center gap-1.5 ${
             deptFilter === 'dg'
@@ -569,10 +530,6 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
                 <linearGradient id="gradFin" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={DEPT_COLORS.finance.gradientStart} stopOpacity={0.6} />
                   <stop offset="95%" stopColor={DEPT_COLORS.finance.gradientEnd} stopOpacity={0.05} />
-                </linearGradient>
-                <linearGradient id="gradRH" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={DEPT_COLORS.rh.gradientStart} stopOpacity={0.6} />
-                  <stop offset="95%" stopColor={DEPT_COLORS.rh.gradientEnd} stopOpacity={0.05} />
                 </linearGradient>
                 <linearGradient id="gradDG" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={DEPT_COLORS.dg.gradientStart} stopOpacity={0.6} />
@@ -606,18 +563,6 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
                   strokeWidth={2.5}
                   fillOpacity={1}
                   fill="url(#gradFin)"
-                />
-              )}
-
-              {(deptFilter === 'all' || deptFilter === 'rh') && (
-                <Area
-                  type="monotone"
-                  dataKey="rh"
-                  name={DEPT_COLORS.rh.name}
-                  stroke={DEPT_COLORS.rh.stroke}
-                  strokeWidth={2.5}
-                  fillOpacity={1}
-                  fill="url(#gradRH)"
                 />
               )}
 
@@ -655,15 +600,6 @@ export const DepartmentTasksProgressChart: React.FC<DepartmentTasksProgressChart
                   dataKey="financePeriod"
                   name={DEPT_COLORS.finance.name}
                   fill={DEPT_COLORS.finance.stroke}
-                  radius={[4, 4, 0, 0]}
-                />
-              )}
-
-              {(deptFilter === 'all' || deptFilter === 'rh') && (
-                <Bar
-                  dataKey="rhPeriod"
-                  name={DEPT_COLORS.rh.name}
-                  fill={DEPT_COLORS.rh.stroke}
                   radius={[4, 4, 0, 0]}
                 />
               )}

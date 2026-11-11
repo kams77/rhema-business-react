@@ -1,10 +1,26 @@
 @import "tailwindcss";
 
+/* Polices auto-hébergées (licence SIL OFL, voir public/fonts) : aucune requête vers un service tiers. */
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/fonts/PlusJakartaSans-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ========================================================================== */
-/* Thème RHEMA Business                                                        */
+/* Thème ERP-GESDOC                                                        */
 /* ========================================================================== */
 @theme {
-  /* Polices chargées dans index.html */
+  /* Polices auto-hébergées (@font-face ci-dessus) */
   --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -116,10 +132,88 @@
 /* ========================================================================== */
 /* Impression (bulletins, bons, factures)                                      */
 /* ========================================================================== */
+/* Feuille A4 (documents officiels, rapports de site) : même format à l'écran et à l'impression. */
+.a4-sheet {
+  width: 210mm;
+  min-height: 297mm;
+}
+.a4-repeat-foot {
+  display: none;
+}
+
+/* Impression : A4 sans marge (l'en-tête et le pied de page vont jusqu'au bord) ;
+   les pages suivantes gardent une marge en haut pour le texte. */
+@page {
+  size: A4;
+  margin: 12mm 0 0 0;
+}
+@page :first {
+  margin-top: 0;
+}
+
 @media print {
   html,
   body {
     background: #fff !important;
     color: #000 !important;
+  }
+
+  /* Document officiel ouvert : seule la feuille (en-tête, contenu, pied de page) est imprimée. */
+  body:has(.print-sheet) *:not(:has(.print-sheet)):not(.print-sheet):not(.print-sheet *) {
+    display: none !important;
+  }
+  body:has(.print-sheet) *:has(.print-sheet) {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    /* Pas de translate/scale/rotate ici : le minifieur les fusionnerait en « transform: translate(0)… »,
+       ce qui recréerait le bloc conteneur qu'on veut supprimer. */
+    transform: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    /* Une animation (même terminée) crée un bloc conteneur : le pied de page ne serait plus en bas de page. */
+    animation: none !important;
+  }
+  body:has(.print-sheet) .print-sheet {
+    max-width: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  /* Feuille A4 : le pied de page est répété en bas de chaque page, avec une réserve de même hauteur. */
+  body:has(.print-sheet) .a4-sheet {
+    width: 210mm !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  .a4-repeat-foot {
+    display: table-footer-group;
+  }
+  .a4-foot-spacer {
+    height: var(--a4-footer-h, 25mm);
+  }
+  .a4-footer-slot {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 210mm;
+  }
+
+  .a4-body table tr {
+    break-inside: avoid;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

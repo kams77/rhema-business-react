@@ -8,8 +8,9 @@ import { OrganizationOnboardingWizard } from './OrganizationOnboardingWizard';
 import { api, ApiError } from '../lib/api';
 import type { PublicStatus } from '../lib/api';
 import { remoteStore } from '../lib/remoteStore';
-import { createStandardPayrollSystem } from '../data/standardPayroll';
 import type { HierarchicalEntity, Organization, User } from '../types';
+import { APP_NAME } from '../config';
+import { isBackupAppId } from '../lib/storage';
 
 const NOTICE_KEY = 'rhema:notice';
 
@@ -23,11 +24,11 @@ type Phase =
 
 const fallbackOrg = (s: PublicStatus | null): Organization => ({
   id: s?.organization?.id ?? 'org',
-  name: s?.organization?.name ?? 'RHEMA Business',
+  name: s?.organization?.name ?? APP_NAME,
   type: (s?.organization?.type as Organization['type']) ?? 'entreprise',
   registrationNumber: s?.organization?.registrationNumber ?? '',
   logo: s?.organization?.logo,
-  headquarters: 'Kinshasa',
+  headquarters: s?.organization?.headquarters ?? '',
   email: '',
   phone: '',
 } as Organization);
@@ -189,7 +190,6 @@ const SetupScreen: React.FC<{ codeRequired: boolean; onDone: (message: string) =
         organizations: [d.organization],
         currentOrg: d.organization,
         entities: d.entities,
-        payrollConfigs: { [d.organization.id]: createStandardPayrollSystem(d.organization.id, d.organization.name) },
       },
       `L'organisation « ${d.organization.name} » est créée sur le serveur. Connectez-vous avec le compte DG ; chaque collaborateur choisira son mot de passe à sa première connexion.`
     );
@@ -201,8 +201,8 @@ const SetupScreen: React.FC<{ codeRequired: boolean; onDone: (message: string) =
     if (!file || !ensureCode()) return;
     try {
       const backup = JSON.parse(await file.text());
-      if (backup?.app !== 'rhema-business' || typeof backup.data !== 'object') {
-        throw new Error('Ce fichier n\'est pas une sauvegarde RHEMA Business.');
+      if (!isBackupAppId(backup?.app) || typeof backup.data !== 'object') {
+        throw new Error(`Ce fichier n'est pas une sauvegarde ${APP_NAME}.`);
       }
       const users = Array.isArray(backup.data.users) ? backup.data.users : [];
       const { users: _u, session: _s, ...data } = backup.data;
@@ -220,7 +220,7 @@ const SetupScreen: React.FC<{ codeRequired: boolean; onDone: (message: string) =
             <Database className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-white">Installation du serveur RHEMA Business</h1>
+            <h1 className="text-xl font-black text-white">Installation du serveur {APP_NAME}</h1>
             <p className="text-sm text-slate-400">La base de données est vide. Choisissez comment démarrer.</p>
           </div>
         </div>

@@ -1,7 +1,7 @@
-# RHEMA Business — Portail Entreprise & Gestion Hiérarchique
+# ERP-GESDOC — Portail Entreprise & Gestion Hiérarchique
 
 Application web de gestion d'entreprise pour la RD Congo : organigramme hiérarchique,
-circuits documentaires, paie conforme (USD / CDF), logistique VSAT & solaire,
+circuits documentaires, pointage automatique des agents, logistique VSAT & solaire,
 habilitations par rôle (RBAC), journal d'audit et signature électronique.
 
 Construite avec **React 19**, **TypeScript**, **Vite 6** et **Tailwind CSS 4**.
@@ -32,12 +32,13 @@ TypeScript, compilation et image Docker.
 
 | Module                 | Contenu                                                                  |
 | ---------------------- | ------------------------------------------------------------------------ |
-| Espace employé         | Tableau de bord personnel, tâches, documents, contrats                   |
+| Espace employé         | Journée, tâches, documents, pointage et demandes de congé                |
 | Hiérarchie             | Départements → directions → divisions → services, délégations de visa    |
 | Invitations            | Accès inter-entités par matricule et clé à 10 chiffres                   |
-| Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel RHEMA   |
+| Documents & workflows  | Circuits d'approbation, signature électronique, en-tête officiel         |
 | Logistique             | Bons de commande, livraisons, factures, hubs provinciaux, stocks, S/N    |
-| Import en masse        | Employés, contrats et historiques de paie par CSV                        |
+| Import CSV             | Comptes des collaborateurs (nom, poste, entité, email, matricule)        |
+| Pointage automatique   | Arrivée à la connexion, départ à la déconnexion, registre par périmètre  |
 | Sécurité & audit       | Alertes d'intrusion, verrouillage, journal horodaté exportable (PDF/CSV) |
 
 ## Circuit de validation (documents, tâches, logistique)
@@ -47,7 +48,7 @@ Règles communes à l'application et au serveur : `shared/workflow.mjs` (tests :
 - **Chaque type de document a son circuit** et sa règle de montant (*aucun*, *facultatif*, *obligatoire*).
   Exemples : note de service → chef de service → directeur ; demande d'achat → hiérarchie → Finance
   (+ DG au-delà de 5 000 USD) ; bon de commande → chef de service → directeur → Finance (+ DG au-delà
-  de 10 000 USD) ; demande de congé → hiérarchie → RH.
+  de 10 000 USD) ; demande de congé → chef de service → chef de division → directeur.
 - Le circuit part du **poste de l'émetteur** ; un poste vacant remonte au responsable au-dessus ;
   personne ne vise son propre document ; la DG signe seule ses documents.
 - Les visas se donnent **un par un, dans l'ordre** ; la dernière étape est la signature électronique ;
@@ -59,6 +60,12 @@ Règles communes à l'application et au serveur : `shared/workflow.mjs` (tests :
   (à défaut, le responsable hiérarchique de l'entité).
 - **Logistique** : chaque bon passe par son circuit ; le stock ne bouge qu'après validation ; des tâches
   de suivi sont créées automatiquement et soumises à validation une fois l'événement constaté.
+
+## Tester sur votre ordinateur avec MySQL
+
+Dossier **[test-local/](test-local/LISEZ-MOI.md)** : application + base MySQL (MariaDB) + phpMyAdmin,
+démarrés en un double-clic (`demarrer-test.bat` sous Windows, `sh demarrer-test.sh` sur Mac / Linux)
+avec Docker Desktop. Idéal pour essayer l'application avec vos propres données avant le Synology.
 
 ## Mode démonstration et mode production
 
@@ -89,7 +96,7 @@ Dans les deux modes :
 | Partage entre collègues | ❌ | ✅ tout le monde voit les mêmes données |
 | Connexion | Vérifiée dans le navigateur | Vérifiée par le serveur (cookie sécurisé) |
 | Installation | Hébergement statique (Cloudflare Pages…) | Docker : `docker compose up -d --build` |
-| Guide | [docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md) | [docs/SYNOLOGY.md](docs/SYNOLOGY.md) |
+| Guide | [docs/INSTALLATION-ET-HEBERGEMENT.md](docs/INSTALLATION-ET-HEBERGEMENT.md) | [docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md](docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md) |
 
 En mode serveur, deux personnes peuvent modifier le même module en même temps : leurs
 changements sont **fusionnés automatiquement**, et chacun voit ceux des autres en moins de 20 secondes.
@@ -159,7 +166,7 @@ Guide pas à pas (installation locale, Cloudflare Pages, Netlify, Docker) :
 En bref : `npm run build` produit un site statique dans `dist/`. Hébergement recommandé :
 **Cloudflare Pages** (gratuit, HTTPS, en-têtes de sécurité de `public/_headers` appliqués).
 Définissez `VITE_DEMO_MODE=false` **avant** la compilation pour une mise en production.
-Pour un serveur interne : `docker build -t rhema-business .` puis `docker run -d -p 8080:80 rhema-business`.
+Pour un serveur interne : `docker build -t erp-gesdoc .` puis `docker run -d -p 8080:80 erp-gesdoc`.
 
 ---
 

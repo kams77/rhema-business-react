@@ -15,7 +15,7 @@ import {
   ArrowRight,
   AlertTriangle
 } from 'lucide-react';
-import { DEMO_MODE, DEMO_PASSWORD } from '../config';
+import { APP_NAME, DEMO_MODE, DEMO_PASSWORD, orgInitials } from '../config';
 import {
   MAX_FAILED_ATTEMPTS,
   MIN_PASSWORD_LENGTH,
@@ -73,7 +73,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [userToUpdate, setUserToUpdate] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'rh' | 'operations' | 'logistics' | 'security'>('all');
+  const [selectedDemoCategory, setSelectedDemoCategory] = useState<'all' | 'dg' | 'finance' | 'operations' | 'logistics' | 'security'>('all');
 
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,7 +205,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
     if (selectedDemoCategory === 'all') return true;
     if (selectedDemoCategory === 'dg') return u.role === 'dg';
     if (selectedDemoCategory === 'finance') return u.directionId === 'dir-finance' || u.departementId === 'dept-daf' || u.roleTitle.toLowerCase().includes('compt') || u.roleTitle.toLowerCase().includes('finan');
-    if (selectedDemoCategory === 'rh') return u.directionId === 'dir-rh' || u.roleTitle.toLowerCase().includes('rh') || u.roleTitle.toLowerCase().includes('paie');
     if (selectedDemoCategory === 'operations') return u.departementId === 'dept-ops' || u.roleTitle.toLowerCase().includes('vsat') || u.roleTitle.toLowerCase().includes('réseau') || u.roleTitle.toLowerCase().includes('opérat');
     if (selectedDemoCategory === 'logistics') return u.directionId === 'dir-log' || u.roleTitle.toLowerCase().includes('logistique') || u.roleTitle.toLowerCase().includes('hub') || u.departmentName?.toLowerCase().includes('logistique');
     if (selectedDemoCategory === 'security') return u.status === 'verrouille' || u.failedAccessAttempts > 0;
@@ -221,7 +220,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
       <header className="px-6 py-4 border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-500 p-0.5 shadow-lg flex items-center justify-center font-black text-white text-base">
-            RB
+            {organization.logo
+              ? <img src={organization.logo} alt="" className="w-full h-full object-contain rounded-lg bg-white" />
+              : orgInitials(organization.name)}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -231,7 +232,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono">
-              {organization.registrationNumber} • Kinshasa
+              {[organization.registrationNumber, organization.headquarters].filter(Boolean).join(' • ')}
             </p>
           </div>
         </div>
@@ -423,7 +424,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   spellCheck={false}
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder="nom@rhemabusiness.com"
+                  placeholder="nom@organisation.cd"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono"
                 />
               </div>
@@ -463,7 +464,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 Règlement de Sécurité Opérationnelle :
               </div>
               <p>
-                Toute tentative d'accès à des documents financiers ou RH hors de votre périmètre hiérarchique émet une alerte automatique. Après {MAX_FAILED_ATTEMPTS} mots de passe erronés, le compte est verrouillé.
+                Toute tentative d'accès à des documents financiers ou personnels hors de votre périmètre hiérarchique émet une alerte automatique. Après {MAX_FAILED_ATTEMPTS} mots de passe erronés, le compte est verrouillé.
               </p>
             </div>
 
@@ -501,7 +502,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 { id: 'all', label: 'Tous les collaborateurs' },
                 { id: 'dg', label: 'Direction Générale' },
                 { id: 'finance', label: 'DAF & Finance' },
-                { id: 'rh', label: 'RH & Paie' },
                 { id: 'operations', label: 'Télécoms VSAT' },
                 { id: 'logistics', label: 'Logistique & Hubs' },
                 { id: 'security', label: 'Compte Verrouillé' },
@@ -589,8 +589,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <div className="text-[10px] text-slate-400 mt-0.5">Vision transversale intégrale</div>
             </div>
             <div className="p-2.5 rounded-xl bg-blue-950/20 border border-blue-800/40 text-blue-300">
-              <div className="font-bold">Directeurs DAF & RH</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">Contrats & Bulletins certifiés</div>
+              <div className="font-bold">Directeurs & chefs</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Visas & pointage de leur périmètre</div>
             </div>
             <div className="p-2.5 rounded-xl bg-sky-950/20 border border-sky-800/40 text-sky-300">
               <div className="font-bold">Agents VSAT & Compta</div>
@@ -605,7 +605,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Pied de page officiel */}
       <footer className="px-6 py-3 border-t border-slate-800/80 bg-slate-950/80 text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div>
-          © {new Date().getFullYear()} <strong>{organization.name}</strong>
+          © {new Date().getFullYear()} <strong>{organization.name}</strong> · {APP_NAME}
         </div>
         <div className="flex items-center gap-3 font-mono">
           {(organization.rccm || organization.registrationNumber) && <span>RCCM : {organization.rccm || organization.registrationNumber}</span>}

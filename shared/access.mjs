@@ -6,7 +6,7 @@
 
 /** @typedef {{ id: string, role: string, roleTitle?: string, matricule?: string, employeeCode?: string,
  *   departementId?: string, directionId?: string, divisionId?: string, serviceId?: string,
- *   departmentName?: string, canManagePayroll?: boolean, canApproveServiceDocuments?: boolean }} AccessUser */
+ *   departmentName?: string, canApproveServiceDocuments?: boolean }} AccessUser */
 /** @typedef {{ id: string, parentId?: string }} AccessEntity */
 
 export const ROLE_RANK = { dg: 6, chef_departement: 5, directeur: 4, chef_division: 3, chef_service: 2, agent: 1 };
@@ -29,24 +29,6 @@ export function titleHasAny(title, terms) {
     const t = normalize(term).split(/[^a-z0-9]+/).filter(Boolean).join(' ');
     return t.length > 0 && words.includes(` ${t} `);
   });
-}
-
-export const HR_TITLE_TERMS = ['rh', 'drh', 'grh', 'paie', 'ressources humaines'];
-
-/**
- * Gestion de la paie et accès aux salaires de tous.
- * - DG : toujours.
- * - Autorisation explicite donnée par le DG (canManagePayroll = true / false) : prioritaire.
- * - Sinon : responsables de la DAF, de la direction RH ou financière, et fonctions RH / paie.
- * @param {AccessUser | undefined} u
- */
-export function isPayrollStaff(u) {
-  if (!u) return false;
-  if (u.role === 'dg') return true;
-  if (u.canManagePayroll === true) return true;
-  if (u.canManagePayroll === false) return false;
-  if (titleHasAny(u.roleTitle, HR_TITLE_TERMS)) return true;
-  return u.role !== 'agent' && (u.departementId === 'dept-daf' || u.directionId === 'dir-rh' || u.directionId === 'dir-finance');
 }
 
 /** Centre de sécurité et journal d'audit. @param {AccessUser | undefined} u */
@@ -158,10 +140,24 @@ export function isEntityInUserScope(u, entityId, entities) {
   return anchor ? isEntityDescendantOf(entityId, anchor, entities) : false;
 }
 
+/** Types de documents confidentiels : circuit, destinataire et Direction Générale seulement. */
+export const CONFIDENTIAL_DOCUMENT_SUBTYPES = new Set(['bilan_comptable']);
+/** Types de documents personnels d'un agent : lui, son circuit et sa hiérarchie. */
+export const PERSONAL_DOCUMENT_SUBTYPES = new Set(['demande_conge']);
+
+/**
+ * Documents de l'ancien module RH (supprimé) : bulletins de paie, contrats de travail, déclarations
+ * sociales, fiches de poste et feuilles de temps. Ils ne se créent plus ; ceux qui subsisteraient
+ * (ancienne sauvegarde) ne sont visibles que de leur destinataire et de la Direction Générale.
+ */
+export const RETIRED_HR_DOCUMENT_SUBTYPES = new Set(['bulletin_de_paie', 'contrat_travail', 'declaration_sociale', 'fiche_poste', 'feuille_de_temps']);
+/** @param {any} doc */
+export const isRetiredHrDocument = doc => !!doc && (doc.isConfidentialPayslip === true || RETIRED_HR_DOCUMENT_SUBTYPES.has(doc.subtype));
+
 /**
  * Visibilité d'un document : QUI le voit et QUAND.
  * - DG : tout.
- * - Bulletins de paie : leur titulaire et la Direction / RH habilitée.
+ * - Anciens documents RH (paie, contrats…) : leur destinataire (et la DG) seulement.
  * - L'émetteur, le destinataire nommé et chaque valideur du circuit : toujours.
  * - Brouillon : personne d'autre (il n'est pas encore publié).
  * - En circuit ou rejeté : les responsables du périmètre concerné, jamais les autres agents.
@@ -171,12 +167,19 @@ export function isEntityInUserScope(u, entityId, entities) {
 export function canSeeDocument(u, doc, entities) {
   if (!u || !doc) return false;
   if (u.role === 'dg') return true;
-  if (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie') {
-    return doc.targetUserId === u.id || isPayrollStaff(u);
-  }
+  if (isRetiredHrDocument(doc)) return doc.targetUserId === u.id;
   if (doc.authorId === u.id || doc.targetUserId === u.id) return true;
   const steps = (doc.workflow && Array.isArray(doc.workflow.steps)) ? doc.workflow.steps : [];
   if (steps.some(s => isStepHolder(u, s))) return true;
+  // Documents confidentiels (bilans) : jamais diffusés au-delà du circuit, du destinataire
+  // et de la Direction Générale, quel que soit le choix d'audience.
+  if (CONFIDENTIAL_DOCUMENT_SUBTYPES.has(doc.subtype)) return false;
+  // Documents personnels (congés — parfois pour maladie) : en plus, la hiérarchie de l'émetteur ;
+  // jamais ses collègues.
+  if (PERSONAL_DOCUMENT_SUBTYPES.has(doc.subtype)) {
+    if (doc.status === 'brouillon') return false;
+    return isManager(u) && !!doc.originEntityId && isEntityInUserScope(u, doc.originEntityId, entities);
+  }
   if (doc.status === 'brouillon') return false;
   const inProgress = doc.status === 'en_revue' || doc.status === 'rejete';
   if (inProgress && u.role === 'agent') return false;
@@ -191,7 +194,7 @@ export function canSeeDocument(u, doc, entities) {
  * @param {AccessUser} u @param {any} doc @param {AccessEntity[]} entities
  */
 export function canWriteDocument(u, doc, entities) {
-  if (doc && (doc.isConfidentialPayslip || doc.subtype === 'bulletin_de_paie')) return isPayrollStaff(u);
+  if (isRetiredHrDocument(doc)) return false;
   return canSeeDocument(u, doc, entities);
 }
 
@@ -230,4 +233,103 @@ export function canManageAccount(manager, target, entities) {
   if (roleRank(target.role) >= roleRank(manager.role)) return false;
   const targetEntity = target.serviceId || target.divisionId || target.directionId || target.departementId;
   return isEntityInUserScope(manager, targetEntity, entities);
+}
+
+// ---------------------------------------------------------------------------
+// Contrôles d'écriture (serveur) : invitations, notifications, organigramme
+// ---------------------------------------------------------------------------
+
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Champs modifiés entre deux versions d'un objet. */
+export const changedKeys = (before, after) =>
+  Object.keys({ ...(before || {}), ...(after || {}) }).filter(k => !sameJson(before ? before[k] : undefined, after ? after[k] : undefined));
+
+/** L'utilisateur est-il la personne invitée ? @param {AccessUser} u @param {any} inv */
+export function isInvitee(u, inv) {
+  if (!u || !inv) return false;
+  const mat = String(u.matricule || u.employeeCode || '').trim().toUpperCase();
+  return inv.invitedAgentId === u.id || (!!mat && String(inv.invitedAgentMatricule || '').trim().toUpperCase() === mat);
+}
+
+const INVITEE_FIELDS = ['status', 'connectedAt', 'lastAccessAt'];
+
+/**
+ * Création / modification d'une invitation inter-entités.
+ * - Direction et responsables de sécurité : tout.
+ * - Responsable de l'entité d'accueil (dans son périmètre) : création à son nom, prolongation, révocation.
+ * - Personne invitée : seulement ouvrir / fermer sa session (statut et horodatages), avant l'expiration.
+ * @param {AccessUser} u @param {any} before @param {any} after @param {AccessEntity[]} entities
+ * @param {number} [now]
+ */
+export function canWriteInvitation(u, before, after, entities, now = Date.now()) {
+  if (!u || !after) return false;
+  if (isSecurityStaff(u)) return true;
+  const hosts = inv => isManager(u) && !!inv && isEntityInUserScope(u, inv.hostEntityId, entities);
+  if (!before) return hosts(after) && after.inviterUserId === u.id;
+  if (hosts(before) && hosts(after) && after.inviterUserId === before.inviterUserId) return true;
+  if (isInvitee(u, before)) {
+    if (!changedKeys(before, after).every(k => INVITEE_FIELDS.includes(k))) return false;
+    if (after.status === before.status) return true;
+    if (!['active', 'en_session'].includes(before.status)) return false; // révoquée, expirée ou terminée : rien à rouvrir
+    if (after.status === 'terminee') return true;
+    return after.status === 'en_session' && new Date(before.expiresAt).getTime() > now;
+  }
+  return false;
+}
+
+/**
+ * Notifications d'invitation : créées par un responsable (avec l'invitation), puis seulement
+ * marquées « lues » par leur destinataire.
+ * @param {AccessUser} u @param {any} before @param {any} after
+ */
+export function canWriteInvitationNotification(u, before, after) {
+  if (!u || !after) return false;
+  if (u.role === 'dg') return true;
+  if (!before) return isManager(u);
+  return canSeeInvitationNotification(u, before) && changedKeys(before, after).every(k => k === 'isRead');
+}
+
+/**
+ * Organigramme : le DG modifie tout ; un responsable ne crée, modifie ou supprime que des
+ * entités situées SOUS sa responsabilité, et ne peut rien rattacher hors de son périmètre
+ * (sinon il pourrait s'approprier une autre branche et ses documents).
+ * @param {AccessUser} u @param {any} before @param {any} after @param {AccessEntity[]} entities
+ */
+export function canWriteEntity(u, before, after, entities) {
+  if (!u || !after) return false;
+  if (u.role === 'dg') return true;
+  if (!isManager(u)) return false;
+  const inScope = id => !!id && isEntityInUserScope(u, id, entities);
+  const own = [u.departementId, u.directionId, u.divisionId, u.serviceId].filter(Boolean);
+  if (!before) return inScope(after.parentId);
+  if (before.id !== after.id || !inScope(before.id)) return false;
+  // Son entité de rattachement : renommer, oui ; la déplacer dans l'organigramme, non.
+  if (!sameJson(before.parentId, after.parentId)) {
+    return !own.includes(before.id) && inScope(before.parentId) && inScope(after.parentId);
+  }
+  return true;
+}
+
+/** Suppression d'une entité de l'organigramme. @param {AccessUser} u @param {any} before @param {AccessEntity[]} entities */
+export function canDeleteEntity(u, before, entities) {
+  if (!u || !before) return false;
+  if (u.role === 'dg') return true;
+  const own = [u.departementId, u.directionId, u.divisionId, u.serviceId].filter(Boolean);
+  return isManager(u) && !own.includes(before.id) && isEntityInUserScope(u, before.id, entities);
+}
+
+/** Lecture du module logistique (données commerciales, fournisseurs, stocks). @param {AccessUser | undefined} u */
+export const canReadLogistics = u => canAccessLogistics(u) || isSecurityStaff(u);
+
+/** Champs d'un compte réservés à son titulaire et à ceux qui le gèrent (vie privée des agents). */
+export const PRIVATE_ACCOUNT_FIELDS = ['phone', 'lastLogin', 'failedAccessAttempts', 'mustChangePassword', 'lockedUntil'];
+
+/**
+ * Peut voir la fiche complète d'un collègue (téléphone, dernière connexion, échecs de connexion) :
+ * le titulaire, la Direction et la sécurité, et les responsables qui gèrent ce compte.
+ * @param {AccessUser} viewer @param {AccessUser} target @param {AccessEntity[]} entities
+ */
+export function canSeeFullAccount(viewer, target, entities) {
+  if (!viewer || !target) return false;
+  return viewer.id === target.id || isSecurityStaff(viewer) || canManageAccount(viewer, target, entities);
 }

@@ -2,13 +2,17 @@
 // Persistance locale des données de l'application (navigateur).
 // Toutes les clés sont préfixées et versionnées pour permettre des migrations futures.
 
+// Préfixe technique conservé (renommer effacerait les données déjà enregistrées dans les navigateurs).
 export const STORAGE_PREFIX = 'rhema:v1:';
 export const STORAGE_ERROR_EVENT = 'rhema:storage-error';
-export const BACKUP_APP_ID = 'rhema-business';
+export const BACKUP_APP_ID = 'erp-gesdoc';
+/** Identifiants acceptés à la restauration : l'actuel et l'ancien nom de l'application. */
+/** Sauvegardes acceptées : nom actuel et anciens noms de l'application (ERP-WORKFLOW, RHEMA BUSINESS). */
+export const isBackupAppId = (id: unknown): boolean => id === BACKUP_APP_ID || id === 'erp-workflow' || id === 'rhema-business';
 export const BACKUP_VERSION = 1;
 
 export interface BackupFile {
-  app: typeof BACKUP_APP_ID;
+  app: string;
   version: number;
   exportedAt: string;
   data: Record<string, unknown>;
@@ -127,7 +131,7 @@ export function downloadBackup() {
   const a = document.createElement('a');
   const stamp = backup.exportedAt.slice(0, 16).replace(/[:T]/g, '-');
   a.href = url;
-  a.download = `rhema-sauvegarde-${stamp}.json`;
+  a.download = `erp-gesdoc-sauvegarde-${stamp}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -143,8 +147,8 @@ export function restoreBackup(content: string) {
     throw new Error("Ce fichier n'est pas un fichier JSON valide.");
   }
   const backup = parsed as Partial<BackupFile>;
-  if (!backup || backup.app !== BACKUP_APP_ID || typeof backup.data !== 'object' || backup.data === null) {
-    throw new Error("Ce fichier n'est pas une sauvegarde RHEMA Business.");
+  if (!backup || !isBackupAppId(backup.app) || typeof backup.data !== 'object' || backup.data === null) {
+    throw new Error("Ce fichier n'est pas une sauvegarde ERP-GESDOC.");
   }
   if (typeof backup.version !== 'number' || backup.version > BACKUP_VERSION) {
     throw new Error('Cette sauvegarde provient d\'une version plus récente de l\'application.');

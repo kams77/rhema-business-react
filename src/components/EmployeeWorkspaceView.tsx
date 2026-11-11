@@ -1,8 +1,8 @@
 // src/components/EmployeeWorkspaceView.tsx — Espace employé.
 // Un AGENT exécutant ne voit que ce qui le concerne : ses tâches, ses documents et demandes,
-// les documents validés de son service. Les tableaux de bord RH / effectifs sont réservés aux responsables.
+// les documents validés de son service, et son pointage (automatique).
 import React, { useState, useEffect, useMemo } from 'react';
-import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem, EmployeeContract } from '../types';
+import type { User, Organization, HierarchicalEntity, TaskItem, DocumentItem } from '../types';
 import {
   CheckCircle2,
   Clock,
@@ -29,13 +29,21 @@ import {
   RotateCcw,
   Info,
 } from 'lucide-react';
-import { WorkspaceDashboard } from './WorkspaceDashboard';
 import { RhemaOfficialDocument } from './RhemaOfficialDocument';
 import { DepartmentTasksProgressChart } from './DepartmentTasksProgressChart';
 import { TaskCard } from './tasks/TaskCard';
 import { TaskCreateModal } from './tasks/TaskCreateModal';
 import { ApprovalChips } from './workflow/ApprovalTimeline';
-import { initialContracts } from '../data/initialData';
+import {
+  attendance,
+  breakSeconds as pauseSeconds,
+  clock,
+  duration,
+  isOnBreak,
+  shiftDay,
+  useAttendance,
+  workedSeconds,
+} from '../lib/attendance';
 import { canAccessLogistics, canUserViewDocument, isLogisticsManager } from '../utils/rbac';
 import { isEntityManager } from '../utils/invitationUtils';
 import type { ActiveTab } from './Sidebar';
@@ -54,7 +62,7 @@ import {
 } from '../lib/workflow';
 import type { TaskAction } from '../lib/workflow';
 
-type WorkspaceTab = 'day' | 'tasks' | 'documents' | 'attendance' | 'transmissions' | 'profile' | 'dashboard' | 'task_analytics';
+type WorkspaceTab = 'day' | 'tasks' | 'documents' | 'attendance' | 'transmissions' | 'profile' | 'task_analytics';
 
 interface EmployeeWorkspaceViewProps {
   currentUser: User;
@@ -63,7 +71,6 @@ interface EmployeeWorkspaceViewProps {
   users?: User[];
   tasks?: TaskItem[];
   documents?: DocumentItem[];
-  contracts?: EmployeeContract[];
   onTaskAction?: (taskId: string, action: TaskAction) => void;
   onCreateTask?: (task: TaskItem) => void;
   onSubmitLeaveRequest?: (req: { type: string; start: string; end: string; reason: string }) => void;
@@ -147,7 +154,6 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   users = [],
   tasks = [],
   documents = [],
-  contracts = initialContracts,
   onTaskAction = () => {},
   onCreateTask,
   onSubmitLeaveRequest,
@@ -163,14 +169,29 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const manager = useMemo(() => directManager(currentUser, entities, users), [currentUser, entities, users]);
   const today = new Date().toISOString().split('T')[0];
 
-  // Chronomètre de travail en direct
-  const [seconds, setSeconds] = useState<number>(4810);
-  const [workStatus, setWorkStatus] = useState<'working' | 'coffee_break'>('working');
-  const [breakSeconds, setBreakSeconds] = useState<number>(0);
+  // Pointage automatique : journées de l'agent (14 derniers jours), heure du serveur.
+  const [anchorDay] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const { snapshot: myAttendance, error: attendanceError, offsetMs, refresh: refreshAttendance } =
+    useAttendance(currentUser, shiftDay(anchorDay, -13), shiftDay(anchorDay, 1), entities, users);
+  const attendanceToday = myAttendance?.today ?? anchorDay;
+  const myDays = (myAttendance?.days || []).filter(d => d.userId === currentUser.id).sort((a, b) => b.date.localeCompare(a.date));
+  const todayRecord = myDays.find(d => d.date === attendanceToday) || null;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [pauseBusy, setPauseBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('day');
   const [taskFilter, setTaskFilter] = useState<'open' | 'late' | 'validation' | 'done'>('open');
   const [docFilter, setDocFilter] = useState<'all' | 'mine' | 'for_me' | 'service'>('all');
   const [showNotification, setShowNotification] = useState<boolean>(true);
+  const onBreak = isOnBreak(todayRecord);
+  const togglePause = async () => {
+    setPauseBusy(true);
+    try {
+      await attendance.declare(currentUser, onBreak ? 'reprise' : 'pause');
+      await refreshAttendance();
+    } finally {
+      setPauseBusy(false);
+    }
+  };
   const [showAccountModal, setShowAccountModal] = useState<boolean>(false);
   const [showNewTaskModal, setShowNewTaskModal] = useState<boolean>(false);
   const [viewingDoc, setViewingDoc] = useState<DocumentItem | null>(null);
@@ -204,7 +225,6 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   // Main courante / Transmissions
   const [consignes, setConsignes] = useState([
     { id: 'c-1', auteur: 'M. Ibrahima Sarr (DAF)', date: 'Aujourd’hui à 08:30', message: 'Rappel : tous les bons de commande du trimestre doivent être visés avant vendredi 17h.' },
-    { id: 'c-2', auteur: 'Jean-Paul Kouassi (DRH)', date: 'Hier à 16:15', message: 'Les fiches d’évaluation de mi-parcours sont disponibles dans votre espace documentaire.' },
   ]);
   const [nouveauMessage, setNouveauMessage] = useState('');
 
@@ -212,13 +232,13 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
   const [demandeConge, setDemandeConge] = useState({ type: 'Congé annuel', debut: today, fin: today, motif: '' });
   const [congeErreur, setCongeErreur] = useState('');
 
+  // Compteurs en direct (heure du serveur).
   useEffect(() => {
-    const timer = setInterval(() => {
-      if (workStatus === 'working') setSeconds(prev => prev + 1);
-      else setBreakSeconds(prev => prev + 1);
-    }, 1000);
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [workStatus]);
+  }, []);
+  const serverNow = nowMs + offsetMs;
+  const workedToday = todayRecord ? workedSeconds(todayRecord, serverNow, attendanceToday) : 0;
 
   const formatHours = (sec: number) => {
     const h = Math.floor(sec / 3600);
@@ -250,7 +270,6 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
     { id: 'attendance', label: 'Pointage & congés', icon: <Clock className="w-4 h-4" /> },
     { id: 'transmissions', label: 'Consignes', icon: <MessageSquare className="w-4 h-4" /> },
     { id: 'profile', label: 'Ma fiche & habilitations', icon: <Shield className="w-4 h-4" /> },
-    { id: 'dashboard', label: 'Tableau de bord RH', icon: <BarChart3 className="w-4 h-4" />, hidden: isAgent },
     { id: 'task_analytics', label: 'Progression des équipes', icon: <TrendingUp className="w-4 h-4" />, hidden: isAgent },
   ];
 
@@ -267,7 +286,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {showNotification && (
+      {showNotification && todayRecord && (
         <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-400/80 text-emerald-950 flex items-center justify-between gap-3 text-xs shadow-sm">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -275,7 +294,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
             </div>
             <div className="min-w-0">
               <div className="font-bold">Pointage d'arrivée enregistré</div>
-              <div className="text-[11px] text-emerald-900 mt-0.5 truncate">Arrivée certifiée à 08:15:00 pour {currentUser.name}. Compteur de travail démarré.</div>
+              <div className="text-[11px] text-emerald-900 mt-0.5 truncate">Arrivée à {clock(todayRecord.arrivalAt)} pour {currentUser.name} (heure du serveur). Le départ sera enregistré à votre déconnexion.</div>
             </div>
           </div>
           <button onClick={() => setShowNotification(false)} className="text-emerald-700 hover:text-emerald-950 p-1 text-xs shrink-0 font-bold" aria-label="Fermer">✕</button>
@@ -317,19 +336,22 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           <div className="flex items-center gap-3 bg-gradient-to-r from-sky-50 to-blue-50/80 border border-sky-200 p-3.5 rounded-2xl flex-wrap">
             <div>
               <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1"><Clock className="w-3 h-3 text-sky-600" /> Temps de travail</div>
-              <div className="text-xl font-mono font-bold text-sky-950 tracking-tight mt-0.5">{formatHours(seconds)}</div>
+              <div className="text-xl font-mono font-bold text-sky-950 tracking-tight mt-0.5">{formatHours(workedToday)}</div>
               <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
-                <span className={`w-2 h-2 rounded-full ${workStatus === 'working' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
-                <span className="font-semibold text-slate-700">{workStatus === 'working' ? 'En poste' : `En pause (${formatHours(breakSeconds)})`}</span>
+                <span className={`w-2 h-2 rounded-full ${!todayRecord ? 'bg-slate-300' : onBreak ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+                <span className="font-semibold text-slate-700">
+                  {!todayRecord ? (attendanceError ? 'Pointage indisponible' : 'Pointage en cours…') : onBreak ? `En pause (${formatHours(pauseSeconds({ ...todayRecord, breaks: todayRecord.breaks.filter(b => !b.end) }, serverNow))})` : `En poste depuis ${clock(todayRecord.arrivalAt)}`}
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={() => setWorkStatus(workStatus === 'working' ? 'coffee_break' : 'working')}
-                className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 ${workStatus === 'coffee_break' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'}`}
+                onClick={() => void togglePause()}
+                disabled={!todayRecord || pauseBusy}
+                className={`px-3.5 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-2 shadow-md transition active:scale-95 disabled:opacity-50 ${onBreak ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'}`}
               >
                 <Coffee className="w-4 h-4 text-amber-100" />
-                <span>{workStatus === 'working' ? 'Pause' : 'Reprendre'}</span>
+                <span>{onBreak ? 'Reprendre' : 'Pause'}</span>
               </button>
               {onSelectUser && (
                 <button onClick={() => setShowAccountModal(true)} className="px-3 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5">
@@ -468,7 +490,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                       <li>Les tâches qui vous sont assignées, dès leur création.</li>
                       <li>Vos documents et demandes, à chaque étape de leur circuit.</li>
                       <li>Les documents de votre service <strong>une fois validés</strong>.</li>
-                      <li>Pas les brouillons ni les circuits en cours des autres, ni les données RH.</li>
+                      <li>Pas les brouillons ni les circuits en cours des autres, ni les pointages de vos collègues.</li>
                     </>
                   ) : (
                     <>
@@ -555,7 +577,6 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {docsShown.map(doc => {
-                const isPayslip = doc.subtype === 'bulletin_de_paie' || doc.isConfidentialPayslip;
                 return (
                   <div key={doc.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between gap-3">
                     <div className="space-y-2">
@@ -569,7 +590,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
                       </div>
                       {typeof doc.amount === 'number' && doc.amount > 0 && (
                         <div className="p-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase">{isPayslip ? 'Net' : 'Montant'}</span>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Montant</span>
                           <span className="font-mono font-black text-sm text-emerald-700">{doc.amount.toLocaleString('fr-FR')} {doc.currency || 'USD'}</span>
                         </div>
                       )}
@@ -597,32 +618,44 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-sky-600" /> Registre de présence (semaine en cours)</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
-                      <th className="py-2.5">Date</th><th className="py-2.5">Arrivée</th><th className="py-2.5">Départ</th><th className="py-2.5">Temps effectif</th><th className="py-2.5">Statut</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    <tr>
-                      <td className="py-3 font-semibold">Aujourd'hui</td>
-                      <td className="py-3 font-mono text-emerald-700 font-bold">08:15:00</td>
-                      <td className="py-3 text-slate-400">En poste</td>
-                      <td className="py-3 font-mono font-bold">{formatHours(seconds)}</td>
-                      <td className="py-3"><span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">Certifié</span></td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 font-semibold">Hier</td>
-                      <td className="py-3 font-mono text-slate-600">08:10:22</td>
-                      <td className="py-3 font-mono text-slate-600">17:05:40</td>
-                      <td className="py-3 font-mono">08h 55m</td>
-                      <td className="py-3"><span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">Complet</span></td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Clock className="w-4 h-4 text-sky-600" /> Mes pointages (14 derniers jours)</h3>
+                {!isAgent && onOpenTab && (
+                  <button type="button" onClick={() => onOpenTab('pointage')} className="text-xs font-semibold text-sky-700 hover:underline">Pointage de l'équipe →</button>
+                )}
               </div>
+              <p className="text-[11px] text-slate-500">
+                Automatique : arrivée à votre première connexion du jour, départ à votre déconnexion (ou à votre dernière activité si vous oubliez de vous déconnecter). Heures du serveur.
+              </p>
+              {attendanceError && <div role="alert" className="p-2.5 bg-rose-50 text-rose-800 text-xs rounded-xl border border-rose-200">{attendanceError}</div>}
+              {myDays.length === 0 ? (
+                <p className="text-xs text-slate-500">{myAttendance ? 'Aucun pointage sur cette période.' : 'Chargement…'}</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                        <th className="py-2.5">Date</th><th className="py-2.5">Arrivée</th><th className="py-2.5">Départ</th><th className="py-2.5">Pauses</th><th className="py-2.5">Temps effectif</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {myDays.map(d => (
+                        <tr key={d.id}>
+                          <td className="py-3 font-semibold">{d.date === attendanceToday ? "Aujourd'hui" : new Date(`${d.date}T12:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit' })}</td>
+                          <td className="py-3 font-mono text-emerald-700 font-bold">{clock(d.arrivalAt)}</td>
+                          <td className="py-3 font-mono">
+                            {d.departureAt
+                              ? <>{clock(d.departureAt)}{d.departureAuto && <span className="ml-1.5 text-[9.5px] font-sans font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600" title="Pas de déconnexion : départ à la dernière activité">auto</span>}</>
+                              : <span className="font-sans text-slate-400">{isOnBreak(d) ? 'En pause' : 'En poste'}</span>}
+                          </td>
+                          <td className="py-3 font-mono">{d.breaks.length ? duration(pauseSeconds(d, serverNow)) : '—'}</td>
+                          <td className="py-3 font-mono font-bold">{d.date === attendanceToday ? formatHours(workedToday) : duration(workedSeconds(d, serverNow, attendanceToday))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Calendar className="w-4 h-4 text-sky-600" /> Mes demandes d'absence</h3>
@@ -648,7 +681,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
 
           <div className="bg-white rounded-2xl border border-sky-200 p-6 shadow-sm space-y-4 self-start">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Calendar className="w-4 h-4 text-sky-600" /> Demander un congé ou une absence</h3>
-            <p className="text-[11px] text-slate-500">Votre demande suit le circuit : votre responsable direct, puis les Ressources Humaines.</p>
+            <p className="text-[11px] text-slate-500">Votre demande suit le circuit : votre chef de service, puis votre hiérarchie (chef de division, directeur).</p>
             {congeErreur && <div className="p-2.5 bg-rose-50 text-rose-800 text-xs rounded-xl border border-rose-200">{congeErreur}</div>}
             <form onSubmit={soumettreConge} className="space-y-3 text-xs">
               <label className="block text-slate-600 font-semibold">Type de demande
@@ -731,13 +764,7 @@ export const EmployeeWorkspaceView: React.FC<EmployeeWorkspaceViewProps> = ({
         </div>
       )}
 
-      {/* RESPONSABLES : TABLEAUX DE BORD */}
-      {!isAgent && activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          <DepartmentTasksProgressChart tasks={tasks} entities={entities} users={users} currentUser={currentUser} />
-          <WorkspaceDashboard entities={entities} users={users} contracts={contracts} organization={currentOrg} currentUser={currentUser} onOpenLogistics={onOpenLogistics} />
-        </div>
-      )}
+      {/* RESPONSABLES : PROGRESSION DES ÉQUIPES */}
       {!isAgent && activeTab === 'task_analytics' && (
         <DepartmentTasksProgressChart tasks={tasks} entities={entities} users={users} currentUser={currentUser} />
       )}

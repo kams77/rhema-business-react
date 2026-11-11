@@ -40,7 +40,7 @@ export const LaravelIntegrationView: React.FC = () => {
             <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center justify-between">
               <span>1. Génération des Modèles & Migrations :</span>
               <button
-                onClick={() => copyToClipboard('php artisan make:model HierarchicalEntity -mcr\nphp artisan make:model Organization -mcr\nphp artisan make:model DocumentItem -mcr\nphp artisan make:model PayrollRun -mcr\nphp artisan make:policy HierarchicalAccessPolicy', 'artisan')}
+                onClick={() => copyToClipboard('php artisan make:model HierarchicalEntity -mcr\nphp artisan make:model Organization -mcr\nphp artisan make:model DocumentItem -mcr\nphp artisan make:policy HierarchicalAccessPolicy', 'artisan')}
                 className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
               >
                 {copiedCodeSnippet === 'artisan' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -51,7 +51,6 @@ export const LaravelIntegrationView: React.FC = () => {
 {`php artisan make:model HierarchicalEntity -mcr
 php artisan make:model Organization -mcr
 php artisan make:model DocumentItem -mcr
-php artisan make:model PayrollRun -mcr
 php artisan make:policy HierarchicalAccessPolicy`}
             </pre>
           </div>
@@ -159,11 +158,6 @@ class DocumentPolicy
             return true;
         }
 
-        // Bulletin de paie strictement confidentiel
-        if ($document->is_confidential_payslip) {
-            return $document->target_user_id === $user->id || $user->direction_id === 'dir-rh';
-        }
-
         // Cloisonnement de service
         return $user->service_id === $document->target_entity_id 
             || $user->direction_id === $document->target_entity_id
@@ -188,10 +182,6 @@ class DocumentPolicy
     {
         if ($user->role === 'dg') {
             return true;
-        }
-
-        if ($document->is_confidential_payslip) {
-            return $document->target_user_id === $user->id || $user->direction_id === 'dir-rh';
         }
 
         return $user->service_id === $document->target_entity_id 

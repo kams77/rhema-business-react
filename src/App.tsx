@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { usePersistentState } from './hooks/usePersistentState';
 import { newId, nowStamp } from './utils/id';
 import { invoiceBankDetails } from './lib/bank';
@@ -30,9 +30,6 @@ import type {
   TaskItem, 
   SecurityAlert,
   AuditLog,
-  PayrollSystemConfig,
-  EmployeeContract,
-  PayrollRunPeriod,
   PurchaseOrderItem,
   DeliveryNoteItem,
   ShipmentTracking,
@@ -48,8 +45,7 @@ import {
   initialDocuments, 
   initialTasks,
   initialSecurityAlerts,
-  initialAuditLogs,
-  initialContracts
+  initialAuditLogs
 } from './data/initialData';
 import { 
   initialLogisticsCatalog,
@@ -91,6 +87,8 @@ import type {
   LogisticsHub, 
   HubStockItem, 
   StockMovementItem,
+  StockSettings,
+  HubOrgUnit,
   EntityInvitation,
   EntityInvitationNotification
 } from './types';
@@ -104,10 +102,10 @@ import { ConnectViaKeyModal } from './components/invitations/ConnectViaKeyModal'
 import { EntityInvitationsManagerModal } from './components/invitations/EntityInvitationsManagerModal';
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
-import { 
-  createStandardPayrollSystem, 
-  initialPayrollConfigs 
-} from './data/standardPayroll';
+import { attendance } from './lib/attendance';
+import { availableForExit, canEditHubOrg, deriveHubStocks, hubOrgIssues, isHubMember, migrateLegacyStocks, movementOwnerHub, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
+import { isRetiredHrDocument } from '../shared/access.mjs';
+import { removeValue } from './lib/storage';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { LoginView } from './components/LoginView';
@@ -130,6 +128,7 @@ const SecurityView = lazy(() => import('./components/SecurityView').then(m => ({
 const AgentCrudView = lazy(() => import('./components/AgentCrudView').then(m => ({ default: m.AgentCrudView })));
 const AuditView = lazy(() => import('./components/AuditView').then(m => ({ default: m.AuditView })));
 const BulkImportView = lazy(() => import('./components/BulkImportView').then(m => ({ default: m.BulkImportView })));
+const PointageView = lazy(() => import('./components/PointageView').then(m => ({ default: m.PointageView })));
 const LogisticsModuleView = lazy(() => import('./components/LogisticsModuleView').then(m => ({ default: m.LogisticsModuleView })));
 const LaravelIntegrationView = lazy(() => import('./components/LaravelIntegrationView').then(m => ({ default: m.LaravelIntegrationView })));
 const EntityInvitationsView = lazy(() => import('./components/EntityInvitationsView').then(m => ({ default: m.EntityInvitationsView })));
@@ -146,7 +145,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   const [currentOrg, setCurrentOrg] = usePersistentState<Organization>('currentOrg', initialOrganizations[0], { keepDefaultInApi: true });
   const [entities, setEntities] = usePersistentState<HierarchicalEntity[]>('entities', initialEntities);
   const [users, setUsers] = usePersistentState<User[]>('users', initialUsers);
-  const [contracts, setContracts] = usePersistentState<EmployeeContract[]>('contracts', initialContracts);
   const [documents, setDocuments] = usePersistentState<DocumentItem[]>('documents', initialDocuments);
   const [tasks, setTasks] = usePersistentState<TaskItem[]>('tasks', initialTasks);
   
@@ -274,12 +272,15 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   // Déconnexion automatique après inactivité (mode local ; en mode serveur, c'est le serveur qui l'applique).
   useEffect(() => {
     if (!isAuthenticated || API_MODE) return;
+    // Pointage automatique (mode navigateur) : arrivée à l'ouverture de la session.
+    attendance.touch(currentUser);
     let lastTouch = 0;
     const onActivity = () => {
       const now = Date.now();
       if (now - lastTouch > 15_000) { // au plus une écriture toutes les 15 s
         lastTouch = now;
         touchSession();
+        attendance.touch(currentUser);
       }
     };
     const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'] as const;
@@ -324,6 +325,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       return;
     }
     const departingUser = currentUser;
+    attendance.depart(departingUser);
     clearSession();
     setIsAuthenticated(false);
     setActiveGuestInvitation(null);
@@ -437,12 +439,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setEntities(data.entities);
     setUsers(data.users);
     
-    // Création de la configuration de paie standard pour la nouvelle organisation
-    setPayrollConfigs(prev => ({
-      ...prev,
-      [data.organization.id]: createStandardPayrollSystem(data.organization.id, data.organization.name)
-    }));
-
     // Oblige une connectivité de tous les agents de cette organisation à pouvoir se connecter via un login
     clearSession();
     setIsAuthenticated(false);
@@ -476,33 +472,24 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     });
   };
 
-  // MASSIFICATION DES COLLABORATEURS & CONTRATS RH VIA CSV
-  const handleImportUsersAndContracts = (newUsers: User[], newContracts: EmployeeContract[], auditNote: string) => {
+  // IMPORT CSV DES COMPTES COLLABORATEURS
+  const handleImportUsers = (newUsers: User[], auditNote: string) => {
     setUsers(prev => [...newUsers, ...prev]);
-    setContracts(prev => [...newContracts, ...prev]);
     addAuditLog({
-      action: 'Massification CSV Employés & Contrats RH',
+      action: 'Import CSV des comptes collaborateurs',
       category: 'admin',
       details: auditNote,
     });
   };
 
-  // MASSIFICATION DES HISTORIQUES DE PAIE & ARCHIVES VIA CSV
-  const handleImportPayrollHistory = (newRun: PayrollRunPeriod, newPayslipDocs: DocumentItem[], auditNote: string) => {
-    setDocuments(prev => [...newPayslipDocs, ...prev]);
-    addAuditLog({
-      action: 'Massification CSV Historique Paie',
-      category: 'admin',
-      details: auditNote,
-    });
-  };
-
-  // État des configurations de Paie & RH RDC par organisation
-  const [payrollConfigs, setPayrollConfigs] = usePersistentState<Record<string, PayrollSystemConfig>>('payrollConfigs', 
-    initialPayrollConfigs || {
-      'org-1': createStandardPayrollSystem('org-1', 'RHEMA BUSINESS')
-    }
-  );
+  // Module RH / paie retiré : anciennes données de ce navigateur effacées (mode sans serveur).
+  useEffect(() => {
+    if (API_MODE) return;
+    ['contracts', 'payrollConfigs', 'payroll.runs', 'payroll.contracts', 'payroll.leaves', 'payroll.advances',
+      'payroll.overtime', 'payroll.disciplinary', 'payroll.exchangeRate'].forEach(removeValue);
+    setDocuments(prev => (prev.some(d => isRetiredHrDocument(d)) ? prev.filter(d => !isRetiredHrDocument(d)) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // =========================================================================
   // MODULE LOGISTIQUE : ÉQUIPEMENTS VSAT ET ÉNERGIE SOLAIRE (RDC)
@@ -516,10 +503,75 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   // GESTION DES 6 HUBS PROVINCIAUX & STOCKS DÉCENTRALISÉS
   const [hubs, setHubs] = usePersistentState<LogisticsHub[]>('logistics.hubs', initialHubs);
-  const [stocks, setStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
+  // Ancien stock enregistré (avant le journal) : sert seulement à la reprise et aux emplacements.
+  const [legacyStocks] = usePersistentState<HubStockItem[]>('logistics.stocks', initialHubStocks);
   const [stockMovements, setStockMovements] = usePersistentState<StockMovementItem[]>('logistics.stockMovements', initialStockMovements);
+  const [savedStockSettings, setSavedStockSettings] = usePersistentState<StockSettings | null>('logistics.settings', null);
+  // Organigrammes internes des hubs (cellules, chefs, membres), par identifiant de hub.
+  const [hubOrgs, setHubOrgs] = usePersistentState<Record<string, HubOrgUnit[]>>('logistics.hubOrgs', {});
+  const stockConfig = useMemo(() => stockSettings(savedStockSettings) as StockSettings, [savedStockSettings]);
+  const todayIso = new Date().toLocaleDateString('en-CA');
+
+  // Mode navigateur : passage au journal des stocks (le serveur le fait lui-même en mode serveur).
+  useEffect(() => {
+    if (API_MODE || (savedStockSettings && Number(savedStockSettings.ledgerVersion) >= 2)) return;
+    const r = migrateLegacyStocks(legacyStocks, stockMovements, hubs, todayIso);
+    setStockMovements(r.movements as StockMovementItem[]);
+    setLogisticsCatalog(prev => prev.map(c => (c.minAlertThreshold === undefined && r.thresholds[c.id] !== undefined ? { ...c, minAlertThreshold: r.thresholds[c.id] } : c)));
+    setSavedStockSettings({ ...(stockSettings(savedStockSettings) as StockSettings), ledgerVersion: 2 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedStockSettings]);
+
+  // Stock de chaque Site = calculé à partir du journal (entrées, sorties, transferts).
+  const stocks = useMemo(
+    () => deriveHubStocks(stockMovements, logisticsCatalog, hubs, stockConfig, legacyStocks, todayIso) as HubStockItem[],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stockMovements, logisticsCatalog, hubs, stockConfig, legacyStocks],
+  );
+  const catalogWithStock = useMemo(
+    () => logisticsCatalog.map(c => ({ ...c, stockAvailable: stocks.filter(s => s.catalogItemId === c.id).reduce((t, s) => t + Math.max(0, s.quantityAvailable), 0) })),
+    [logisticsCatalog, stocks],
+  );
+
+  const handleUpsertCatalogItem = (item: LogisticsItem) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Le catalogue est géré par les responsables de la logistique.'); return; }
+    const exists = logisticsCatalog.some(c => c.id === item.id);
+    setLogisticsCatalog(prev => (exists ? prev.map(c => (c.id === item.id ? item : c)) : [item, ...prev]));
+    addAuditLog({ action: exists ? 'Article du catalogue modifié' : 'Article ajouté au catalogue', category: 'admin', details: `${item.sku} — ${item.name} (seuil d'alerte ${item.minAlertThreshold ?? 0}).` });
+    showToast('success', exists ? 'Article mis à jour.' : 'Article ajouté au catalogue.');
+  };
+
+  const handleUpdateHub = (hub: LogisticsHub) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les sites sont gérés par les responsables de la logistique.'); return; }
+    setHubs(prev => prev.map(h => (h.id === hub.id ? hub : h)));
+    addAuditLog({ action: 'Site logistique modifié', category: 'admin', details: `${hub.code} — ${hub.name} (${hub.status}).` });
+    showToast('success', 'Site mis à jour.');
+  };
+
+  const handleUpdateHubOrg = (hubId: string, units: HubOrgUnit[], summary: string) => {
+    const hub = hubs.find(h => h.id === hubId);
+    if (!hub) return;
+    if (!canEditHubOrg(currentUser, hub, isLogisticsManager(currentUser))) {
+      showToast('error', "L'organigramme du hub est tenu par son responsable et par la centrale logistique.");
+      return;
+    }
+    const issues = hubOrgIssues(units);
+    if (issues.length) { showToast('error', issues[0]); return; }
+    setHubOrgs(prev => ({ ...prev, [hubId]: units }));
+    addAuditLog({ action: 'Organigramme du hub modifié', category: 'admin', details: `${hub.code} — ${hub.name} : ${summary}.` });
+    showToast('success', `Organigramme du ${hub.name} : ${summary}.`);
+  };
+
+  const handleUpdateStockSettings = (next: StockSettings) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les paramètres sont gérés par les responsables de la logistique.'); return; }
+    setSavedStockSettings({ ...next, ledgerVersion: 2 });
+    addAuditLog({ action: 'Paramètres des stocks modifiés', category: 'admin', details: `${next.movementTypes.filter(t => t.active).length} type(s) de mouvement actifs, alerte transit ${next.transitAlertDays} j, devise ${next.currency}.` });
+    showToast('success', 'Paramètres enregistrés.');
+  };
 
   const handleAddHub = (newHub: LogisticsHub) => {
+    if (!isLogisticsManager(currentUser)) { showToast('error', 'Les sites sont gérés par les responsables de la logistique.'); return; }
+    if (hubs.some(h => h.code.trim().toUpperCase() === newHub.code.trim().toUpperCase())) { showToast('error', `Le code de site ${newHub.code} existe déjà.`); return; }
     setHubs(prev => [newHub, ...prev]);
     addAuditLog({
       action: 'Création Hub Provincial',
@@ -885,63 +937,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
 
   const findUser = (id?: string) => (id ? users.find(u => u.id === id) : undefined);
 
-  /** Effet d'un mouvement validé sur les stocks des hubs. */
-  const applyMovementToStock = (mvt: StockMovementItem) => {
-    mvt.items.forEach(item => {
-      if (mvt.type === 'entree_fournisseur' && mvt.destinationHubId) {
-        setStocks(prev => {
-          const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
-          if (existing) {
-            const newQty = existing.quantityAvailable + item.quantity;
-            return prev.map(s => s.id === existing.id ? {
-              ...s,
-              quantityAvailable: newQty,
-              totalValueUSD: newQty * s.unitPriceUSD,
-              serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
-              status: newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-            } : s);
-          }
-          const newStock: HubStockItem = {
-            id: newId('stk'),
-            hubId: mvt.destinationHubId!,
-            catalogItemId: item.catalogItemId,
-            sku: item.sku,
-            name: item.name,
-            category: 'vsat',
-            quantityAvailable: item.quantity,
-            quantityReserved: 0,
-            quantityInTransit: 0,
-            minAlertThreshold: 2,
-            unitPriceUSD: item.unitPriceUSD,
-            totalValueUSD: item.quantity * item.unitPriceUSD,
-            locationRack: 'Travée Réception',
-            serialNumbers: item.serialNumbers,
-            lastAuditDate: new Date().toISOString().split('T')[0],
-            status: 'normal'
-          };
-          return [newStock, ...prev];
-        });
-      } else if ((mvt.type === 'sortie_deploiement' || mvt.type === 'transfert_inter_hub') && mvt.sourceHubId) {
-        setStocks(prev => prev.map(s => {
-          if (s.hubId === mvt.sourceHubId && s.catalogItemId === item.catalogItemId) {
-            const newQty = Math.max(0, s.quantityAvailable - item.quantity);
-            return {
-              ...s,
-              quantityAvailable: newQty,
-              totalValueUSD: newQty * s.unitPriceUSD,
-              serialNumbers: s.serialNumbers.filter(sn => !item.serialNumbers.includes(sn)),
-              status: newQty === 0 ? 'rupture' : newQty <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-            };
-          }
-          if (mvt.type === 'transfert_inter_hub' && s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId) {
-            return { ...s, quantityInTransit: s.quantityInTransit + item.quantity };
-          }
-          return s;
-        }));
-      }
-    });
-  };
-
   /** Mouvement entièrement validé : stock mis à jour, transfert mis en route avec sa tâche de réception. */
   const finalizeMovement = (mvt: StockMovementItem, approverName: string) => {
     const isTransfer = mvt.type === 'transfert_inter_hub';
@@ -950,9 +945,11 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       status: isTransfer ? 'en_transit' : 'valide',
       approvedByManagerName: approverName,
       approvedAt: nowShort(),
+      // Le stock du Site source baisse dès la mise en transit (date d'envoi).
+      ...(isTransfer ? { sentAt: new Date().toISOString() } : {}),
     };
+    // Le stock est recalculé à partir du journal : il suffit d'enregistrer le mouvement validé.
     setStockMovements(prev => prev.map(m => (m.id === mvt.id ? validated : m)));
-    applyMovementToStock(validated);
     if (isTransfer) {
       const hub = hubs.find(h => h.id === mvt.destinationHubId);
       const receiver = findUser(hub?.managerId) || findUser(mvt.operatorId) || currentUser;
@@ -1034,9 +1031,23 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
   };
 
   const handleAddMovement = (mvt: StockMovementItem) => {
-    const subtype: DocumentItem['subtype'] = mvt.type === 'entree_fournisseur' ? 'bon_entree_stock'
-      : mvt.type === 'sortie_deploiement' ? 'bon_sortie_stock'
-      : mvt.type === 'transfert_inter_hub' ? 'ordre_transfert' : 'bon_reception';
+    const sign = movementSign(mvt, stockConfig);
+    const subtype: DocumentItem['subtype'] = mvt.type === 'transfert_inter_hub' ? 'ordre_transfert'
+      : sign > 0 ? 'bon_entree_stock' : sign < 0 ? 'bon_sortie_stock' : 'bon_reception';
+    // Portail du hub : hors centrale logistique, on ne saisit que pour un site dont on fait partie de l'équipe.
+    const ownerHub = hubs.find(h => h.id === movementOwnerHub(mvt, stockConfig));
+    if (!isLogisticsManager(currentUser) && !isHubMember(currentUser, ownerHub)) {
+      showToast('error', `Vous ne faites pas partie de l'équipe du site « ${ownerHub?.name || 'inconnu'} ». Demandez à la centrale logistique de vous y affecter.`);
+      return;
+    }
+    // Une sortie ou un transfert ne peut pas dépasser le stock disponible du Site (bons au visa déduits).
+    if (sign < 0 || mvt.type === 'transfert_inter_hub') {
+      const short = mvt.items.find(i => i.quantity > availableForExit(stockMovements, stockConfig, mvt.sourceHubId, i.catalogItemId));
+      if (short) {
+        showToast('error', `Stock insuffisant au ${mvt.sourceHubName || 'site'} pour ${short.name} : ${availableForExit(stockMovements, stockConfig, mvt.sourceHubId, short.catalogItemId)} disponible(s).`);
+        return;
+      }
+    }
     const doc = publishLogisticsDocument({
       id: `doc-${mvt.id}`,
       title: `${documentType(subtype).label} : ${mvt.movementNumber}`,
@@ -1055,7 +1066,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     setDocuments(prev => [doc, ...prev]);
     if (validated) finalizeMovement(stored, currentUser.name);
     addAuditLog({
-      action: `Mouvement de Stock (${mvt.type})`,
+      action: `Mouvement de stock (${movementTypeLabel(mvt, stockConfig)})`,
       category: 'document',
       details: `${mvt.movementNumber} — ${validated ? 'validé' : `soumis à ${waitingFor(currentStep(doc.workflow))}`} (${mvt.totalValueUSD.toLocaleString('fr-FR')} USD).`,
     });
@@ -1081,58 +1092,72 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     } : m));
   };
 
-  const handleReceiveTransfer = (mvtId: string) => {
+  /**
+   * Réception d'un transfert : date de réception, quantité réellement reçue par article
+   * (si elle diffère de la quantité envoyée) et réceptionnaire. Le stock du Site destination
+   * augmente de la quantité reçue ; un écart est signalé et tracé.
+   */
+  const handleReceiveTransfer = (mvtId: string, reception?: { receivedAt?: string; receivedQuantities?: Record<string, number>; receivedByName?: string; notes?: string }) => {
     const mvt = stockMovements.find(m => m.id === mvtId);
     if (!mvt || !mvt.destinationHubId) return;
     if (mvt.status !== 'en_transit') {
-      showToast('error', "Ce transfert n'est pas encore validé : il ne peut pas être réceptionné.");
+      showToast('error', "Ce transfert n'est pas en transit : il ne peut pas être réceptionné.");
       return;
     }
-
+    const destHub = hubs.find(h => h.id === mvt.destinationHubId);
+    if (!isLogisticsManager(currentUser) && !isHubMember(currentUser, destHub)) {
+      showToast('error', "La réception est faite par l'équipe du site destination ou par la centrale logistique.");
+      return;
+    }
+    const receivedAt = reception?.receivedAt || todayIso;
+    const sent = (mvt.sentAt || mvt.approvedAt || mvt.date || '').slice(0, 10);
+    if (sent && receivedAt < sent) {
+      showToast('error', `La date de réception ne peut pas précéder l'envoi (${sent}).`);
+      return;
+    }
+    const quantities: Record<string, number> = {};
+    for (const it of mvt.items) {
+      const q = reception?.receivedQuantities?.[it.catalogItemId];
+      if (q === undefined || q === it.quantity) continue;
+      if (!Number.isInteger(q) || q < 0 || q > it.quantity) {
+        showToast('error', `Quantité reçue invalide pour ${it.name} (entre 0 et ${it.quantity}).`);
+        return;
+      }
+      quantities[it.catalogItemId] = q;
+    }
+    const gap = mvt.items.reduce((t, it) => t + (it.quantity - (quantities[it.catalogItemId] ?? it.quantity)), 0);
+    const receiver = reception?.receivedByName?.trim() || currentUser.name;
     setStockMovements(prev => prev.map(m => m.id === mvtId ? {
       ...m,
       status: 'receptionne',
-      notes: `${m.notes} — Réceptionné et scanné conforme par ${currentUser.name}.`
+      receivedAt,
+      receivedByName: receiver,
+      ...(Object.keys(quantities).length ? { receivedQuantities: quantities } : {}),
+      notes: `${m.notes ? `${m.notes} — ` : ''}Réceptionné le ${receivedAt} par ${receiver}${gap ? ` — ÉCART : ${gap} unité(s) manquante(s)` : ' — conforme'}${reception?.notes ? ` — ${reception.notes}` : ''}.`,
     } : m));
-
-    mvt.items.forEach(item => {
-      setStocks(prev => {
-        const existing = prev.find(s => s.hubId === mvt.destinationHubId && s.catalogItemId === item.catalogItemId);
-        if (existing) {
-          const newAvail = existing.quantityAvailable + item.quantity;
-          const newTransit = Math.max(0, existing.quantityInTransit - item.quantity);
-          return prev.map(s => s.id === existing.id ? {
-            ...s,
-            quantityAvailable: newAvail,
-            quantityInTransit: newTransit,
-            totalValueUSD: newAvail * s.unitPriceUSD,
-            serialNumbers: [...s.serialNumbers, ...item.serialNumbers],
-            status: newAvail <= s.minAlertThreshold ? 'alerte_basse' : 'normal'
-          } : s);
-        }
-        const newStock: HubStockItem = {
-          id: newId('stk'),
-          hubId: mvt.destinationHubId!,
-          catalogItemId: item.catalogItemId,
-          sku: item.sku,
-          name: item.name,
-          category: 'vsat',
-          quantityAvailable: item.quantity,
-          quantityReserved: 0,
-          quantityInTransit: 0,
-          minAlertThreshold: 2,
-          unitPriceUSD: item.unitPriceUSD,
-          totalValueUSD: item.quantity * item.unitPriceUSD,
-          locationRack: 'Travée Réception',
-          serialNumbers: item.serialNumbers,
-          lastAuditDate: new Date().toISOString().split('T')[0],
-          status: 'normal'
-        };
-        return [newStock, ...prev];
-      });
+    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Réception confirmée par ${receiver}` });
+    addAuditLog({
+      action: gap ? 'Réception de transfert avec écart' : 'Réception de transfert',
+      category: 'task',
+      details: `${mvt.movementNumber} réceptionné au ${mvt.destinationHubName} le ${receivedAt} par ${receiver}${gap ? ` : ${gap} unité(s) manquante(s)` : ' : conforme'}.`,
     });
-    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Réception confirmée par ${currentUser.name}` });
-    addAuditLog({ action: 'Réception Transfert Inter-Hubs', category: 'task', details: `${mvt.movementNumber} réceptionné au ${mvt.destinationHubName}.` });
+    showToast(gap ? 'info' : 'success', gap ? `Réception enregistrée avec un écart de ${gap} unité(s).` : 'Réception enregistrée : stock du site mis à jour.');
+  };
+
+  /** Annulation d'un transfert en transit (responsables de la logistique) : la source récupère son stock. */
+  const handleCancelTransfer = (mvtId: string, reason: string) => {
+    const mvt = stockMovements.find(m => m.id === mvtId);
+    if (!mvt || mvt.type !== 'transfert_inter_hub') return;
+    if (!isLogisticsManager(currentUser)) { showToast('error', "L'annulation d'un transfert est réservée aux responsables de la logistique."); return; }
+    if (mvt.status !== 'en_transit') { showToast('error', 'Seul un transfert en transit peut être annulé.'); return; }
+    if (!reason.trim()) { showToast('error', "Indiquez le motif de l'annulation."); return; }
+    setStockMovements(prev => prev.map(m => m.id === mvtId ? {
+      ...m, status: 'annule', cancelledAt: new Date().toISOString(), cancelledByName: currentUser.name, cancelReason: reason.trim(),
+      notes: `${m.notes ? `${m.notes} — ` : ''}Annulé par ${currentUser.name} : ${reason.trim()}.`,
+    } : m));
+    advanceSourceTasks('mouvement', mvtId, { closeLabel: `Transfert annulé par ${currentUser.name}` });
+    addAuditLog({ action: 'Annulation de transfert', category: 'document', details: `${mvt.movementNumber} (${mvt.sourceHubName} → ${mvt.destinationHubName}) annulé : ${reason.trim()}.` });
+    showToast('success', 'Transfert annulé : le stock revient au site source.');
   };
 
   const handleCreateOrder = (order: PurchaseOrderItem) => {
@@ -1489,7 +1514,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Émission Invitation Inter-Entités',
       category: 'security',
-      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé 10 chiffres ${invitation.authKey10Digits}. Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
+      details: `Invitation ${invitation.invitationCode} émise pour ${invitation.invitedAgentName} (${invitation.invitedAgentMatricule}) avec clé à 10 chiffres (••••••••${invitation.authKey10Digits.slice(-2)}). Validité : ${invitation.validityDurationHours}h vers "${invitation.hostEntityName}".`,
     });
   };
 
@@ -1499,7 +1524,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     addAuditLog({
       action: 'Connexion Inter-Entités par Clé Unique',
       category: 'auth',
-      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via clé 10 chiffres ${invitation.authKey10Digits}.`,
+      details: `Session invité activée pour ${currentUser.name} sur l'entité "${invitation.hostEntityName}" via sa clé à 10 chiffres.`,
     });
   };
 
@@ -1694,7 +1719,6 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
               users={users}
               tasks={tasks}
               documents={documents}
-              contracts={contracts}
               onTaskAction={applyTaskAction}
               onCreateTask={handleCreateTask}
               onSubmitLeaveRequest={handleSubmitLeaveRequest}
@@ -1726,6 +1750,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   action: 'Création Entité Hiérarchique',
                   category: 'hierarchy',
                   details: `Ajout de l'entité ${entWithId.name} (${entWithId.level.toUpperCase()})`,
+                });
+              }}
+              onUpdateEntity={(id, changes) => {
+                const before = entities.find(e => e.id === id);
+                setEntities(prev => prev.map(e => (e.id === id ? { ...e, ...changes } : e)));
+                // Le nom de l'entité figure aussi sur la fiche des agents qui y sont affectés.
+                if (before && changes.name && changes.name !== before.name) {
+                  setUsers(prev => prev.map(u => (u.departmentName === before.name &&
+                    [u.serviceId, u.divisionId, u.directionId, u.departementId].includes(id) ? { ...u, departmentName: changes.name } : u)));
+                }
+                addAuditLog({
+                  action: 'Modification Entité',
+                  category: 'hierarchy',
+                  details: `Entité ${before?.name ?? id} modifiée${changes.name && before && changes.name !== before.name ? ` (nouveau nom : ${changes.name})` : ''}.`,
                 });
               }}
               onDeleteEntity={id => {
@@ -1821,7 +1859,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 currentUser={currentUser}
                 organization={currentOrg}
                 entities={entities}
-                catalog={logisticsCatalog}
+                catalog={catalogWithStock}
                 orders={purchaseOrders}
                 deliveryNotes={deliveryNotes}
                 shipments={shipments}
@@ -1834,6 +1872,14 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                 onAddMovement={handleAddMovement}
                 onApproveMovement={handleApproveMovement}
                 onReceiveTransfer={handleReceiveTransfer}
+                onCancelTransfer={handleCancelTransfer}
+                stockSettings={stockConfig}
+                users={users}
+                onUpsertCatalogItem={handleUpsertCatalogItem}
+                onUpdateHub={handleUpdateHub}
+                hubOrgs={hubOrgs}
+                onUpdateHubOrg={handleUpdateHubOrg}
+                onUpdateStockSettings={handleUpdateStockSettings}
                 onCreateOrder={handleCreateOrder}
                 onApproveOrder={handleApproveOrder}
                 onCreateDeliveryNote={handleCreateDeliveryNote}
@@ -1860,46 +1906,20 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
             )
           )}
 
-          {/* MODULE DE MASSIFICATION CSV & IMPORT RH / PAIE */}
+          {/* IMPORT CSV DES COMPTES COLLABORATEURS */}
           {currentTab === 'bulk_import' && (
             <BulkImportView
               currentUser={currentUser}
               currentOrg={currentOrg}
               entities={entities}
               users={users}
-              contracts={contracts}
-              onImportUsersAndContracts={handleImportUsersAndContracts}
-              onImportPayrollHistory={handleImportPayrollHistory}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
-              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
+              onImportUsers={handleImportUsers}
             />
           )}
 
-          {/* MODULE DE POINTAGE & HORODATAGE 28 JOURS OUVRABLES (+ HEURES SUP) */}
-          {currentTab === 'attendance_dispatch' && (
-            <BulkImportView
-              currentUser={currentUser}
-              currentOrg={currentOrg}
-              entities={entities}
-              users={users}
-              contracts={contracts}
-              onImportUsersAndContracts={handleImportUsersAndContracts}
-              onImportPayrollHistory={handleImportPayrollHistory}
-              onLogAction={(action, details, category) => {
-                addAuditLog({
-                  action,
-                  category: category as AuditLog['category'],
-                  details,
-                });
-              }}
-              onAddDocument={(doc) => setDocuments(prev => [doc, ...prev])}
-            />
+          {/* POINTAGE AUTOMATIQUE : REGISTRE DE PRÉSENCE DU PÉRIMÈTRE */}
+          {currentTab === 'pointage' && (
+            <PointageView currentUser={currentUser} entities={entities} users={users} />
           )}
 
           {currentTab === 'security' && (
@@ -1968,6 +1988,17 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
                   0
                 );
               }}
+              onUpdateUser={(id, changes) => {
+                const target = users.find(u => u.id === id);
+                if (!target) return;
+                setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...changes } : u)));
+                addAuditLog({
+                  action: 'Modification Fiche Collaborateur',
+                  category: 'admin',
+                  details: `Fiche de ${target.name} modifiée (poste : ${changes.roleTitle ?? target.roleTitle}, affectation : ${changes.departmentName ?? target.departmentName ?? 'Direction Générale'}).`,
+                });
+                showToast('success', `Fiche de ${changes.name ?? target.name} enregistrée.`);
+              }}
               onRevokeUser={id => {
                 const target = users.find(u => u.id === id);
                 if (target?.id === currentUser.id) {
@@ -2007,7 +2038,7 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
           )}
 
           {currentTab === 'audit' && (
-            <AuditView logs={logs} organizationName={currentOrg?.name} />
+            <AuditView logs={logs} organizationName={currentOrg?.name} organization={currentOrg} />
           )}
 
           {currentTab === 'laravel' && (

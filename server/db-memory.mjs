@@ -79,6 +79,7 @@ export function createMemoryDb() {
       return { ok: true, version: v + 1 };
     },
     async bump(key) { putRaw(key, '""'); },
+    async deleteData(key) { data.delete(key); },
     async replaceAllData(entries, newUsers, auditEntries) {
       data.clear();
       for (const [k, v] of entries) putRaw(k, v);
