@@ -76,7 +76,7 @@ export const HubOrgChartPanel: React.FC<StockContext> = ctx => {
     <div className="space-y-4">
       <div className={`${card} flex flex-wrap items-center justify-between gap-3`}>
         <div>
-          <h3 className="text-sm font-bold text-white">Organigramme du hub {hub.name}</h3>
+          <h3 className="text-sm font-bold text-white">Organigramme — {hub.name}</h3>
           <p className="text-[11px] text-slate-400 max-w-3xl">
             L'organisation interne du site : ses cellules, leurs chefs et leurs membres (avec ou sans compte dans l'application).
             {canEdit ? ' Vous pouvez le modifier.' : ' Tenu par le responsable du hub et la centrale logistique.'} Il ne change pas les circuits de visa.
@@ -91,8 +91,8 @@ export const HubOrgChartPanel: React.FC<StockContext> = ctx => {
       {printView ? (
         <div className="overflow-x-auto flex flex-col items-center gap-3 bg-slate-950/40 rounded-2xl p-4 border border-slate-800">
           <button type="button" onClick={() => window.print()} className={btnPrimary}><Printer className="w-4 h-4" /> Imprimer (A4)</button>
-          <A4Sheet organization={ctx.organization} footerExtra={`Organigramme du hub ${hub.name} — ${new Date().toLocaleDateString('fr-FR')}`}>
-            <h2 className="text-lg font-black uppercase text-slate-950">Organigramme du hub {hub.name}</h2>
+          <A4Sheet organization={ctx.organization} footerExtra={`Organigramme — ${hub.name} — ${new Date().toLocaleDateString('fr-FR')}`}>
+            <h2 className="text-lg font-black uppercase text-slate-950">Organigramme — {hub.name}</h2>
             <p className="text-[11px] text-slate-600 mb-4">{[hub.city, hub.province].filter(Boolean).join(' • ')} • Responsable du site : <strong>{hub.managerName || '—'}</strong> • {units.length} cellule(s), {people} personne(s) placée(s)</p>
             <PrintTree units={units} />
           </A4Sheet>
