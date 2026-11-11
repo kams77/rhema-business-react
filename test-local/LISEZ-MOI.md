@@ -1,10 +1,10 @@
-# Tester ERP-WORKFLOW sur votre ordinateur, avec MySQL
+# Tester ERP-GESDOC sur votre ordinateur, avec MySQL
 
 Ce dossier lance sur votre ordinateur, en un double-clic :
 
 | Service | Adresse | Rôle |
 |---|---|---|
-| Application ERP-WORKFLOW | http://localhost:8080 | L'application, en mode serveur |
+| Application ERP-GESDOC | http://localhost:8080 | L'application, en mode serveur |
 | Base MySQL (MariaDB 11.4) | interne | Toutes vos données de test |
 | phpMyAdmin | http://localhost:8081 | Voir les tables MySQL dans le navigateur |
 
@@ -60,7 +60,7 @@ Ne modifiez pas les tables à la main : passez par l'application.
 | Problème | Solution |
 |---|---|
 | « port is already allocated » | Changez `APP_PORT` (ex. 8090) ou `PMA_PORT` dans `.env`, relancez. |
-| Le serveur ne répond pas | Docker Desktop → Containers → `erp-workflow-test-app` → Logs. |
+| Le serveur ne répond pas | Docker Desktop → Containers → `erp-gesdoc-test-app` → Logs. |
 | Code d'installation perdu | Il est dans le fichier `.env` (ligne `SETUP_CODE=`). |
 
 Le fichier `.env` contient vos mots de passe de test : ne le partagez pas.

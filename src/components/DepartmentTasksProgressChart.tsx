@@ -42,7 +42,7 @@ interface DepartmentTasksProgressChartProps {
   className?: string;
 }
 
-// Couleurs harmonisées avec la charte ERP-WORKFLOW
+// Couleurs harmonisées avec la charte ERP-GESDOC
 const DEPT_COLORS = {
   operations: {
     stroke: '#0284c7', // Sky 600

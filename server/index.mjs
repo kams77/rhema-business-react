@@ -1,4 +1,4 @@
-// server/index.mjs — démarrage du serveur ERP-WORKFLOW.
+// server/index.mjs — démarrage du serveur ERP-GESDOC.
 //
 // Variables d'environnement :
 //   PORT            Port HTTP (défaut 8080)
@@ -54,7 +54,7 @@ async function createDb() {
 // Refuse de démarrer avec les valeurs d'exemple du fichier docker-compose.yml.
 const placeholders = ['DB_PASSWORD', 'SETUP_CODE'].filter(k => String(env[k] || '').includes('CHANGEZ_MOI'));
 if (placeholders.length) {
-  console.error(`[erp-workflow] Modifiez d'abord ${placeholders.join(' et ')} dans docker-compose.yml (valeurs « CHANGEZ_MOI »).`);
+  console.error(`[erp-gesdoc] Modifiez d'abord ${placeholders.join(' et ')} dans docker-compose.yml (valeurs « CHANGEZ_MOI »).`);
   process.exit(1);
 }
 
@@ -69,14 +69,14 @@ if ((await db.countUsers()) === 0 && config.setupCode.length < 8 && db.kind !== 
 const server = http.createServer(createApp({ db, config }));
 server.requestTimeout = 120_000;
 server.listen(config.port, () => {
-  console.log(`[erp-workflow] Serveur prêt sur le port ${config.port} (stockage : ${db.kind}, application : ${config.distDir})`);
+  console.log(`[erp-gesdoc] Serveur prêt sur le port ${config.port} (stockage : ${db.kind}, application : ${config.distDir})`);
 });
 
 // Nettoyage des sessions expirées toutes les heures.
 setInterval(() => db.purgeSessions(Date.now() - SESSION_MAX_MS).catch(() => {}), 60 * 60 * 1000).unref();
 
 const shutdown = async signal => {
-  console.log(`[erp-workflow] Arrêt (${signal})…`);
+  console.log(`[erp-gesdoc] Arrêt (${signal})…`);
   server.close();
   await db.close().catch(() => {});
   process.exit(0);

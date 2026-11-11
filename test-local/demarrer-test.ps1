@@ -1,4 +1,4 @@
-﻿# ERP-WORKFLOW - demarrage du kit de test (Windows, Docker Desktop).
+﻿# ERP-GESDOC - demarrage du kit de test (Windows, Docker Desktop).
 # Lance par demarrer-test.bat (double-clic).
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
@@ -6,7 +6,7 @@ Set-Location -LiteralPath $PSScriptRoot
 function Fin($code) { Write-Host ''; Read-Host 'Appuyez sur Entrée pour fermer' | Out-Null; exit $code }
 
 Write-Host ''
-Write-Host '=== ERP-WORKFLOW : kit de test avec MySQL ===' -ForegroundColor Cyan
+Write-Host '=== ERP-GESDOC : kit de test avec MySQL ===' -ForegroundColor Cyan
 Write-Host ''
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {

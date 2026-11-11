@@ -1,10 +1,10 @@
 #!/bin/sh
-# ERP-WORKFLOW - démarrage du kit de test (Mac / Linux, Docker Desktop).
+# ERP-GESDOC - démarrage du kit de test (Mac / Linux, Docker Desktop).
 #   Terminal :  sh demarrer-test.sh
 cd "$(dirname "$0")" || exit 1
 
 echo ""
-echo "=== ERP-WORKFLOW : kit de test avec MySQL ==="
+echo "=== ERP-GESDOC : kit de test avec MySQL ==="
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then

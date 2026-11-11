@@ -1,4 +1,4 @@
-# ERP-WORKFLOW — Portail Entreprise & Gestion Hiérarchique
+# ERP-GESDOC — Portail Entreprise & Gestion Hiérarchique
 
 Application web de gestion d'entreprise pour la RD Congo : organigramme hiérarchique,
 circuits documentaires, pointage automatique des agents, logistique VSAT & solaire,
@@ -166,7 +166,7 @@ Guide pas à pas (installation locale, Cloudflare Pages, Netlify, Docker) :
 En bref : `npm run build` produit un site statique dans `dist/`. Hébergement recommandé :
 **Cloudflare Pages** (gratuit, HTTPS, en-têtes de sécurité de `public/_headers` appliqués).
 Définissez `VITE_DEMO_MODE=false` **avant** la compilation pour une mise en production.
-Pour un serveur interne : `docker build -t erp-workflow .` puis `docker run -d -p 8080:80 erp-workflow`.
+Pour un serveur interne : `docker build -t erp-gesdoc .` puis `docker run -d -p 8080:80 erp-gesdoc`.
 
 ---
 

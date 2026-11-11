@@ -1,4 +1,4 @@
-# ERP-WORKFLOW — application + serveur + base MariaDB.
+# ERP-GESDOC — application + serveur + base MariaDB.
 # Synology : Container Manager → Projet → Créer → choisir ce dossier (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
 # Ailleurs : `docker compose up -d --build`.
 #
@@ -13,7 +13,7 @@
 services:
   db:
     image: mariadb:11.4
-    container_name: erp-workflow-db
+    container_name: erp-gesdoc-db
     restart: unless-stopped
     environment:
       MARIADB_DATABASE: erp_workflow
@@ -52,8 +52,8 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    image: erp-workflow-serveur:latest
-    container_name: erp-workflow-app
+    image: erp-gesdoc-serveur:latest
+    container_name: erp-gesdoc-app
     restart: unless-stopped
     depends_on:
       db:

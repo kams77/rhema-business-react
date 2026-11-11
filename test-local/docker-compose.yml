@@ -1,4 +1,4 @@
-# ERP-WORKFLOW — kit de TEST sur un ordinateur (Windows, Mac ou Linux avec Docker Desktop).
+# ERP-GESDOC — kit de TEST sur un ordinateur (Windows, Mac ou Linux avec Docker Desktop).
 #
 #   Ne lancez pas ce fichier à la main : utilisez « demarrer-test » (Windows : demarrer-test.bat,
 #   Mac / Linux : demarrer-test.sh), qui crée d'abord les mots de passe dans le fichier .env.
@@ -10,13 +10,14 @@
 # sur le réseau ne peut s'y connecter. Pour une installation partagée, utilisez le Synology
 # (voir docs/GUIDE-DEPLOIEMENT-SYNOLOGY.md).
 
+# Nom de projet et volume gardés de l'ancien nom (ERP-WORKFLOW) : les données de test déjà saisies sont conservées.
 name: erp-workflow-test
 
 services:
   # Base de données MySQL (MariaDB 11.4, 100 % compatible MySQL — la même que sur le Synology).
   db:
     image: mariadb:11.4
-    container_name: erp-workflow-test-db
+    container_name: erp-gesdoc-test-db
     restart: unless-stopped
     environment:
       MARIADB_DATABASE: erp_workflow
@@ -41,13 +42,13 @@ services:
       timeout: 5s
       retries: 60
 
-  # Serveur ERP-WORKFLOW (API + application), construit depuis le code du dossier parent.
+  # Serveur ERP-GESDOC (API + application), construit depuis le code du dossier parent.
   app:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    image: erp-workflow-serveur:test
-    container_name: erp-workflow-test-app
+    image: erp-gesdoc-serveur:test
+    container_name: erp-gesdoc-test-app
     restart: unless-stopped
     depends_on:
       db:
@@ -77,7 +78,7 @@ services:
   # (identifiant « erp_workflow », mot de passe = DB_PASSWORD du fichier .env).
   phpmyadmin:
     image: phpmyadmin:5.2
-    container_name: erp-workflow-test-phpmyadmin
+    container_name: erp-gesdoc-test-phpmyadmin
     restart: unless-stopped
     depends_on:
       db:

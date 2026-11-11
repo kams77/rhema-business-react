@@ -5,9 +5,10 @@
 // Préfixe technique conservé (renommer effacerait les données déjà enregistrées dans les navigateurs).
 export const STORAGE_PREFIX = 'rhema:v1:';
 export const STORAGE_ERROR_EVENT = 'rhema:storage-error';
-export const BACKUP_APP_ID = 'erp-workflow';
+export const BACKUP_APP_ID = 'erp-gesdoc';
 /** Identifiants acceptés à la restauration : l'actuel et l'ancien nom de l'application. */
-export const isBackupAppId = (id: unknown): boolean => id === BACKUP_APP_ID || id === 'rhema-business';
+/** Sauvegardes acceptées : nom actuel et anciens noms de l'application (ERP-WORKFLOW, RHEMA BUSINESS). */
+export const isBackupAppId = (id: unknown): boolean => id === BACKUP_APP_ID || id === 'erp-workflow' || id === 'rhema-business';
 export const BACKUP_VERSION = 1;
 
 export interface BackupFile {
@@ -130,7 +131,7 @@ export function downloadBackup() {
   const a = document.createElement('a');
   const stamp = backup.exportedAt.slice(0, 16).replace(/[:T]/g, '-');
   a.href = url;
-  a.download = `erp-workflow-sauvegarde-${stamp}.json`;
+  a.download = `erp-gesdoc-sauvegarde-${stamp}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -147,7 +148,7 @@ export function restoreBackup(content: string) {
   }
   const backup = parsed as Partial<BackupFile>;
   if (!backup || !isBackupAppId(backup.app) || typeof backup.data !== 'object' || backup.data === null) {
-    throw new Error("Ce fichier n'est pas une sauvegarde ERP-WORKFLOW.");
+    throw new Error("Ce fichier n'est pas une sauvegarde ERP-GESDOC.");
   }
   if (typeof backup.version !== 'number' || backup.version > BACKUP_VERSION) {
     throw new Error('Cette sauvegarde provient d\'une version plus récente de l\'application.');

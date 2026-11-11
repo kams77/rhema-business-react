@@ -1,4 +1,4 @@
-// test-sans-docker/lanceur.mjs — démarre ERP-WORKFLOW SANS Docker, avec le MySQL / MariaDB
+// test-sans-docker/lanceur.mjs — démarre ERP-GESDOC SANS Docker, avec le MySQL / MariaDB
 // déjà installé sur l'ordinateur (XAMPP, Laragon, WampServer…).
 //
 //   demarrer.bat                 : prépare la base (la première fois) puis démarre l'application
@@ -37,7 +37,7 @@ function secret(n) {
 function lireConfiguration() {
   if (!fs.existsSync(CONF)) {
     const lignes = [
-      '# ERP-WORKFLOW - réglages du test sans Docker.',
+      '# ERP-GESDOC - réglages du test sans Docker.',
       '# Modifiez ce fichier avec le Bloc-notes, puis relancez demarrer.bat.',
       '',
       '# Serveur MySQL / MariaDB déjà installé (XAMPP : utilisateur root, mot de passe vide).',
@@ -46,7 +46,7 @@ function lireConfiguration() {
       'MYSQL_ADMIN=root',
       'MYSQL_ADMIN_MOT_DE_PASSE=',
       '',
-      '# Base créée automatiquement pour ERP-WORKFLOW (ne touche à aucune autre base).',
+      '# Base créée automatiquement pour ERP-GESDOC (ne touche à aucune autre base).',
       'BASE=erp_workflow_test',
       'BASE_UTILISATEUR=erp_workflow',
       `BASE_MOT_DE_PASSE=${secret(24)}`,
@@ -118,7 +118,7 @@ async function preparerBase(conf) {
 }
 
 async function reinitialiser(conf) {
-  titre('ERP-WORKFLOW : réinitialisation de la base de test');
+  titre('ERP-GESDOC : réinitialisation de la base de test');
   console.log(`ATTENTION : la base « ${conf.BASE} » va être effacée définitivement`);
   console.log('(organisation, agents, documents, pointages...). Les autres bases ne sont pas touchées.');
   console.log('Fermez d\'abord la fenêtre de l\'application si elle est ouverte.\n');
@@ -154,7 +154,7 @@ async function attendreServeur(url) {
 const conf = lireConfiguration();
 if (REINITIALISER) await reinitialiser(conf);
 
-titre('ERP-WORKFLOW : test sans Docker (MySQL)');
+titre('ERP-GESDOC : test sans Docker (MySQL)');
 await preparerBase(conf);
 
 Object.assign(process.env, {
@@ -182,7 +182,7 @@ process.on('uncaughtException', err => {
 });
 
 const url = `http://localhost:${conf.PORT}`;
-// Le serveur ERP-WORKFLOW (le même que sur le Synology) démarre dans cette fenêtre.
+// Le serveur ERP-GESDOC (le même que sur le Synology) démarre dans cette fenêtre.
 await import(pathToFileURL(path.join(ici, 'server', 'index.mjs')).href);
 
 if (await attendreServeur(`http://127.0.0.1:${conf.PORT}`)) {

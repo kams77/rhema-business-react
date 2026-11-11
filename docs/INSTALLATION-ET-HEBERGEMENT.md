@@ -1,4 +1,4 @@
-# Guide : exécuter ERP-WORKFLOW en local et l'héberger en ligne
+# Guide : exécuter ERP-GESDOC en local et l'héberger en ligne
 
 ## Partie 1 — Exécuter l'application sur votre ordinateur
 
@@ -115,15 +115,15 @@ le site est mis en pause si les crédits sont épuisés.
 Pour un serveur interne ou un VPS (Linux avec Docker) :
 
 ```bash
-docker build -t erp-workflow .
-docker run -d -p 8080:80 --restart unless-stopped --name erp-workflow erp-workflow
+docker build -t erp-gesdoc .
+docker run -d -p 8080:80 --restart unless-stopped --name erp-gesdoc erp-gesdoc
 ```
 
 Le site est servi par Nginx sur le port 8080, avec les en-têtes de sécurité
 (`deploy/nginx.conf`). Placez devant un certificat HTTPS (Caddy, Traefik ou Nginx + Let's Encrypt),
 indispensable pour la connexion.
 
-Mode démo : `docker build --build-arg VITE_DEMO_MODE=true -t erp-workflow .`
+Mode démo : `docker build --build-arg VITE_DEMO_MODE=true -t erp-gesdoc .`
 
 ### Option D — Synology avec base de données MariaDB (données partagées)
 

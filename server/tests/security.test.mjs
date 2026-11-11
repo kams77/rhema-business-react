@@ -208,7 +208,7 @@ assert(/img-src 'self' data: blob:;/.test(csp) && !/img-src[^;]*https:/.test(csp
 
 // --- Sauvegardes : nouveau nom, et l'ancien (« rhema-business ») toujours accepté -------
 r = await boss('GET', '/api/data/export');
-assert(r.status === 200 && r.json.app === 'erp-workflow', 'sauvegarde au nom ERP-WORKFLOW');
+assert(r.status === 200 && r.json.app === 'erp-gesdoc', 'sauvegarde au nom ERP-GESDOC');
 r = await boss('POST', '/api/data/import', { ...r.json, app: 'rhema-business' });
 assert(r.status === 200, 'ancienne sauvegarde (rhema-business) toujours restaurable');
 

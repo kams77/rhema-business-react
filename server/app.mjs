@@ -1,4 +1,4 @@
-// server/app.mjs — API ERP-WORKFLOW + service des fichiers de l'application.
+// server/app.mjs — API ERP-GESDOC + service des fichiers de l'application.
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -585,7 +585,7 @@ export function createApp({ db, config }) {
       }
     }
     if (removedKeys || removedDocs) {
-      console.log(`[erp-workflow] Module RH retiré : ${removedKeys} donnée(s) de paie et ${removedDocs} document(s) RH effacés.`);
+      console.log(`[erp-gesdoc] Module RH retiré : ${removedKeys} donnée(s) de paie et ${removedDocs} document(s) RH effacés.`);
       await audit(
         { id: 'system', name: 'Système', role: 'dg', roleTitle: 'Système' },
         'Retrait du module RH',
@@ -594,7 +594,7 @@ export function createApp({ db, config }) {
       );
     }
     await migrateStockLedger();
-  })().catch(err => console.error('[erp-workflow] Démarrage (retrait RH / journal des stocks) :', err));
+  })().catch(err => console.error('[erp-gesdoc] Démarrage (retrait RH / journal des stocks) :', err));
 
   const requireDG = s => {
     if (s.user.role !== 'dg') throw new HttpError(403, 'Action réservée à la Direction Générale.');
@@ -1195,8 +1195,8 @@ export function createApp({ db, config }) {
       data.users = (await db.listUsers()).map(u => ({ ...toClientUser(u), passwordHash: u.passwordHash }));
       data.auditLogs = await db.listAuditLogs(AUDIT_LIMIT);
       await audit(s.user, 'Export de sauvegarde', 'admin', 'Téléchargement d\'une sauvegarde complète depuis le serveur.');
-      return sendJson(req, res, 200, { app: 'erp-workflow', version: 1, exportedAt: new Date().toISOString(), data }, {
-        'Content-Disposition': `attachment; filename="erp-workflow-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
+      return sendJson(req, res, 200, { app: 'erp-gesdoc', version: 1, exportedAt: new Date().toISOString(), data }, {
+        'Content-Disposition': `attachment; filename="erp-gesdoc-sauvegarde-${new Date().toISOString().slice(0, 10)}.json"`,
       });
     }
 
@@ -1204,9 +1204,9 @@ export function createApp({ db, config }) {
       const s = await requireSession(req);
       requireDG(s);
       const backup = await readJson(req);
-      // L'ancien nom (« rhema-business ») reste accepté pour les sauvegardes existantes.
-      if (!backup || !['erp-workflow', 'rhema-business'].includes(backup.app) || typeof backup.data !== 'object') {
-        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde ERP-WORKFLOW.');
+      // Les anciens noms (« erp-workflow », « rhema-business ») restent acceptés pour les sauvegardes existantes.
+      if (!backup || !['erp-gesdoc', 'erp-workflow', 'rhema-business'].includes(backup.app) || typeof backup.data !== 'object') {
+        throw new HttpError(400, 'Ce fichier n\'est pas une sauvegarde ERP-GESDOC.');
       }
       const users = await prepareUsers(backup.data.users);
       if (!users.some(u => u.id === s.user.id || u.email.toLowerCase() === s.user.email.toLowerCase())) {
