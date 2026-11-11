@@ -232,8 +232,9 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
   };
 
   const copyAllCredentials = () => {
+    const dg = (a: typeof agents[number]) => a.role === 'dg';
     const text = agents.map(a => 
-      `• ${a.name} (${getRoleTitleFr(a.role)})\n  Matricule : ${a.matricule} | Email / Login : ${a.email} | Mot de passe : ${a.role === 'dg' ? orgForm.dgPassword : a.password} | Périmètre : ${a.entityName}`
+      `• ${dg(a) ? orgForm.dgName.trim() || a.name : a.name} (${getRoleTitleFr(a.role)})\n  Matricule : ${dg(a) ? orgForm.dgMatricule.trim() || a.matricule : a.matricule} | Email / Login : ${dg(a) ? orgForm.dgEmail.trim() || a.email : a.email} | Mot de passe : ${a.role === 'dg' ? orgForm.dgPassword : a.password} | Périmètre : ${a.entityName}`
     ).join('\n\n');
 
     navigator.clipboard.writeText(
@@ -743,12 +744,13 @@ export const OrganizationOnboardingWizard: React.FC<OrganizationOnboardingWizard
                   <tbody className="divide-y divide-slate-800/60 font-mono">
                     {agents.map(a => (
                       <tr key={a.id} className="hover:bg-slate-900/40 transition">
-                        <td className="p-3 text-indigo-400 font-bold">{a.matricule}</td>
+                        {/* Le compte DG affiche l'identité saisie à l'étape 1 (c'est elle qui sera créée). */}
+                        <td className="p-3 text-indigo-400 font-bold">{a.role === 'dg' ? orgForm.dgMatricule.trim() || a.matricule : a.matricule}</td>
                         <td className="p-3 font-sans text-white font-semibold">
-                          <div>{a.name}</div>
+                          <div>{a.role === 'dg' ? orgForm.dgName.trim() || a.name : a.name}</div>
                           <div className="text-[10px] text-slate-400 font-mono font-normal">{a.roleTitle}</div>
                         </td>
-                        <td className="p-3 text-slate-200">{a.email}</td>
+                        <td className="p-3 text-slate-200">{a.role === 'dg' ? orgForm.dgEmail.trim() || a.email : a.email}</td>
                         <td className="p-3 text-amber-300 font-bold bg-slate-900/40 px-2 rounded">
                           {a.role === 'dg' ? orgForm.dgPassword : a.password}
                         </td>
