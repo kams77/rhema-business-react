@@ -102,7 +102,7 @@ import { EntityInvitationsManagerModal } from './components/invitations/EntityIn
 import { NotificationsDrawerModal } from './components/invitations/NotificationsDrawerModal';
 import { ActiveGuestSessionBanner } from './components/invitations/ActiveGuestSessionBanner';
 import { attendance } from './lib/attendance';
-import { availableForExit, deriveHubStocks, migrateLegacyStocks, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
+import { availableForExit, deriveHubStocks, isHubMember, migrateLegacyStocks, movementOwnerHub, movementSign, movementTypeLabel, stockSettings } from '../shared/stock.mjs';
 import { isRetiredHrDocument } from '../shared/access.mjs';
 import { removeValue } from './lib/storage';
 import { Navbar } from './components/Navbar';
@@ -1017,6 +1017,12 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
     const sign = movementSign(mvt, stockConfig);
     const subtype: DocumentItem['subtype'] = mvt.type === 'transfert_inter_hub' ? 'ordre_transfert'
       : sign > 0 ? 'bon_entree_stock' : sign < 0 ? 'bon_sortie_stock' : 'bon_reception';
+    // Portail du hub : hors centrale logistique, on ne saisit que pour un site dont on fait partie de l'équipe.
+    const ownerHub = hubs.find(h => h.id === movementOwnerHub(mvt, stockConfig));
+    if (!isLogisticsManager(currentUser) && !isHubMember(currentUser, ownerHub)) {
+      showToast('error', `Vous ne faites pas partie de l'équipe du site « ${ownerHub?.name || 'inconnu'} ». Demandez à la centrale logistique de vous y affecter.`);
+      return;
+    }
     // Une sortie ou un transfert ne peut pas dépasser le stock disponible du Site (bons au visa déduits).
     if (sign < 0 || mvt.type === 'transfert_inter_hub') {
       const short = mvt.items.find(i => i.quantity > availableForExit(stockMovements, stockConfig, mvt.sourceHubId, i.catalogItemId));
@@ -1081,9 +1087,9 @@ export default function App({ serverUser, onServerLogout }: AppProps = {}) {
       showToast('error', "Ce transfert n'est pas en transit : il ne peut pas être réceptionné.");
       return;
     }
-    const destManager = hubs.find(h => h.id === mvt.destinationHubId)?.managerId;
-    if (!isLogisticsManager(currentUser) && destManager !== currentUser.id) {
-      showToast('error', 'La réception est faite par le responsable du site destination ou un responsable de la logistique.');
+    const destHub = hubs.find(h => h.id === mvt.destinationHubId);
+    if (!isLogisticsManager(currentUser) && !isHubMember(currentUser, destHub)) {
+      showToast('error', "La réception est faite par l'équipe du site destination ou par la centrale logistique.");
       return;
     }
     const receivedAt = reception?.receivedAt || todayIso;

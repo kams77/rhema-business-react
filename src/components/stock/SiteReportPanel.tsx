@@ -18,7 +18,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 export const SiteReportPanel: React.FC<StockContext> = ctx => {
   const { hubs, movements, catalog, settings, organization, today } = ctx;
-  const [hubId, setHubId] = useState(ctx.initialFilter && hubs.some(h => h.id === ctx.initialFilter) ? ctx.initialFilter : hubs[0]?.id || '');
+  const [hubId, setHubId] = useState(ctx.portalHub?.id || (ctx.initialFilter && hubs.some(h => h.id === ctx.initialFilter) ? ctx.initialFilter : hubs[0]?.id || ''));
   const [from, setFrom] = useState(`${today.slice(0, 4)}-01-01`);
   const [to, setTo] = useState(today);
   const [hideEmpty, setHideEmpty] = useState(true);
@@ -56,8 +56,8 @@ export const SiteReportPanel: React.FC<StockContext> = ctx => {
       <div className={`${card} grid grid-cols-2 md:grid-cols-6 gap-3 items-end`}>
         <div className="col-span-2">
           <label className={label}>Site</label>
-          <select value={hubId} onChange={e => setHubId(e.target.value)} className={input} aria-label="Site du rapport">
-            {hubs.map(h => <option key={h.id} value={h.id}>{h.name}{h.status === 'inactif' ? ' (inactif)' : ''}</option>)}
+          <select value={hubId} onChange={e => setHubId(e.target.value)} className={input} aria-label="Site du rapport" disabled={!!ctx.portalHub}>
+            {ctx.scopeHubs.map(h => <option key={h.id} value={h.id}>{h.name}{h.status === 'inactif' ? ' (inactif)' : ''}</option>)}
           </select>
         </div>
         <div>

@@ -15,13 +15,13 @@ import { availableForExit, isTransfer, movementSign, movementTypeLabel } from '.
 export const MovementsPanel: React.FC<StockContext> = ctx => {
   const { movements, hubs, catalog, settings } = ctx;
   const [q, setQ] = useState('');
-  const [site, setSite] = useState('');
+  const [site, setSite] = useState(ctx.portalHub?.id || '');
   const [type, setType] = useState('');
   const [status, setStatus] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [onlyIssues, setOnlyIssues] = useState(ctx.initialFilter === 'issues');
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(ctx.initialFilter === 'new' && ctx.canCreate);
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -62,7 +62,8 @@ export const MovementsPanel: React.FC<StockContext> = ctx => {
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={exportCsv} className={btnSecondary}><Download className="w-3.5 h-3.5" /> Exporter (CSV)</button>
-            <button type="button" onClick={() => setCreating(true)} className={btnPrimary} disabled={!activeHubs(hubs).length || !activeItems(catalog).length}>
+            <button type="button" onClick={() => setCreating(true)} className={btnPrimary} disabled={!ctx.canCreate || !activeHubs(ctx.scopeHubs).length || !activeItems(catalog).length}
+              title={ctx.canCreate ? undefined : "Vous n'êtes affecté à aucun hub : demandez à la centrale logistique de vous ajouter à une équipe."}>
               <Plus className="w-4 h-4" /> Nouveau mouvement
             </button>
           </div>
@@ -72,9 +73,9 @@ export const MovementsPanel: React.FC<StockContext> = ctx => {
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="N°, article, n° de série, client…" className={`${input} pl-8`} aria-label="Rechercher" />
           </div>
-          <select value={site} onChange={e => setSite(e.target.value)} className={input} aria-label="Site">
-            <option value="">Tous les sites</option>
-            {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+          <select value={site} onChange={e => setSite(e.target.value)} className={input} aria-label="Site" disabled={!!ctx.portalHub}>
+            {!ctx.portalHub && <option value="">Tous les sites</option>}
+            {ctx.scopeHubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
           <select value={type} onChange={e => setType(e.target.value)} className={input} aria-label="Type">
             <option value="">Tous les types</option>
@@ -173,7 +174,7 @@ const NewMovementModal: React.FC<{ ctx: StockContext; onClose: () => void }> = (
   const types = settings.movementTypes.filter(t => t.active);
   const [typeId, setTypeId] = useState(types[0]?.id || '');
   const [date, setDate] = useState(ctx.today);
-  const [hubId, setHubId] = useState(activeHubs(hubs)[0]?.id || '');
+  const [hubId, setHubId] = useState(activeHubs(ctx.scopeHubs)[0]?.id || '');
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [reference, setReference] = useState('');
   const [counterparty, setCounterparty] = useState('');
@@ -218,7 +219,7 @@ const NewMovementModal: React.FC<{ ctx: StockContext; onClose: () => void }> = (
           <div>
             <label className={label}>{isExit ? 'Site (sortie de)' : 'Site (entrée dans)'}</label>
             <select value={hubId} onChange={e => setHubId(e.target.value)} className={input} aria-label="Site">
-              {activeHubs(hubs).map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+              {activeHubs(ctx.scopeHubs).map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
           <div>

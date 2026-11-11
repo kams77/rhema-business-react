@@ -11,7 +11,7 @@ import {
 import { LinesEditor, emptyLine, lineErrors, type Line } from './LinesEditor';
 import { buildMovement } from './buildMovement';
 import {
-  TRANSFER_TYPE, availableForExit, isLateTransfer, isTransfer, receivedQty, sentDay, transitDays,
+  TRANSFER_TYPE, availableForExit, isHubMember, isLateTransfer, isTransfer, receivedQty, sentDay, transitDays,
 } from '../../../shared/stock.mjs';
 
 export const TransfersPanel: React.FC<StockContext> = ctx => {
@@ -20,8 +20,8 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState(init === 'en_transit' ? 'en_transit' : '');
   const [onlyLate, setOnlyLate] = useState(init === 'late');
-  const [site, setSite] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [site, setSite] = useState(ctx.portalHub?.id || '');
+  const [creating, setCreating] = useState(ctx.initialFilter === 'new' && ctx.canCreate);
   const [receiving, setReceiving] = useState<StockMovementItem | null>(null);
   const [cancelling, setCancelling] = useState<StockMovementItem | null>(null);
 
@@ -38,7 +38,7 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
   }, [movements, q, status, onlyLate, site, settings, today]);
 
   const canReceive = (m: StockMovementItem) =>
-    m.status === 'en_transit' && (ctx.canManage || hubs.find(h => h.id === m.destinationHubId)?.managerId === ctx.currentUser.id);
+    m.status === 'en_transit' && (ctx.canManage || isHubMember(ctx.currentUser, hubs.find(h => h.id === m.destinationHubId)));
 
   const exportCsv = () => {
     const out: unknown[][] = [['N° transfert', 'Date', 'Site source', 'Site destination', 'Code article', 'Désignation', 'Qté envoyée', 'Date envoi', 'Statut', 'Date réception', 'Qté reçue', 'Écart', 'Jours de transit', 'En retard', 'Transporteur', 'Réf. expédition', 'Contrôle']];
@@ -69,7 +69,8 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={exportCsv} className={btnSecondary}><Download className="w-3.5 h-3.5" /> Exporter (CSV)</button>
-            <button type="button" onClick={() => setCreating(true)} className={btnPrimary} disabled={activeHubs(hubs).length < 2}>
+            <button type="button" onClick={() => setCreating(true)} className={btnPrimary} disabled={!ctx.canCreate || activeHubs(hubs).length < 2 || !activeHubs(ctx.scopeHubs).length}
+              title={ctx.canCreate ? undefined : "Vous n'êtes affecté à aucun hub : demandez à la centrale logistique de vous ajouter à une équipe."}>
               <Plus className="w-4 h-4" /> Nouveau transfert
             </button>
           </div>
@@ -79,9 +80,9 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="N°, article, transporteur…" className={`${input} pl-8`} aria-label="Rechercher" />
           </div>
-          <select value={site} onChange={e => setSite(e.target.value)} className={input} aria-label="Site">
-            <option value="">Tous les sites</option>
-            {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+          <select value={site} onChange={e => setSite(e.target.value)} className={input} aria-label="Site" disabled={!!ctx.portalHub}>
+            {!ctx.portalHub && <option value="">Tous les sites</option>}
+            {ctx.scopeHubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
           <select value={status} onChange={e => setStatus(e.target.value)} className={input} aria-label="Statut">
             <option value="">Tous les statuts</option>
@@ -176,8 +177,9 @@ export const TransfersPanel: React.FC<StockContext> = ctx => {
 const NewTransferModal: React.FC<{ ctx: StockContext; onClose: () => void }> = ({ ctx, onClose }) => {
   const { hubs, catalog, settings, movements, currentUser } = ctx;
   const sites = activeHubs(hubs);
-  const [source, setSource] = useState(sites[0]?.id || '');
-  const [dest, setDest] = useState(sites[1]?.id || '');
+  const sources = activeHubs(ctx.scopeHubs);
+  const [source, setSource] = useState(sources[0]?.id || '');
+  const [dest, setDest] = useState(sites.find(h => h.id !== (sources[0]?.id || ''))?.id || '');
   const [date, setDate] = useState(ctx.today);
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [carrier, setCarrier] = useState('');
@@ -210,8 +212,8 @@ const NewTransferModal: React.FC<{ ctx: StockContext; onClose: () => void }> = (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
             <label className={label}>Site source (expédie)</label>
-            <select value={source} onChange={e => setSource(e.target.value)} className={input} aria-label="Site source">
-              {sites.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+            <select value={source} onChange={e => setSource(e.target.value)} className={input} aria-label="Site source" disabled={sources.length < 2}>
+              {sources.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
           <div>

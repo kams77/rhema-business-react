@@ -11,7 +11,7 @@ const MONTHS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet'
 export const MonthlyPanel: React.FC<StockContext> = ctx => {
   const { movements, catalog, settings, hubs, today } = ctx;
   const [year, setYear] = useState(Number(today.slice(0, 4)));
-  const [hubId, setHubId] = useState('');
+  const [hubId, setHubId] = useState(ctx.portalHub?.id || '');
   const years = useMemo(() => {
     const ys = new Set<number>([Number(today.slice(0, 4))]);
     movements.forEach(m => m.date && ys.add(Number(m.date.slice(0, 4))));
@@ -39,9 +39,9 @@ export const MonthlyPanel: React.FC<StockContext> = ctx => {
           </div>
           <div>
             <label className={label}>Site</label>
-            <select value={hubId} onChange={e => setHubId(e.target.value)} className={input} aria-label="Site">
-              <option value="">Tout le réseau</option>
-              {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+            <select value={hubId} onChange={e => setHubId(e.target.value)} className={input} aria-label="Site" disabled={!!ctx.portalHub}>
+              {!ctx.portalHub && <option value="">Tout le réseau</option>}
+              {ctx.scopeHubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
         </div>

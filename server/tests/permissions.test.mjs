@@ -292,7 +292,7 @@ assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancair
   await login(mag, 'mag@perm.cd', 'Temp-Magasin-26', 'Cobalt-Riviere-Nord-77');
   assert((await put(boss, 'logistics.hubs', [
     { id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif' },
-    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif' },
+    { id: 'sh2', code: 'SH2', name: 'Site Deux', province: 'Katanga', status: 'actif', staffIds: ['p-mag'] },
   ])).status === 200, 'DG : sites enregistrés');
   assert((await put(boss, 'logistics.catalog', [{ id: 'si1', sku: 'ART-1', name: 'Article test', category: 'vsat', unitPriceUSD: 10, minAlertThreshold: 2 }])).status === 200, 'DG : catalogue enregistré');
   const line = q => [{ catalogItemId: 'si1', sku: 'ART-1', name: 'Article test', quantity: q, unitPriceUSD: 10, serialNumbers: [] }];
@@ -303,6 +303,11 @@ assert(r.json.value === null, 'logistique : fournisseurs et coordonnées bancair
   assert(r.status === 422 && /insuffisant/i.test(r.json.error), 'stock : une sortie qui rendrait le stock négatif est refusée (422)');
   const transfer = { id: 'smv-3', movementNumber: 'TR-2026-00001', type: 'transfert_inter_hub', sourceHubId: 'sh1', destinationHubId: 'sh2', items: line(4), date: '2026-01-07', sentAt: '2026-01-07', status: 'en_transit' };
   assert((await put(boss, 'logistics.stockMovements', [...cur, opening, transfer])).status === 200, 'stock : transfert mis en transit');
+  // Portails des hubs : le magasinier fait partie de l'équipe du Site Deux seulement.
+  r = await put(mag, 'logistics.stockMovements', [...cur, opening, transfer, { id: 'smv-9', movementNumber: 'MV-2026-00009', type: 'sortie_vente', sourceHubId: 'sh1', items: line(1), date: '2026-01-07', status: 'en_attente_visa' }]);
+  assert(r.status === 403 && /équipe/.test(r.json.error), 'portail : un membre du Site Deux ne saisit pas de bon pour le Site Un');
+  r = await put(mag, 'logistics.hubs', [{ id: 'sh1', code: 'SH1', name: 'Site Un', province: 'Kinshasa', status: 'actif', staffIds: ['p-mag'] }]);
+  assert(r.status === 403, 'portail : un magasinier ne compose pas les équipes des hubs');
   r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'annule' }]);
   assert(r.status === 403, 'stock : un magasinier ne peut pas annuler un transfert');
   r = await put(mag, 'logistics.stockMovements', [...cur, opening, { ...transfer, status: 'receptionne', receivedAt: '2026-01-06', receivedQuantities: { si1: 6 } }]);

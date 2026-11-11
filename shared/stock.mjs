@@ -466,3 +466,47 @@ export function monthlyTracking(movements, catalog, settings, year, hubId) {
   }
   return months;
 }
+
+// ---------------------------------------------------------------------------
+// Portails des hubs : chaque site a son équipe ; la centrale (responsables logistique) gère tout.
+// ---------------------------------------------------------------------------
+
+/** Membre de l'équipe d'un site : son responsable ou un agent affecté par la centrale. */
+export const isHubMember = (u, hub) =>
+  !!u && !!hub && (hub.managerId === u.id || (Array.isArray(hub.staffIds) && hub.staffIds.includes(u.id)));
+
+/** Sites dont l'utilisateur fait partie de l'équipe. */
+export const hubsOfUser = (u, hubs) => (hubs || []).filter(h => isHubMember(u, h));
+
+/** Site qui émet un mouvement : source pour une sortie ou un transfert, destination pour une entrée. */
+export const movementOwnerHub = (m, settings) => (isTransfer(m) ? m.sourceHubId : movementHub(m, settings));
+
+/** Le mouvement concerne-t-il ce site (émis, reçu ou envoyé) ? */
+export const movementTouchesHub = (m, hubId, settings) =>
+  !!hubId && (isTransfer(m) ? m.sourceHubId === hubId || m.destinationHubId === hubId : movementHub(m, settings) === hubId);
+
+/**
+ * Contrôle « portail » d'une écriture du journal par un membre d'équipe (pas un responsable logistique) :
+ * il ne crée des bons que pour son site et ne réceptionne que les transferts destinés à son site.
+ * Les changements de statut du circuit de visa restent possibles (ils viennent des valideurs).
+ * @returns {string | null} motif du refus
+ */
+export function hubPortalWriteProblem(user, before, after, hubs, settings) {
+  const prevById = new Map((before || []).map(m => [m.id, m]));
+  const byId = new Map((hubs || []).map(h => [h.id, h]));
+  const name = id => (byId.get(id) || {}).name || id || 'inconnu';
+  for (const m of after || []) {
+    const prev = prevById.get(m.id);
+    if (!prev) {
+      const owner = movementOwnerHub(m, settings);
+      if (!isHubMember(user, byId.get(owner))) {
+        return `Vous ne faites pas partie de l'équipe du site « ${name(owner)} » : seuls son équipe et la centrale logistique y saisissent des bons.`;
+      }
+    } else if (isTransfer(m) && prev.status === 'en_transit' && m.status === 'receptionne') {
+      if (!isHubMember(user, byId.get(m.destinationHubId))) {
+        return `La réception au site « ${name(m.destinationHubId)} » est faite par son équipe ou par la centrale logistique.`;
+      }
+    }
+  }
+  return null;
+}

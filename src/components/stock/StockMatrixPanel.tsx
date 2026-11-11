@@ -12,7 +12,7 @@ export const StockMatrixPanel: React.FC<StockContext> = ctx => {
   const [cat, setCat] = useState('');
   const [onlyAlerts, setOnlyAlerts] = useState(ctx.initialFilter === 'alert');
   const [showInactive, setShowInactive] = useState(false);
-  const sites = hubs.filter(h => showInactive || h.status !== 'inactif');
+  const sites = ctx.portalHub ? [ctx.portalHub] : hubs.filter(h => showInactive || h.status !== 'inactif');
   const bal = useMemo(() => computeBalances(movements, settings), [movements, settings]);
 
   const cellState = (qty: number, thr: number, inactive: boolean) =>

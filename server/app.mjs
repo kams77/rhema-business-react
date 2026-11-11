@@ -46,7 +46,7 @@ import {
   canWriteTaskChange,
 } from '../shared/workflow.mjs';
 import { sanitizeOrgData } from '../shared/branding.mjs';
-import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings } from '../shared/stock.mjs';
+import { LEDGER_VERSION, DEFAULT_STOCK_SETTINGS, TRANSFER_TYPE, ledgerWriteProblems, migrateLegacyStocks, stockSettings, hubPortalWriteProblem } from '../shared/stock.mjs';
 import {
   ATTENDANCE_EVENTS,
   DEFAULT_TIME_ZONE,
@@ -532,6 +532,11 @@ export function createApp({ db, config }) {
     const settings = (await readData('logistics.settings')).value;
     const hubs = (await readData('logistics.hubs')).value || [];
     const catalog = (await readData('logistics.catalog')).value || [];
+    // Portails des hubs : hors centrale logistique, on ne saisit et ne réceptionne que pour son site.
+    if (!isLogisticsManager(me)) {
+      const portal = hubPortalWriteProblem(me, Array.isArray(before) ? before : [], after, hubs, settings);
+      if (portal) throw new HttpError(403, portal);
+    }
     const problems = ledgerWriteProblems(Array.isArray(before) ? before : [], after, settings, { hubs, catalog });
     if (problems.length) throw new HttpError(422, problems.slice(0, 3).join(' '));
   }
@@ -1289,6 +1294,10 @@ export function createApp({ db, config }) {
         }
         value = stripRetiredHr(key, sanitizeOrgData(key, value));
         if (key === 'logistics.stockMovements') await checkStockWrite(s.user, current ? JSON.parse(current.value) : [], value);
+        // Sites (et leurs équipes), catalogue et paramètres des stocks : gérés par la centrale logistique.
+        if (['logistics.hubs', 'logistics.catalog', 'logistics.settings'].includes(key) && !isLogisticsManager(accessUser(s.user))) {
+          throw new HttpError(403, 'Les sites, leurs équipes, le catalogue et les paramètres des stocks sont gérés par la centrale logistique.');
+        }
         const json = JSON.stringify(value);
         if (json.length > MAX_VALUE_CHARS) throw new HttpError(413, 'Donnée trop volumineuse.');
         const r = await db.putData(key, json, expected, s.user.id);

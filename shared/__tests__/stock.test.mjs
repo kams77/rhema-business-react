@@ -2,6 +2,7 @@
 // Usage : node shared/__tests__/stock.test.mjs
 import assert from 'node:assert/strict';
 import {
+  hubPortalWriteProblem, hubsOfUser, isHubMember, movementTouchesHub,
   availableForExit,
   computeBalances,
   deriveHubStocks,
@@ -151,6 +152,24 @@ test('reprise des anciens stocks : les quantités ne changent pas, les transfert
   assert.deepEqual(g.serialNumbers.sort(), ['A1', 'A2']);
   assert.equal(g.quantityReserved, 1);
   assert.equal(rows.find(r => r.hubId === 'buk').quantityInTransit, 2);
+});
+
+test('portails des hubs : équipe, saisie et réception limitées au site', () => {
+  const hubsP = [{ id: 'gom', name: 'Goma', managerId: 'u-chef', staffIds: ['u-mag'] }, { id: 'buk', name: 'Bukavu', managerId: 'u-buk' }];
+  const mag = { id: 'u-mag' };
+  assert.ok(isHubMember(mag, hubsP[0]) && !isHubMember(mag, hubsP[1]));
+  assert.deepEqual(hubsOfUser({ id: 'u-chef' }, hubsP).map(h => h.id), ['gom']);
+  const sortieGom = mv('s1', 'sortie_vente', -1, 'gom', [item('ant', 1)], '2026-03-01', 'en_attente_visa');
+  const sortieBuk = mv('s2', 'sortie_vente', -1, 'buk', [item('ant', 1)], '2026-03-01', 'en_attente_visa');
+  assert.equal(hubPortalWriteProblem(mag, [], [sortieGom], hubsP), null);
+  assert.match(hubPortalWriteProblem(mag, [], [sortieBuk], hubsP), /équipe du site « Bukavu »/);
+  const t = tr('t1', 'buk', 'gom', [item('ant', 1)], '2026-03-01', 'en_transit');
+  assert.ok(movementTouchesHub(t, 'gom') && movementTouchesHub(t, 'buk') && !movementTouchesHub(t, 'kin'));
+  assert.equal(hubPortalWriteProblem(mag, [t], [{ ...t, status: 'receptionne', receivedAt: '2026-03-02' }], hubsP), null);
+  const t2 = tr('t2', 'gom', 'buk', [item('ant', 1)], '2026-03-01', 'en_transit');
+  assert.match(hubPortalWriteProblem(mag, [t2], [{ ...t2, status: 'receptionne', receivedAt: '2026-03-02' }], hubsP), /Bukavu/);
+  // Les visas du circuit (changement de statut d'un bon existant) restent possibles.
+  assert.equal(hubPortalWriteProblem(mag, [sortieBuk], [{ ...sortieBuk, status: 'valide' }], hubsP), null);
 });
 
 console.log(`\n${n} tests du moteur de stock réussis.`);

@@ -690,6 +690,8 @@ export interface LogisticsHub {
   city: string;
   address: string;
   managerId?: string;
+  /** Équipe du site (agents affectés par la centrale logistique), en plus du responsable. */
+  staffIds?: string[];
   managerName: string;
   managerContact: string;
   managerEmail: string;

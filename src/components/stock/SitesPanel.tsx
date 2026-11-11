@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
 import type { LogisticsHub } from '../../types';
 import type { StockContext } from './StockHubsModule';
+import { canAccessLogistics } from '../../utils/rbac';
 import { Empty, Modal, btnPrimary, btnSecondary, card, fmt, input, label, td, th } from './stockUi';
 
 const STATUS: Record<LogisticsHub['status'], { label: string; cls: string }> = {
@@ -42,7 +43,7 @@ export const SitesPanel: React.FC<StockContext> = ctx => {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/50">
-                <th className={th}>Code</th><th className={th}>Nom</th><th className={th}>Région / ville</th><th className={th}>Responsable</th>
+                <th className={th}>Code</th><th className={th}>Nom</th><th className={th}>Région / ville</th><th className={th}>Responsable</th><th className={th}>Équipe du portail</th>
                 <th className={th}>Statut</th><th className={`${th} text-right`}>Unités</th><th className={`${th} text-right`}>Valeur ({ctx.settings.currency})</th>
                 <th className={`${th} text-right`}>Sous seuil</th>{canManage && <th className={th}>Actions</th>}
               </tr>
@@ -58,6 +59,12 @@ export const SitesPanel: React.FC<StockContext> = ctx => {
                     </td>
                     <td className={td}>{h.province}{h.city ? ` — ${h.city}` : ''}</td>
                     <td className={td}>{h.managerName || '—'}<div className="text-[10.5px] text-slate-500">{h.managerContact}</div></td>
+                    <td className={td}>
+                      {(() => {
+                        const names = (h.staffIds || []).map(id => ctx.users?.find(u => u.id === id)?.name).filter(Boolean) as string[];
+                        return names.length ? <span title={names.join(', ')}>{names.length} membre(s) · <span className="text-slate-400">{names.slice(0, 2).join(', ')}{names.length > 2 ? '…' : ''}</span></span> : <span className="text-slate-500">—</span>;
+                      })()}
+                    </td>
                     <td className={td}><span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${STATUS[h.status]?.cls}`}>{STATUS[h.status]?.label || h.status}</span></td>
                     <td className={`${td} text-right font-mono font-bold`}>{fmt(t.units)}</td>
                     <td className={`${td} text-right font-mono`}>{fmt(t.value)}</td>
@@ -92,6 +99,10 @@ const SiteModal: React.FC<{ ctx: StockContext; hub: LogisticsHub | null; onClose
     managerContact: hub?.managerContact || '',
     status: hub?.status || 'actif',
   });
+  const [staff, setStaff] = useState<string[]>(hub?.staffIds || []);
+  // Candidats à l'équipe : comptes actifs ayant accès au module logistique.
+  const candidates = users.filter(u => canAccessLogistics(u) && u.id !== f.managerId);
+  const toggleStaff = (id: string) => setStaff(staff.includes(id) ? staff.filter(x => x !== id) : [...staff, id]);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF({ ...f, [k]: e.target.value });
   const pickManager = (id: string) => {
     const u = users.find(x => x.id === id);
@@ -123,6 +134,7 @@ const SiteModal: React.FC<{ ctx: StockContext; hub: LogisticsHub | null; onClose
       managerContact: f.managerContact.trim(),
       managerEmail: manager?.email || hub?.managerEmail || '',
       status: f.status as LogisticsHub['status'],
+      staffIds: staff.filter(id => id !== f.managerId),
     };
     if (hub) ctx.onUpdateHub(next);
     else ctx.onAddHub(next);
@@ -152,6 +164,20 @@ const SiteModal: React.FC<{ ctx: StockContext; hub: LogisticsHub | null; onClose
         </div>
         <div><label className={label}>Nom affiché</label><input value={f.managerName} onChange={set('managerName')} className={input} aria-label="Nom du responsable" /></div>
         <div><label className={label}>Contact</label><input value={f.managerContact} onChange={set('managerContact')} className={input} aria-label="Contact du responsable" /></div>
+        <div className="col-span-2">
+          <label className={label}>Équipe du portail (en plus du responsable)</label>
+          <p className="text-[10.5px] text-slate-500 mb-1.5">Les membres saisissent les entrées, sorties et envois de ce hub et réceptionnent ce qui lui arrive. Ils ne voient que ce hub.</p>
+          {candidates.length === 0 ? <p className="text-[11px] text-slate-500">Aucun compte disponible : le compte doit avoir accès au module logistique.</p> : (
+            <div className="max-h-40 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 bg-slate-950/40 border border-slate-800 rounded-xl p-2">
+              {candidates.map(u => (
+                <label key={u.id} className="flex items-center gap-2 text-xs text-slate-200 px-2 py-1 rounded-lg hover:bg-slate-800/60">
+                  <input type="checkbox" checked={staff.includes(u.id)} onChange={() => toggleStaff(u.id)} aria-label={`Équipe : ${u.name}`} />
+                  <span>{u.name}<span className="block text-[10px] text-slate-500">{u.roleTitle}</span></span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         {f.status === 'inactif' && hub?.status !== 'inactif' && (
           <p className="col-span-2 text-[11px] text-amber-300">Le site n'apparaîtra plus dans les nouvelles saisies. Son stock et son historique restent consultables.</p>
         )}
